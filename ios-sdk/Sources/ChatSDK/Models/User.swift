@@ -1,0 +1,100 @@
+import Foundation
+
+/// Represents a chat user
+public struct User: Codable, Identifiable, Sendable, Hashable {
+    public let id: String
+    public var name: String
+    public var image: String?
+    public var online: Bool?
+    public var lastActive: Date?
+    public var custom: [String: AnyCodable]?
+
+    public init(
+        id: String,
+        name: String,
+        image: String? = nil,
+        online: Bool? = nil,
+        lastActive: Date? = nil,
+        custom: [String: AnyCodable]? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.image = image
+        self.online = online
+        self.lastActive = lastActive
+        self.custom = custom
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, image, online, custom
+        case lastActive = "last_active"
+    }
+}
+
+/// Type-erased Codable wrapper for custom data
+public struct AnyCodable: Codable, Sendable, Hashable {
+    public let value: Any
+
+    public init(_ value: Any) {
+        self.value = value
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if container.decodeNil() {
+            self.value = NSNull()
+        } else if let bool = try? container.decode(Bool.self) {
+            self.value = bool
+        } else if let int = try? container.decode(Int.self) {
+            self.value = int
+        } else if let double = try? container.decode(Double.self) {
+            self.value = double
+        } else if let string = try? container.decode(String.self) {
+            self.value = string
+        } else if let array = try? container.decode([AnyCodable].self) {
+            self.value = array.map { $0.value }
+        } else if let dictionary = try? container.decode([String: AnyCodable].self) {
+            self.value = dictionary.mapValues { $0.value }
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unable to decode value"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+
+        switch value {
+        case is NSNull:
+            try container.encodeNil()
+        case let bool as Bool:
+            try container.encode(bool)
+        case let int as Int:
+            try container.encode(int)
+        case let double as Double:
+            try container.encode(double)
+        case let string as String:
+            try container.encode(string)
+        case let array as [Any]:
+            try container.encode(array.map { AnyCodable($0) })
+        case let dictionary as [String: Any]:
+            try container.encode(dictionary.mapValues { AnyCodable($0) })
+        default:
+            throw EncodingError.invalidValue(
+                value,
+                EncodingError.Context(codingPath: container.codingPath, debugDescription: "Unable to encode value")
+            )
+        }
+    }
+
+    public static func == (lhs: AnyCodable, rhs: AnyCodable) -> Bool {
+        String(describing: lhs.value) == String(describing: rhs.value)
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(String(describing: value))
+    }
+}

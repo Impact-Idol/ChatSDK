@@ -134,10 +134,7 @@ export class EventBus {
     for (const listener of listeners) {
       try {
         // Handle both sync and async callbacks
-        const result = listener.callback(data);
-        if (result instanceof Promise) {
-          await result;
-        }
+        await Promise.resolve(listener.callback(data));
 
         // Mark once listeners for removal
         if (listener.once) {
