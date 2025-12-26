@@ -1,0 +1,22 @@
+{
+  "name": "chatsdk",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Embeddable Chat SDK - GetStream.io Alternative",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "storybook": "npm run storybook --workspace=@chatsdk/react",
+    "build-storybook": "npm run build-storybook --workspace=@chatsdk/react",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

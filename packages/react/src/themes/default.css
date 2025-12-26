@@ -1,0 +1,205 @@
+/**
+ * ChatSDK Default Theme
+ * CSS Custom Properties for complete customization
+ */
+
+/* Geist Font (Vercel) - Primary */
+@import url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/style.min.css');
+@import url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/style.min.css');
+
+/* Inter Font (Fallback) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Primary Colors */
+  --chatsdk-primary: #6366f1;
+  --chatsdk-primary-hover: #4f46e5;
+  --chatsdk-primary-foreground: #ffffff;
+
+  /* Secondary Colors */
+  --chatsdk-secondary: #f1f5f9;
+  --chatsdk-secondary-hover: #e2e8f0;
+  --chatsdk-secondary-foreground: #0f172a;
+
+  /* Background */
+  --chatsdk-background: #ffffff;
+  --chatsdk-background-subtle: #f8fafc;
+  --chatsdk-foreground: #0f172a;
+
+  /* Muted */
+  --chatsdk-muted: #f1f5f9;
+  --chatsdk-muted-foreground: #64748b;
+
+  /* Accent */
+  --chatsdk-accent: #f1f5f9;
+  --chatsdk-accent-foreground: #0f172a;
+
+  /* Destructive */
+  --chatsdk-destructive: #ef4444;
+  --chatsdk-destructive-foreground: #ffffff;
+
+  /* Success */
+  --chatsdk-success: #22c55e;
+  --chatsdk-success-foreground: #ffffff;
+
+  /* Warning */
+  --chatsdk-warning: #f59e0b;
+  --chatsdk-warning-foreground: #ffffff;
+
+  /* Border */
+  --chatsdk-border: #e2e8f0;
+  --chatsdk-border-strong: #cbd5e1;
+
+  /* Message Bubbles */
+  --chatsdk-message-bubble: #f1f5f9;
+  --chatsdk-message-bubble-own: #6366f1;
+  --chatsdk-message-text: #0f172a;
+  --chatsdk-message-text-own: #ffffff;
+  --chatsdk-message-meta: #94a3b8;
+
+  /* Presence */
+  --chatsdk-online: #22c55e;
+  --chatsdk-offline: #94a3b8;
+  --chatsdk-busy: #ef4444;
+  --chatsdk-away: #f59e0b;
+
+  /* Reactions */
+  --chatsdk-reaction-bg: #f1f5f9;
+  --chatsdk-reaction-bg-own: rgba(99, 102, 241, 0.1);
+
+  /* Input */
+  --chatsdk-input-bg: #ffffff;
+  --chatsdk-input-border: #e2e8f0;
+  --chatsdk-input-focus: #6366f1;
+  --chatsdk-input-placeholder: #94a3b8;
+
+  /* Typography - Geist (Vercel) with Inter fallback */
+  --chatsdk-font-sans: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --chatsdk-font-mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Font feature settings for better typography */
+  --chatsdk-font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+
+  /* Font Sizes */
+  --chatsdk-text-xs: 0.75rem;
+  --chatsdk-text-sm: 0.875rem;
+  --chatsdk-text-base: 1rem;
+  --chatsdk-text-lg: 1.125rem;
+  --chatsdk-text-xl: 1.25rem;
+  --chatsdk-text-2xl: 1.5rem;
+  --chatsdk-text-3xl: 1.875rem;
+
+  /* Spacing */
+  --chatsdk-space-1: 0.25rem;
+  --chatsdk-space-2: 0.5rem;
+  --chatsdk-space-3: 0.75rem;
+  --chatsdk-space-4: 1rem;
+  --chatsdk-space-5: 1.25rem;
+  --chatsdk-space-6: 1.5rem;
+  --chatsdk-space-8: 2rem;
+  --chatsdk-space-10: 2.5rem;
+  --chatsdk-space-12: 3rem;
+
+  /* Border Radius */
+  --chatsdk-radius-sm: 0.25rem;
+  --chatsdk-radius-md: 0.375rem;
+  --chatsdk-radius-lg: 0.5rem;
+  --chatsdk-radius-xl: 0.75rem;
+  --chatsdk-radius-2xl: 1rem;
+  --chatsdk-radius-full: 9999px;
+
+  /* Shadows */
+  --chatsdk-shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --chatsdk-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --chatsdk-shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --chatsdk-shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+  /* Transitions */
+  --chatsdk-transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --chatsdk-transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --chatsdk-transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-Index */
+  --chatsdk-z-dropdown: 50;
+  --chatsdk-z-sticky: 100;
+  --chatsdk-z-modal: 200;
+  --chatsdk-z-popover: 300;
+  --chatsdk-z-tooltip: 400;
+}
+
+/* Dark Theme */
+[data-theme="dark"],
+.chatsdk-dark {
+  --chatsdk-primary: #818cf8;
+  --chatsdk-primary-hover: #6366f1;
+  --chatsdk-primary-foreground: #ffffff;
+
+  --chatsdk-secondary: #1e293b;
+  --chatsdk-secondary-hover: #334155;
+  --chatsdk-secondary-foreground: #f1f5f9;
+
+  --chatsdk-background: #0f172a;
+  --chatsdk-background-subtle: #1e293b;
+  --chatsdk-foreground: #f1f5f9;
+
+  --chatsdk-muted: #1e293b;
+  --chatsdk-muted-foreground: #94a3b8;
+
+  --chatsdk-accent: #1e293b;
+  --chatsdk-accent-foreground: #f1f5f9;
+
+  --chatsdk-border: #334155;
+  --chatsdk-border-strong: #475569;
+
+  --chatsdk-message-bubble: #1e293b;
+  --chatsdk-message-bubble-own: #6366f1;
+  --chatsdk-message-text: #f1f5f9;
+  --chatsdk-message-text-own: #ffffff;
+  --chatsdk-message-meta: #64748b;
+
+  --chatsdk-reaction-bg: #1e293b;
+  --chatsdk-reaction-bg-own: rgba(129, 140, 248, 0.2);
+
+  --chatsdk-input-bg: #1e293b;
+  --chatsdk-input-border: #334155;
+}
+
+/* Base Reset */
+.chatsdk-root {
+  font-family: var(--chatsdk-font-sans);
+  font-size: var(--chatsdk-text-base);
+  font-feature-settings: var(--chatsdk-font-feature-settings);
+  color: var(--chatsdk-foreground);
+  background: var(--chatsdk-background);
+  line-height: 1.5;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.chatsdk-root *,
+.chatsdk-root *::before,
+.chatsdk-root *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Scrollbar Styling */
+.chatsdk-root ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.chatsdk-root ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chatsdk-root ::-webkit-scrollbar-thumb {
+  background: var(--chatsdk-border-strong);
+  border-radius: var(--chatsdk-radius-full);
+}
+
+.chatsdk-root ::-webkit-scrollbar-thumb:hover {
+  background: var(--chatsdk-muted-foreground);
+}
