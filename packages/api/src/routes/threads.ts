@@ -197,10 +197,10 @@ threadRoutes.post(
     };
 
     // Publish to real-time
-    await centrifugo.publishMessage(channelId, reply);
+    await centrifugo.publishMessage(auth.appId, channelId, reply);
 
     // Also publish thread-specific event
-    await centrifugo.getCentrifugo().publish(`chat:${channelId}`, {
+    await centrifugo.getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
       type: 'thread.reply',
       payload: {
         channelId,

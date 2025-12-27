@@ -16,6 +16,17 @@ import type {
   EventMap,
   EventCallback,
 } from '../types';
+import {
+  ChannelSchema,
+  CreateChannelSchema,
+  MessageSchema,
+  SendMessageSchema,
+  UpdateMessageSchema,
+  AddReactionSchema,
+  type CreateChannel,
+  type SendMessage,
+  type UpdateMessage,
+} from '../schemas';
 
 export interface ChatClientConfig {
   apiKey: string;
@@ -43,6 +54,7 @@ export class ChatClient {
   private connectionState: ConnectionState = 'disconnected';
   private token: string | null = null;      // API token for REST calls
   private wsToken: string | null = null;    // WebSocket token for Centrifugo
+  private appId: string | null = null;      // App ID extracted from wsToken
 
   constructor(options: ChatClientOptions) {
     // Debug logging
@@ -95,6 +107,14 @@ export class ChatClient {
       // New: separate tokens
       this.token = tokenOrTokens.token;
       this.wsToken = tokenOrTokens.wsToken;
+    }
+
+    // Extract app_id from wsToken for channel namespacing
+    if (this.wsToken) {
+      this.appId = this.extractAppIdFromToken(this.wsToken);
+      if (!this.appId) {
+        console.warn('[ChatClient] Failed to extract app_id from wsToken. Multi-tenant isolation may not work.');
+      }
     }
 
     this.currentUser = {
@@ -236,7 +256,7 @@ export class ChatClient {
   // ============================================================================
 
   private async subscribeToUserChannel(userId: string): Promise<Subscription> {
-    const channelName = `user:${userId}`;
+    const channelName = this.appId ? `user:${this.appId}:${userId}` : `user:${userId}`;
     return this.subscribe(channelName);
   }
 
@@ -244,7 +264,7 @@ export class ChatClient {
    * Subscribe to a channel for real-time updates
    */
   async subscribeToChannel(channelId: string): Promise<Subscription> {
-    const channelName = `chat:${channelId}`;
+    const channelName = this.appId ? `chat:${this.appId}:${channelId}` : `chat:${channelId}`;
     return this.subscribe(channelName);
   }
 
@@ -286,7 +306,7 @@ export class ChatClient {
    * Unsubscribe from a channel
    */
   async unsubscribeFromChannel(channelId: string): Promise<void> {
-    const channelName = `chat:${channelId}`;
+    const channelName = this.appId ? `chat:${this.appId}:${channelId}` : `chat:${channelId}`;
     const subscription = this.subscriptions.get(channelName);
 
     if (subscription) {
@@ -509,17 +529,20 @@ export class ChatClient {
   }
 
   /**
-   * Create a new channel
+   * Create a new channel with Zod validation
    */
-  async createChannel(data: {
-    type?: string;
-    name?: string;
-    memberIds: string[];
-  }): Promise<Channel> {
-    return this.fetch<Channel>('/api/channels', {
+  async createChannel(data: CreateChannel): Promise<Channel> {
+    // Validate input
+    const validatedData = CreateChannelSchema.parse(data);
+
+    // Make API call
+    const response = await this.fetch<any>('/api/channels', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(validatedData),
     });
+
+    // Validate and return response (cast to Channel type for compatibility)
+    return ChannelSchema.parse(response) as unknown as Channel;
   }
 
   // ============================================================================
@@ -548,35 +571,44 @@ export class ChatClient {
   }
 
   /**
-   * Send a message
+   * Send a message with Zod validation
    */
   async sendMessage(
     channelId: string,
-    data: {
-      text: string;
-      clientMsgId?: string;
-      attachments?: any[];
-      parentId?: string;
-    }
+    data: SendMessage
   ): Promise<MessageWithSeq> {
-    return this.fetch<MessageWithSeq>(`/api/channels/${channelId}/messages`, {
+    // Validate input
+    const validatedData = SendMessageSchema.parse(data);
+
+    // Make API call
+    const response = await this.fetch<any>(`/api/channels/${channelId}/messages`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(validatedData),
     });
+
+    // Validate and return response (cast for compatibility)
+    return MessageSchema.parse(response) as unknown as MessageWithSeq;
   }
 
   /**
-   * Update a message
+   * Update a message with Zod validation
    */
   async updateMessage(
     channelId: string,
     messageId: string,
-    data: { text: string }
+    data: UpdateMessage
   ): Promise<MessageWithSeq> {
-    return this.fetch<MessageWithSeq>(`/api/channels/${channelId}/messages/${messageId}`, {
+    // Validate input
+    const validatedData = UpdateMessageSchema.parse(data);
+
+    // Make API call
+    const response = await this.fetch<any>(`/api/channels/${channelId}/messages/${messageId}`, {
       method: 'PATCH',
-      body: JSON.stringify(data),
+      body: JSON.stringify(validatedData),
     });
+
+    // Validate and return response (cast for compatibility)
+    return MessageSchema.parse(response) as unknown as MessageWithSeq;
   }
 
   /**
@@ -593,28 +625,34 @@ export class ChatClient {
   // ============================================================================
 
   /**
-   * Add a reaction to a message
+   * Add a reaction to a message with Zod validation
    */
   async addReaction(
     channelId: string,
     messageId: string,
     emoji: string
   ): Promise<void> {
+    // Validate emoji format
+    const validatedData = AddReactionSchema.parse({ emoji });
+
     await this.fetch(`/api/channels/${channelId}/messages/${messageId}/reactions`, {
       method: 'POST',
-      body: JSON.stringify({ emoji }),
+      body: JSON.stringify(validatedData),
     });
   }
 
   /**
-   * Remove a reaction from a message
+   * Remove a reaction from a message with Zod validation
    */
   async removeReaction(
     channelId: string,
     messageId: string,
     emoji: string
   ): Promise<void> {
-    await this.fetch(`/api/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`, {
+    // Validate emoji format
+    const validatedData = AddReactionSchema.parse({ emoji });
+
+    await this.fetch(`/api/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(validatedData.emoji)}`, {
       method: 'DELETE',
     });
   }
@@ -655,6 +693,37 @@ export class ChatClient {
       method: 'POST',
       body: JSON.stringify({ messageId }),
     });
+  }
+
+  // ============================================================================
+  // Private Utilities
+  // ============================================================================
+
+  /**
+   * Extract app_id from JWT token
+   */
+  private extractAppIdFromToken(token: string): string | null {
+    try {
+      // JWT has 3 parts: header.payload.signature
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        return null;
+      }
+
+      // Decode payload (base64url)
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+
+      // Use atob in browser, Buffer in Node.js
+      const decoded = typeof atob !== 'undefined'
+        ? atob(base64)
+        : Buffer.from(base64, 'base64').toString('utf-8');
+
+      const payload = JSON.parse(decoded);
+      return payload.app_id || null;
+    } catch (error) {
+      console.error('[ChatClient] Failed to extract app_id from token:', error);
+      return null;
+    }
   }
 }
 

@@ -150,7 +150,7 @@ messageRoutes.post(
     const message = formatMessage(result, auth.user!);
 
     // Publish to Centrifugo for real-time delivery
-    await centrifugo.publishMessage(channelId, message);
+    await centrifugo.publishMessage(auth.appId, channelId, message);
 
     // Get channel info and members for notifications
     const channelInfo = await db.query(
@@ -186,6 +186,18 @@ messageRoutes.post(
       },
     }).catch((err) => {
       console.warn('Failed to send Inngest event:', err);
+    });
+
+    // Trigger link preview generation event (async - don't await)
+    inngest.send({
+      name: 'chat/message.created',
+      data: {
+        messageId: result.id,
+        appId: auth.appId,
+        text: body.text,
+      },
+    }).catch((err) => {
+      console.warn('Failed to send link preview event:', err);
     });
 
     return c.json(message, 201);
@@ -378,7 +390,7 @@ messageRoutes.patch(
     const message = formatMessage(result.rows[0], auth.user!);
 
     // Publish update
-    await centrifugo.publishMessageUpdate(channelId, message);
+    await centrifugo.publishMessageUpdate(auth.appId, channelId, message);
 
     return c.json(message);
   }
@@ -422,7 +434,7 @@ messageRoutes.delete('/:messageId', requireUser, async (c) => {
   );
 
   // Publish delete
-  await centrifugo.publishMessageDelete(channelId, messageId);
+  await centrifugo.publishMessageDelete(auth.appId, channelId, messageId);
 
   return c.json({ success: true });
 });
@@ -468,6 +480,7 @@ messageRoutes.post(
 
     // Publish reaction event
     await centrifugo.publishReaction(
+      auth.appId,
       channelId,
       messageId,
       { type: emoji, userId: auth.userId, user: auth.user },
@@ -515,6 +528,7 @@ messageRoutes.delete('/:messageId/reactions/:emoji', requireUser, async (c) => {
 
   // Publish reaction removed event
   await centrifugo.publishReaction(
+    auth.appId,
     channelId,
     messageId,
     { type: emoji, userId: auth.userId, user: auth.user },
@@ -582,3 +596,205 @@ async function getReactionsForMessages(
 
   return reactions;
 }
+
+// ============================================================================
+// Work Stream 10: Pinned Messages
+// ============================================================================
+
+/**
+ * Pin a message
+ * POST /api/messages/:messageId/pin
+ */
+messageRoutes.post('/:messageId/pin', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const channelId = c.req.param('channelId');
+  const messageId = c.req.param('messageId');
+
+  // Verify user has admin/owner role in channel (simplified check)
+  // In production, you should have proper channel role management
+  const memberCheck = await db.query(
+    `SELECT 1 FROM channel_member WHERE channel_id = $1 AND user_id = $2`,
+    [channelId, auth.userId]
+  );
+
+  if (memberCheck.rows.length === 0) {
+    return c.json({ error: { message: 'Not a channel member' } }, 403);
+  }
+
+  // Verify message exists in this channel
+  const messageCheck = await db.query(
+    `SELECT id FROM message WHERE id = $1 AND channel_id = $2 AND app_id = $3`,
+    [messageId, channelId, auth.appId]
+  );
+
+  if (messageCheck.rows.length === 0) {
+    return c.json({ error: { message: 'Message not found' } }, 404);
+  }
+
+  // Pin message
+  await db.query(
+    `INSERT INTO pinned_message (channel_id, message_id, app_id, pinned_by, pinned_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (channel_id, message_id) DO NOTHING`,
+    [channelId, messageId, auth.appId, auth.userId]
+  );
+
+  return c.json({ success: true });
+});
+
+/**
+ * Unpin a message
+ * DELETE /api/messages/:messageId/pin
+ */
+messageRoutes.delete('/:messageId/pin', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const channelId = c.req.param('channelId');
+  const messageId = c.req.param('messageId');
+
+  await db.query(
+    `DELETE FROM pinned_message WHERE channel_id = $1 AND message_id = $2 AND app_id = $3`,
+    [channelId, messageId, auth.appId]
+  );
+
+  return c.json({ success: true });
+});
+
+/**
+ * Get pinned messages for a channel
+ * GET /api/channels/:channelId/pins
+ */
+messageRoutes.get('/pins', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const channelId = c.req.param('channelId');
+
+  // Verify membership
+  const memberCheck = await db.query(
+    `SELECT 1 FROM channel_member WHERE channel_id = $1 AND user_id = $2`,
+    [channelId, auth.userId]
+  );
+
+  if (memberCheck.rows.length === 0) {
+    return c.json({ error: { message: 'Not a channel member' } }, 403);
+  }
+
+  const result = await db.query(
+    `SELECT m.*, pm.pinned_by, pm.pinned_at, u.name as user_name, u.image_url as user_image
+     FROM pinned_message pm
+     JOIN message m ON pm.message_id = m.id
+     JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
+     WHERE pm.channel_id = $1 AND pm.app_id = $2
+     ORDER BY pm.pinned_at DESC`,
+    [channelId, auth.appId]
+  );
+
+  const messages = result.rows.map((row) => ({
+    id: row.id,
+    text: row.text,
+    attachments: row.attachments,
+    createdAt: row.created_at,
+    user: {
+      id: row.user_id,
+      name: row.user_name,
+      image: row.user_image,
+    },
+    pinnedBy: row.pinned_by,
+    pinnedAt: row.pinned_at,
+  }));
+
+  return c.json({ messages });
+});
+
+// ============================================================================
+// Work Stream 11: Saved Messages
+// ============================================================================
+
+/**
+ * Save/bookmark a message
+ * POST /api/messages/:messageId/save
+ */
+messageRoutes.post('/:messageId/save', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const channelId = c.req.param('channelId');
+  const messageId = c.req.param('messageId');
+
+  // Verify message exists and user has access
+  const messageCheck = await db.query(
+    `SELECT m.id
+     FROM message m
+     JOIN channel_member cm ON m.channel_id = cm.channel_id AND cm.user_id = $3
+     WHERE m.id = $1 AND m.channel_id = $2 AND m.app_id = $4`,
+    [messageId, channelId, auth.userId, auth.appId]
+  );
+
+  if (messageCheck.rows.length === 0) {
+    return c.json({ error: { message: 'Message not found or no access' } }, 404);
+  }
+
+  // Save message
+  await db.query(
+    `INSERT INTO saved_message (app_id, user_id, message_id, saved_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (app_id, user_id, message_id) DO NOTHING`,
+    [auth.appId, auth.userId, messageId]
+  );
+
+  return c.json({ success: true });
+});
+
+/**
+ * Unsave/remove bookmark from a message
+ * DELETE /api/messages/:messageId/save
+ */
+messageRoutes.delete('/:messageId/save', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const messageId = c.req.param('messageId');
+
+  await db.query(
+    `DELETE FROM saved_message WHERE app_id = $1 AND user_id = $2 AND message_id = $3`,
+    [auth.appId, auth.userId, messageId]
+  );
+
+  return c.json({ success: true });
+});
+
+/**
+ * Get user's saved messages
+ * GET /api/users/me/saved
+ */
+messageRoutes.get('/me/saved', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const limit = parseInt(c.req.query('limit') || '50', 10);
+  const offset = parseInt(c.req.query('offset') || '0', 10);
+
+  const result = await db.query(
+    `SELECT m.*, sm.saved_at, u.name as user_name, u.image_url as user_image,
+            c.name as channel_name, c.id as channel_id
+     FROM saved_message sm
+     JOIN message m ON sm.message_id = m.id
+     JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
+     JOIN channel c ON m.channel_id = c.id
+     WHERE sm.app_id = $1 AND sm.user_id = $2
+     ORDER BY sm.saved_at DESC
+     LIMIT $3 OFFSET $4`,
+    [auth.appId, auth.userId, limit, offset]
+  );
+
+  const messages = result.rows.map((row) => ({
+    id: row.id,
+    text: row.text,
+    attachments: row.attachments,
+    createdAt: row.created_at,
+    savedAt: row.saved_at,
+    user: {
+      id: row.user_id,
+      name: row.user_name,
+      image: row.user_image,
+    },
+    channel: {
+      id: row.channel_id,
+      name: row.channel_name,
+    },
+  }));
+
+  return c.json({ messages });
+});

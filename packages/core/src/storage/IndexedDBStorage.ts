@@ -5,7 +5,7 @@
 
 import type { MessageWithSeq, SyncState, PendingMessage, Attachment } from '../types';
 import type { SyncStorage } from '../sync/MessageSyncer';
-import type { OfflineStorage, LocalMessage } from '../offline/OfflineQueue';
+import type { OfflineStorage, LocalMessage, ServerMessageVersion } from '../offline/OfflineQueue';
 
 const DB_NAME = 'chatsdk';
 const DB_VERSION = 1;
@@ -16,6 +16,7 @@ interface DBSchema {
   pending: PendingMessage;
   localMessages: LocalMessage;
   channels: { id: string; maxSeq: number };
+  serverVersions: ServerMessageVersion;
 }
 
 export class IndexedDBStorage implements SyncStorage, OfflineStorage {
@@ -81,6 +82,11 @@ export class IndexedDBStorage implements SyncStorage, OfflineStorage {
         // Channel state store - tracks max seq per channel
         if (!db.objectStoreNames.contains('channels')) {
           db.createObjectStore('channels', { keyPath: 'id' });
+        }
+
+        // Server message versions store - tracks server state for conflict detection
+        if (!db.objectStoreNames.contains('serverVersions')) {
+          db.createObjectStore('serverVersions', { keyPath: 'messageId' });
         }
       };
     });
@@ -338,6 +344,32 @@ export class IndexedDBStorage implements SyncStorage, OfflineStorage {
     });
   }
 
+  async storeServerVersion(messageId: string, version: ServerMessageVersion): Promise<void> {
+    const db = await this.getDB();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('serverVersions', 'readwrite');
+      const store = tx.objectStore('serverVersions');
+      const request = store.put(version);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async getServerVersion(messageId: string): Promise<ServerMessageVersion | null> {
+    const db = await this.getDB();
+
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('serverVersions', 'readonly');
+      const store = tx.objectStore('serverVersions');
+      const request = store.get(messageId);
+
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   // ============================================================================
   // Utility Methods
   // ============================================================================
@@ -350,7 +382,7 @@ export class IndexedDBStorage implements SyncStorage, OfflineStorage {
 
     return new Promise((resolve, reject) => {
       const tx = db.transaction(
-        ['messages', 'syncState', 'pending', 'localMessages', 'channels'],
+        ['messages', 'syncState', 'pending', 'localMessages', 'channels', 'serverVersions'],
         'readwrite'
       );
 
@@ -359,6 +391,7 @@ export class IndexedDBStorage implements SyncStorage, OfflineStorage {
       tx.objectStore('pending').clear();
       tx.objectStore('localMessages').clear();
       tx.objectStore('channels').clear();
+      tx.objectStore('serverVersions').clear();
 
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);

@@ -7,21 +7,26 @@ import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, Head
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
 
-const MINIO_ENDPOINT = process.env.MINIO_ENDPOINT || 'http://localhost:9002';
-const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY || 'chatsdk';
-const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || 'chatsdk_dev_123';
-const MINIO_BUCKET = process.env.MINIO_BUCKET || 'chatsdk';
-const MINIO_PUBLIC_URL = process.env.MINIO_PUBLIC_URL || 'http://localhost:9002';
+// Support both MINIO_* (dev) and S3_* (prod) environment variables
+const S3_ENDPOINT = process.env.S3_ENDPOINT || process.env.MINIO_ENDPOINT || 'http://localhost:9002';
+const S3_REGION = process.env.S3_REGION || 'us-east-1';
+const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY || process.env.MINIO_ACCESS_KEY || 'chatsdk';
+const S3_SECRET_KEY = process.env.S3_SECRET_KEY || process.env.MINIO_SECRET_KEY || 'chatsdk_dev_123';
+const S3_BUCKET = process.env.S3_BUCKET || process.env.MINIO_BUCKET || 'chatsdk';
+const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL || process.env.MINIO_PUBLIC_URL || 'http://localhost:9002';
 
-// Initialize S3 client for MinIO
+// Determine if we need to force path style (required for MinIO, not for AWS S3)
+const isMinIO = S3_ENDPOINT.includes('localhost') || S3_ENDPOINT.includes('minio');
+
+// Initialize S3 client (compatible with AWS S3, MinIO, DigitalOcean Spaces, Cloudflare R2, etc.)
 const s3Client = new S3Client({
-  endpoint: MINIO_ENDPOINT,
-  region: 'us-east-1',
+  endpoint: S3_ENDPOINT,
+  region: S3_REGION,
   credentials: {
-    accessKeyId: MINIO_ACCESS_KEY,
-    secretAccessKey: MINIO_SECRET_KEY,
+    accessKeyId: S3_ACCESS_KEY,
+    secretAccessKey: S3_SECRET_KEY,
   },
-  forcePathStyle: true, // Required for MinIO
+  forcePathStyle: isMinIO, // Required for MinIO and some S3-compatible services
 });
 
 export interface UploadedFile {
@@ -69,7 +74,7 @@ export async function uploadFile(
 
   await s3Client.send(
     new PutObjectCommand({
-      Bucket: MINIO_BUCKET,
+      Bucket: S3_BUCKET,
       Key: key,
       Body: buffer,
       ContentType: options.contentType,
@@ -84,7 +89,7 @@ export async function uploadFile(
 
   return {
     key,
-    url: `${MINIO_PUBLIC_URL}/${MINIO_BUCKET}/${key}`,
+    url: `${S3_PUBLIC_URL}/${S3_BUCKET}/${key}`,
     contentType: options.contentType,
     size: buffer.length,
     filename: options.filename,
@@ -101,7 +106,7 @@ export async function getPresignedUploadUrl(
   const key = generateKey(options);
 
   const command = new PutObjectCommand({
-    Bucket: MINIO_BUCKET,
+    Bucket: S3_BUCKET,
     Key: key,
     ContentType: options.contentType,
     Metadata: {
@@ -116,7 +121,7 @@ export async function getPresignedUploadUrl(
   return {
     key,
     uploadUrl,
-    publicUrl: `${MINIO_PUBLIC_URL}/${MINIO_BUCKET}/${key}`,
+    publicUrl: `${S3_PUBLIC_URL}/${S3_BUCKET}/${key}`,
   };
 }
 
@@ -128,7 +133,7 @@ export async function getPresignedDownloadUrl(
   expiresIn = 3600
 ): Promise<string> {
   const command = new GetObjectCommand({
-    Bucket: MINIO_BUCKET,
+    Bucket: S3_BUCKET,
     Key: key,
   });
 
@@ -141,7 +146,7 @@ export async function getPresignedDownloadUrl(
 export async function deleteFile(key: string): Promise<void> {
   await s3Client.send(
     new DeleteObjectCommand({
-      Bucket: MINIO_BUCKET,
+      Bucket: S3_BUCKET,
       Key: key,
     })
   );
@@ -154,7 +159,7 @@ export async function fileExists(key: string): Promise<boolean> {
   try {
     await s3Client.send(
       new HeadObjectCommand({
-        Bucket: MINIO_BUCKET,
+        Bucket: S3_BUCKET,
         Key: key,
       })
     );
@@ -176,7 +181,7 @@ export async function getFileMetadata(key: string): Promise<{
   try {
     const response = await s3Client.send(
       new HeadObjectCommand({
-        Bucket: MINIO_BUCKET,
+        Bucket: S3_BUCKET,
         Key: key,
       })
     );
@@ -200,34 +205,36 @@ export async function initStorage(): Promise<void> {
 
   try {
     // Check if bucket exists
-    await s3Client.send(new HeadBucketCommand({ Bucket: MINIO_BUCKET }));
-    console.log(`Storage bucket "${MINIO_BUCKET}" exists`);
+    await s3Client.send(new HeadBucketCommand({ Bucket: S3_BUCKET }));
+    console.log(`Storage bucket "${S3_BUCKET}" exists`);
   } catch (error: any) {
     if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
       // Create bucket
-      await s3Client.send(new CreateBucketCommand({ Bucket: MINIO_BUCKET }));
-      console.log(`Created storage bucket "${MINIO_BUCKET}"`);
+      await s3Client.send(new CreateBucketCommand({ Bucket: S3_BUCKET }));
+      console.log(`Created storage bucket "${S3_BUCKET}"`);
 
-      // Set bucket policy for public read access
-      const policy = {
-        Version: '2012-10-17',
-        Statement: [
-          {
-            Effect: 'Allow',
-            Principal: '*',
-            Action: ['s3:GetObject'],
-            Resource: [`arn:aws:s3:::${MINIO_BUCKET}/*`],
-          },
-        ],
-      };
+      // Set bucket policy for public read access (only for MinIO/self-hosted S3)
+      if (isMinIO) {
+        const policy = {
+          Version: '2012-10-17',
+          Statement: [
+            {
+              Effect: 'Allow',
+              Principal: '*',
+              Action: ['s3:GetObject'],
+              Resource: [`arn:aws:s3:::${S3_BUCKET}/*`],
+            },
+          ],
+        };
 
-      await s3Client.send(
-        new PutBucketPolicyCommand({
-          Bucket: MINIO_BUCKET,
-          Policy: JSON.stringify(policy),
-        })
-      );
-      console.log('Set bucket policy for public read access');
+        await s3Client.send(
+          new PutBucketPolicyCommand({
+            Bucket: S3_BUCKET,
+            Policy: JSON.stringify(policy),
+          })
+        );
+        console.log('Set bucket policy for public read access');
+      }
     } else {
       console.warn('Failed to check storage bucket:', error);
     }

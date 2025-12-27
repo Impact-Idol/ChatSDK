@@ -150,8 +150,8 @@ export const centrifugo = {
   /**
    * Publish new message event to channel
    */
-  async publishMessage(channelId: string, message: any): Promise<void> {
-    await getCentrifugo().publish(`chat:${channelId}`, {
+  async publishMessage(appId: string, channelId: string, message: any): Promise<void> {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
       type: 'message.new',
       payload: { channelId, message },
     });
@@ -160,8 +160,8 @@ export const centrifugo = {
   /**
    * Publish message update event
    */
-  async publishMessageUpdate(channelId: string, message: any): Promise<void> {
-    await getCentrifugo().publish(`chat:${channelId}`, {
+  async publishMessageUpdate(appId: string, channelId: string, message: any): Promise<void> {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
       type: 'message.updated',
       payload: { channelId, message },
     });
@@ -170,8 +170,8 @@ export const centrifugo = {
   /**
    * Publish message delete event
    */
-  async publishMessageDelete(channelId: string, messageId: string): Promise<void> {
-    await getCentrifugo().publish(`chat:${channelId}`, {
+  async publishMessageDelete(appId: string, channelId: string, messageId: string): Promise<void> {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
       type: 'message.deleted',
       payload: { channelId, messageId },
     });
@@ -180,8 +180,8 @@ export const centrifugo = {
   /**
    * Publish typing indicator
    */
-  async publishTyping(channelId: string, user: any, typing: boolean): Promise<void> {
-    await getCentrifugo().publish(`chat:${channelId}`, {
+  async publishTyping(appId: string, channelId: string, user: any, typing: boolean): Promise<void> {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
       type: typing ? 'typing.start' : 'typing.stop',
       payload: { channelId, user },
     });
@@ -191,12 +191,13 @@ export const centrifugo = {
    * Publish reaction event
    */
   async publishReaction(
+    appId: string,
     channelId: string,
     messageId: string,
     reaction: any,
     added: boolean
   ): Promise<void> {
-    await getCentrifugo().publish(`chat:${channelId}`, {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
       type: added ? 'reaction.added' : 'reaction.removed',
       payload: { channelId, messageId, reaction },
     });
@@ -206,11 +207,12 @@ export const centrifugo = {
    * Publish read receipt
    */
   async publishReadReceipt(
+    appId: string,
     channelId: string,
     userId: string,
     lastReadSeq: number
   ): Promise<void> {
-    await getCentrifugo().publish(`chat:${channelId}`, {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
       type: 'read.updated',
       payload: { channelId, userId, lastReadSeq },
     });
@@ -219,8 +221,8 @@ export const centrifugo = {
   /**
    * Publish presence update to user's personal channel
    */
-  async publishPresence(userId: string, online: boolean, lastSeen?: string): Promise<void> {
-    await getCentrifugo().publish(`user:${userId}`, {
+  async publishPresence(appId: string, userId: string, online: boolean, lastSeen?: string): Promise<void> {
+    await getCentrifugo().publish(`user:${appId}:${userId}`, {
       type: online ? 'presence.online' : 'presence.offline',
       payload: { userId, lastSeen },
     });

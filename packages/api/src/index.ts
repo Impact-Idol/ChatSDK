@@ -27,6 +27,17 @@ import { threadRoutes } from './routes/threads';
 import { receiptRoutes } from './routes/receipts';
 import { mentionRoutes } from './routes/mentions';
 import { webPushRoutes } from './routes/webpush';
+import { workspaceRoutes } from './routes/workspaces';
+import { pollRoutes } from './routes/polls';
+import { moderationRoutes } from './routes/moderation';
+import { adminRoutes } from './routes/admin';
+import { supervisionRoutes } from './routes/supervision';
+import { enrollmentRoutes } from './routes/enrollment';
+import { templatesRoutes } from './routes/templates';
+import { emojiRoutes } from './routes/emoji';
+import { webhooksRoutes } from './routes/webhooks';
+import { metricsRoutes } from './routes/metrics';
+import { metricsMiddleware } from './middleware/metrics';
 import { db, initDB } from './services/database';
 import { initCentrifugo } from './services/centrifugo';
 import { initNovu } from './services/novu';
@@ -42,6 +53,7 @@ const app = new Hono();
 app.use('*', logger());
 app.use('*', timing());
 app.use('*', prettyJSON());
+app.use('*', metricsMiddleware);
 
 // Manual CORS middleware
 app.use('*', async (c, next) => {
@@ -65,19 +77,20 @@ app.use('*', async (c, next) => {
   }
 
   if (c.req.method === 'OPTIONS') {
-    return c.text('', 204);
+    return new Response(null, { status: 204 });
   }
 
   await next();
 });
 
-// Health check
-app.get('/health', (c) => {
-  return c.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+// Metrics & Health routes (public, no auth required)
+app.route('/', metricsRoutes);
 
 // Public routes
 app.route('/tokens', tokenRoutes);
+
+// Admin routes (uses own authentication middleware)
+app.route('/admin', adminRoutes);
 
 // Inngest webhook handler
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', inngestServe({ client: inngest, functions: allFunctions }));
@@ -91,6 +104,8 @@ app.route('/api/uploads', uploadRoutes);
 app.route('/api/search', searchRoutes);
 app.route('/api/presence', presenceRoutes);
 app.route('/api/webpush', webPushRoutes);
+app.route('/api/workspaces', workspaceRoutes);
+app.route('/api/moderation', moderationRoutes);
 
 // Channel-specific routes
 app.route('/api/channels/:channelId/messages', messageRoutes);
@@ -98,9 +113,20 @@ app.route('/api/channels/:channelId/uploads', channelUploadsRoutes);
 app.route('/api/channels/:channelId/search', channelSearchRoutes);
 app.route('/api/channels/:channelId/presence', channelPresenceRoutes);
 app.route('/api/channels/:channelId/messages/:messageId/thread', threadRoutes);
+app.route('/api/channels/:channelId/messages/:messageId/polls', pollRoutes);
 app.route('/api/channels/:channelId/read', receiptRoutes);
 app.route('/api/channels/:channelId/receipts', receiptRoutes);
 app.route('/api/mentions', mentionRoutes);
+app.route('/api/polls', pollRoutes);
+
+// TIER 3 Routes (Competitive Differentiators)
+app.route('/api/users', supervisionRoutes); // Supervision routes are under /api/users/:userId/supervise
+app.route('/api/enrollment', enrollmentRoutes);
+app.route('/api/templates', templatesRoutes);
+app.route('/api/emoji', emojiRoutes);
+
+// TIER 4 Routes (Developer Experience)
+app.route('/api/webhooks', webhooksRoutes);
 
 // Error handling
 app.onError((err, c) => {

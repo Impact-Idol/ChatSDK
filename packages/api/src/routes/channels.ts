@@ -385,7 +385,7 @@ channelRoutes.post(
     // Import here to avoid circular dependency
     const { centrifugo } = await import('../services/centrifugo');
 
-    await centrifugo.publishTyping(channelId, auth.user!, typing);
+    await centrifugo.publishTyping(auth.appId, channelId, auth.user!, typing);
 
     return c.json({ success: true });
   }
@@ -425,7 +425,7 @@ channelRoutes.post(
 
     // Publish read receipt
     const { centrifugo } = await import('../services/centrifugo');
-    await centrifugo.publishReadReceipt(channelId, auth.userId!, maxSeq);
+    await centrifugo.publishReadReceipt(auth.appId, channelId, auth.userId!, maxSeq);
 
     return c.json({ success: true, lastReadSeq: maxSeq });
   }

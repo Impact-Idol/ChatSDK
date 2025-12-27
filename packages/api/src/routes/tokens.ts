@@ -77,6 +77,7 @@ tokenRoutes.post(
     const centrifugoSecret = new TextEncoder().encode(CENTRIFUGO_SECRET);
     const wsToken = await new jose.SignJWT({
       sub: body.userId,
+      app_id: appId,
     })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
@@ -128,6 +129,7 @@ tokenRoutes.post('/refresh', async (c) => {
     const centrifugoSecret = new TextEncoder().encode(CENTRIFUGO_SECRET);
     const wsToken = await new jose.SignJWT({
       sub: payload.user_id as string,
+      app_id: payload.app_id as string,
     })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()

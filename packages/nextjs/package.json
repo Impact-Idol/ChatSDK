@@ -1,0 +1,41 @@
+{
+  "name": "@chatsdk/nextjs",
+  "version": "1.0.0",
+  "description": "Next.js Server Actions adapter for ChatSDK",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./actions": {
+      "import": "./dist/actions/index.js",
+      "types": "./dist/actions/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "chatsdk",
+    "nextjs",
+    "server-actions",
+    "chat",
+    "messaging"
+  ],
+  "author": "ChatSDK Team",
+  "license": "MIT",
+  "peerDependencies": {
+    "next": ">=14.0.0"
+  },
+  "dependencies": {
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}

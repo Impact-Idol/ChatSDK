@@ -1,0 +1,41 @@
+{
+  "name": "@chatsdk/migration-cli",
+  "version": "1.0.0",
+  "description": "CLI tool for migrating from Stream Chat to ChatSDK",
+  "main": "./dist/index.js",
+  "bin": {
+    "chatsdk-migrate": "./dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "chatsdk",
+    "migration",
+    "stream-chat",
+    "cli"
+  ],
+  "author": "ChatSDK Team",
+  "license": "MIT",
+  "dependencies": {
+    "stream-chat": "^8.40.0",
+    "commander": "^12.0.0",
+    "cli-progress": "^3.12.0",
+    "ora": "^8.0.1",
+    "chalk": "^5.3.0",
+    "pg": "^8.13.1",
+    "uuid": "^11.0.3",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.11.0",
+    "@types/cli-progress": "^3.11.5",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.3.0"
+  }
+}

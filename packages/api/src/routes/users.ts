@@ -161,3 +161,84 @@ function isOnline(lastActiveAt: Date | null): boolean {
   const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
   return new Date(lastActiveAt).getTime() > fiveMinutesAgo;
 }
+
+// ============================================================================
+// User Blocking (Work Stream 7)
+// ============================================================================
+
+/**
+ * Block a user
+ * POST /api/users/:userId/block
+ */
+userRoutes.post('/:userId/block', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const blockedUserId = c.req.param('userId');
+
+  // Can't block yourself
+  if (auth.userId === blockedUserId) {
+    return c.json({ error: { message: 'Cannot block yourself' } }, 400);
+  }
+
+  // Verify target user exists
+  const userCheck = await db.query(
+    `SELECT id FROM app_user WHERE app_id = $1 AND id = $2`,
+    [auth.appId, blockedUserId]
+  );
+
+  if (userCheck.rows.length === 0) {
+    return c.json({ error: { message: 'User not found' } }, 404);
+  }
+
+  // Insert block (using ON CONFLICT to handle duplicate blocks)
+  await db.query(
+    `INSERT INTO user_block (app_id, blocker_user_id, blocked_user_id, blocked_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (app_id, blocker_user_id, blocked_user_id) DO NOTHING`,
+    [auth.appId, auth.userId, blockedUserId]
+  );
+
+  return c.json({ success: true });
+});
+
+/**
+ * Unblock a user
+ * DELETE /api/users/:userId/block
+ */
+userRoutes.delete('/:userId/block', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const blockedUserId = c.req.param('userId');
+
+  await db.query(
+    `DELETE FROM user_block
+     WHERE app_id = $1 AND blocker_user_id = $2 AND blocked_user_id = $3`,
+    [auth.appId, auth.userId, blockedUserId]
+  );
+
+  return c.json({ success: true });
+});
+
+/**
+ * Get list of blocked users
+ * GET /api/users/blocked
+ */
+userRoutes.get('/me/blocked', requireUser, async (c) => {
+  const auth = c.get('auth');
+
+  const result = await db.query(
+    `SELECT u.id, u.name, u.image_url, ub.blocked_at
+     FROM user_block ub
+     JOIN app_user u ON ub.app_id = u.app_id AND ub.blocked_user_id = u.id
+     WHERE ub.app_id = $1 AND ub.blocker_user_id = $2
+     ORDER BY ub.blocked_at DESC`,
+    [auth.appId, auth.userId]
+  );
+
+  const blockedUsers = result.rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    image: row.image_url,
+    blockedAt: row.blocked_at,
+  }));
+
+  return c.json({ blockedUsers });
+});

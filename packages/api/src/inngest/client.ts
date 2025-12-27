@@ -65,6 +65,13 @@ export type ChatEvents = {
       lastSeen: string;
     };
   };
+  'chat/message.created': {
+    data: {
+      messageId: string;
+      appId: string;
+      text: string;
+    };
+  };
 };
 
 // Create Inngest client

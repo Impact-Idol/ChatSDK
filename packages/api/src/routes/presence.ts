@@ -51,7 +51,7 @@ presenceRoutes.post('/online', requireUser, async (c) => {
   );
 
   for (const row of memberships.rows) {
-    await centrifugo.publishPresence(row.channel_id, auth.userId!, true);
+    await centrifugo.publishPresence(auth.appId, auth.userId!, true);
   }
 
   return c.json({ success: true });
@@ -81,7 +81,7 @@ presenceRoutes.post('/offline', requireUser, async (c) => {
 
   const lastSeen = new Date().toISOString();
   for (const row of memberships.rows) {
-    await centrifugo.publishPresence(row.channel_id, auth.userId!, false, lastSeen);
+    await centrifugo.publishPresence(auth.appId, auth.userId!, false, lastSeen);
   }
 
   return c.json({ success: true });
