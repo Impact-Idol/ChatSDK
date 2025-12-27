@@ -42,13 +42,34 @@ const app = new Hono();
 app.use('*', logger());
 app.use('*', timing());
 app.use('*', prettyJSON());
-app.use(
-  '*',
-  cors({
-    origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:5173', 'http://localhost:6007', 'http://localhost:5500'],
-    credentials: true,
-  })
-);
+
+// Manual CORS middleware
+app.use('*', async (c, next) => {
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002',
+    'http://localhost:5173',
+    'http://localhost:6007',
+    'http://localhost:6001',
+    'http://localhost:5500'
+  ];
+
+  const origin = c.req.header('Origin');
+
+  if (origin && allowedOrigins.includes(origin)) {
+    c.header('Access-Control-Allow-Origin', origin);
+    c.header('Access-Control-Allow-Credentials', 'true');
+    c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+  }
+
+  if (c.req.method === 'OPTIONS') {
+    return c.text('', 204);
+  }
+
+  await next();
+});
 
 // Health check
 app.get('/health', (c) => {

@@ -425,7 +425,7 @@ const getActorTypeIcon = (type: AuditLogEntry['actor']['type']) => {
   }
 };
 
-const getTargetIcon = (type?: AuditLogEntry['target']['type']) => {
+const getTargetIcon = (type?: 'user' | 'channel' | 'message' | 'api_key' | 'webhook' | 'settings') => {
   switch (type) {
     case 'user': return <UserIcon />;
     case 'channel': return <HashIcon />;
