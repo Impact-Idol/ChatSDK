@@ -452,6 +452,13 @@ export interface EventMap {
 
   // Read receipt events
   'read.updated': { channelId: string; userId: string; lastReadSeq: number };
+  'read_receipt': { channelId: string; userId: string; messageId: string };
+
+  // Thread events
+  'thread.reply': { channelId: string; threadId: string; message: MessageWithSeq };
+
+  // Mention events
+  'mention': { channelId: string; messageId: string; mentionedUserId: string };
 }
 
 export type EventCallback<K extends keyof EventMap> = (data: EventMap[K]) => void;

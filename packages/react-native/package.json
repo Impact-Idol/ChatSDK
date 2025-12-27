@@ -16,8 +16,8 @@
     "react-native": ">=0.72.0"
   },
   "dependencies": {
-    "@chatsdk/core": "workspace:*",
-    "@chatsdk/react": "workspace:*"
+    "@chatsdk/core": "*",
+    "@chatsdk/react": "*"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

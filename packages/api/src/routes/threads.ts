@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { requireUser } from '../middleware/auth';
 import { db } from '../services/database';
 import { centrifugo } from '../services/centrifugo';
+import { inngest } from '../inngest';
 
 export const threadRoutes = new Hono();
 
@@ -206,6 +207,37 @@ threadRoutes.post(
         parentId: parentMessageId,
         message: reply,
       },
+    });
+
+    // Get channel info and thread participants for notification
+    const [channelInfo, participantsResult] = await Promise.all([
+      db.query(
+        `SELECT name FROM channel WHERE id = $1 AND app_id = $2`,
+        [channelId, auth.appId]
+      ),
+      db.query(
+        `SELECT DISTINCT user_id FROM message WHERE parent_id = $1 OR id = $1`,
+        [parentMessageId]
+      ),
+    ]);
+
+    const channelName = channelInfo.rows[0]?.name || 'Thread';
+    const participantIds = participantsResult.rows.map((r) => r.user_id);
+
+    // Trigger Inngest notification event for thread replies
+    inngest.send({
+      name: 'chat/thread.reply',
+      data: {
+        threadId: parentMessageId,
+        channelId,
+        channelName,
+        replierId: auth.userId!,
+        replierName: auth.user?.name || 'Unknown',
+        replyContent: body.text,
+        threadParticipantIds: participantIds,
+      },
+    }).catch((err) => {
+      console.warn('Failed to send thread reply Inngest event:', err);
     });
 
     return c.json(reply, 201);

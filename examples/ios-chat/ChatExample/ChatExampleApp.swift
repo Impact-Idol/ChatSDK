@@ -6,13 +6,15 @@ struct ChatExampleApp: App {
     @StateObject private var viewModel: ChatViewModel
 
     init() {
-        // Initialize ChatClient
+        // Initialize ChatClient (demo mode - no backend needed)
         let client = ChatClient(
             apiURL: URL(string: "http://localhost:5500")!,
             token: "demo-token",
-            debug: true
+            debug: false  // Disable debug to avoid network error logs
         )
-        _viewModel = StateObject(wrappedValue: ChatViewModel(client: client))
+        let vm = ChatViewModel(client: client)
+        vm.loadMockData()  // Load demo data
+        _viewModel = StateObject(wrappedValue: vm)
     }
 
     var body: some Scene {

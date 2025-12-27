@@ -133,6 +133,7 @@ export { ModerationQueue } from './components/admin/ModerationQueue';
 export { APIKeysManager } from './components/admin/APIKeysManager';
 export { WebhooksManager } from './components/admin/WebhooksManager';
 export { AuditLog } from './components/admin/AuditLog';
+export { AnalyticsDashboard } from './components/admin/AnalyticsDashboard';
 
 // User Components
 export { AuthLayout } from './components/user/AuthLayout';

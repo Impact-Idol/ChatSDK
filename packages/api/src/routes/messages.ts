@@ -445,6 +445,19 @@ messageRoutes.post(
     const messageId = c.req.param('messageId');
     const { emoji } = c.req.valid('json');
 
+    // Get message author info before inserting reaction
+    const messageResult = await db.query(
+      `SELECT user_id, text FROM message WHERE id = $1 AND app_id = $2`,
+      [messageId, auth.appId]
+    );
+
+    if (messageResult.rows.length === 0) {
+      return c.json({ error: { message: 'Message not found' } }, 404);
+    }
+
+    const messageAuthorId = messageResult.rows[0].user_id;
+    const messagePreview = messageResult.rows[0].text;
+
     // Insert reaction (upsert)
     await db.query(
       `INSERT INTO reaction (message_id, app_id, user_id, emoji)
@@ -460,6 +473,24 @@ messageRoutes.post(
       { type: emoji, userId: auth.userId, user: auth.user },
       true
     );
+
+    // Trigger Inngest notification event for reactions (don't notify self-reactions)
+    if (messageAuthorId !== auth.userId) {
+      inngest.send({
+        name: 'chat/message.reaction',
+        data: {
+          messageId,
+          channelId,
+          reactorId: auth.userId!,
+          reactorName: auth.user?.name || 'Unknown',
+          emoji,
+          messageAuthorId,
+          messagePreview: messagePreview?.slice(0, 100) || '',
+        },
+      }).catch((err) => {
+        console.warn('Failed to send reaction Inngest event:', err);
+      });
+    }
 
     return c.json({ success: true });
   }

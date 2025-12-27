@@ -1,7 +1,7 @@
 /**
  * Inngest Notification Functions
  * Orchestrates notification logic - decides who, when, and what to notify
- * Then calls Novu to handle the actual delivery
+ * Then calls Novu (mobile) and Web Push (browser) for delivery
  */
 
 import { inngest, ChatEvents } from '../client';
@@ -13,7 +13,22 @@ import {
   notifyChannelInvite,
   notifyBatch,
 } from '../../services/novu';
+import {
+  sendWebPushNotification,
+  sendWebPushToUsers,
+  webPushPayloads,
+  isWebPushConfigured,
+} from '../../services/webpush';
 import { db } from '../../services/database';
+
+// Helper to get app_id for a channel
+async function getAppIdForChannel(channelId: string): Promise<string | null> {
+  const result = await db.query(
+    'SELECT app_id FROM channel WHERE id = $1 LIMIT 1',
+    [channelId]
+  );
+  return result.rows[0]?.app_id || null;
+}
 
 /**
  * Handle new message notifications
@@ -52,11 +67,17 @@ export const handleNewMessage = inngest.createFunction(
       return { notified: 0, reason: 'no-recipients' };
     }
 
+    // Get app_id for Web Push
+    const appId = await step.run('get-app-id', async () => {
+      return getAppIdForChannel(data.channelId);
+    });
+
     // Step 2: Handle @mentions first (higher priority)
     if (data.mentions.length > 0) {
       await step.run('notify-mentions', async () => {
         for (const mentionedUserId of data.mentions) {
           if (mentionedUserId !== data.senderId) {
+            // Novu (mobile push)
             await notifyMention({
               recipientId: mentionedUserId,
               mentionedBy: data.senderId,
@@ -66,6 +87,21 @@ export const handleNewMessage = inngest.createFunction(
               messagePreview: data.content,
               messageId: data.messageId,
             });
+
+            // Web Push (browser)
+            if (appId && isWebPushConfigured()) {
+              await sendWebPushNotification(
+                appId,
+                mentionedUserId,
+                webPushPayloads.mention({
+                  mentionedByName: data.senderName,
+                  channelName: data.channelName,
+                  messagePreview: data.content,
+                  channelId: data.channelId,
+                  messageId: data.messageId,
+                })
+              );
+            }
           }
         }
       });
@@ -81,6 +117,7 @@ export const handleNewMessage = inngest.createFunction(
         // For direct messages, always notify
         // For groups/public, respect notification settings
         if (data.channelType === 'direct') {
+          // Novu (mobile push)
           await notifyNewMessage({
             recipientId: nonMentionedRecipients[0],
             senderId: data.senderId,
@@ -91,8 +128,24 @@ export const handleNewMessage = inngest.createFunction(
             messagePreview: data.content,
             messageId: data.messageId,
           });
+
+          // Web Push (browser)
+          if (appId && isWebPushConfigured()) {
+            await sendWebPushNotification(
+              appId,
+              nonMentionedRecipients[0],
+              webPushPayloads.newMessage({
+                senderName: data.senderName,
+                channelName: data.senderName,
+                messagePreview: data.content,
+                channelId: data.channelId,
+                messageId: data.messageId,
+              })
+            );
+          }
         } else {
           // Batch notification for groups
+          // Novu (mobile push)
           await notifyBatch('new-message', nonMentionedRecipients, {
             senderId: data.senderId,
             senderName: data.senderName,
@@ -102,6 +155,21 @@ export const handleNewMessage = inngest.createFunction(
             messagePreview: data.content,
             messageId: data.messageId,
           });
+
+          // Web Push (browser) - batch to all recipients
+          if (appId && isWebPushConfigured()) {
+            await sendWebPushToUsers(
+              appId,
+              nonMentionedRecipients,
+              webPushPayloads.newMessage({
+                senderName: data.senderName,
+                channelName: data.channelName,
+                messagePreview: data.content,
+                channelId: data.channelId,
+                messageId: data.messageId,
+              })
+            );
+          }
         }
       });
     }
@@ -137,7 +205,13 @@ export const handleReaction = inngest.createFunction(
       return { notified: false, reason: 'self-reaction' };
     }
 
+    // Get app_id for Web Push
+    const appId = await step.run('get-app-id', async () => {
+      return getAppIdForChannel(data.channelId);
+    });
+
     await step.run('send-reaction-notification', async () => {
+      // Novu (mobile push)
       await notifyReaction({
         recipientId: data.messageAuthorId,
         reactorId: data.reactorId,
@@ -147,6 +221,21 @@ export const handleReaction = inngest.createFunction(
         messagePreview: data.messagePreview,
         messageId: data.messageId,
       });
+
+      // Web Push (browser)
+      if (appId && isWebPushConfigured()) {
+        await sendWebPushNotification(
+          appId,
+          data.messageAuthorId,
+          webPushPayloads.reaction({
+            reactorName: data.reactorName,
+            emoji: data.emoji,
+            messagePreview: data.messagePreview,
+            channelId: data.channelId,
+            messageId: data.messageId,
+          })
+        );
+      }
     });
 
     return { notified: true };
@@ -181,8 +270,14 @@ export const handleThreadReply = inngest.createFunction(
       return { notified: 0, reason: 'no-recipients' };
     }
 
+    // Get app_id for Web Push
+    const appId = await step.run('get-app-id', async () => {
+      return getAppIdForChannel(data.channelId);
+    });
+
     await step.run('notify-thread-participants', async () => {
       for (const recipientId of recipientIds) {
+        // Novu (mobile push)
         await notifyThreadReply({
           recipientId,
           replierId: data.replierId,
@@ -192,6 +287,21 @@ export const handleThreadReply = inngest.createFunction(
           threadId: data.threadId,
           replyPreview: data.replyContent,
         });
+
+        // Web Push (browser)
+        if (appId && isWebPushConfigured()) {
+          await sendWebPushNotification(
+            appId,
+            recipientId,
+            webPushPayloads.threadReply({
+              replierName: data.replierName,
+              channelName: data.channelName,
+              replyPreview: data.replyContent,
+              channelId: data.channelId,
+              threadId: data.threadId,
+            })
+          );
+        }
       }
     });
 
@@ -212,8 +322,14 @@ export const handleChannelInvite = inngest.createFunction(
   async ({ event, step }) => {
     const { data } = event;
 
+    // Get app_id for Web Push
+    const appId = await step.run('get-app-id', async () => {
+      return getAppIdForChannel(data.channelId);
+    });
+
     await step.run('send-invite-notifications', async () => {
       for (const inviteeId of data.inviteeIds) {
+        // Novu (mobile push)
         await notifyChannelInvite({
           recipientId: inviteeId,
           invitedBy: data.invitedBy,
@@ -222,6 +338,19 @@ export const handleChannelInvite = inngest.createFunction(
           channelName: data.channelName,
           channelDescription: data.channelDescription,
         });
+
+        // Web Push (browser)
+        if (appId && isWebPushConfigured()) {
+          await sendWebPushNotification(
+            appId,
+            inviteeId,
+            webPushPayloads.channelInvite({
+              invitedByName: data.invitedByName,
+              channelName: data.channelName,
+              channelId: data.channelId,
+            })
+          );
+        }
       }
     });
 

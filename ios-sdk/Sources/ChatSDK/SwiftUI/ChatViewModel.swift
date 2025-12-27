@@ -224,6 +224,108 @@ public final class ChatViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Demo/Mock Data
+
+    /// Load mock data for demo purposes (when no backend is available)
+    public func loadMockData() {
+        let currentUser = User(id: "user-1", name: "You", online: true)
+
+        let alice = User(id: "user-2", name: "Alice", online: true)
+        let bob = User(id: "user-3", name: "Bob", online: false)
+        let charlie = User(id: "user-4", name: "Charlie", online: true)
+
+        // Mock channels
+        let generalChannel = Channel(
+            id: "channel-1",
+            cid: "group:channel-1",
+            type: .group,
+            name: "General",
+            memberCount: 4,
+            unreadCount: 2,
+            lastMessageAt: Date()
+        )
+
+        let designChannel = Channel(
+            id: "channel-2",
+            cid: "group:channel-2",
+            type: .group,
+            name: "Design Team",
+            memberCount: 3,
+            unreadCount: 0,
+            lastMessageAt: Date().addingTimeInterval(-3600)
+        )
+
+        let dmChannel = Channel(
+            id: "channel-3",
+            cid: "messaging:channel-3",
+            type: .messaging,
+            name: "Alice",
+            memberCount: 2,
+            unreadCount: 1,
+            lastMessageAt: Date().addingTimeInterval(-1800)
+        )
+
+        channels = [generalChannel, dmChannel, designChannel]
+
+        // Mock messages for General channel
+        let generalMessages: [Message] = [
+            Message(
+                id: "msg-1",
+                cid: "group:channel-1",
+                text: "Hey everyone! Welcome to the ChatSDK demo 👋",
+                user: alice,
+                reactions: [ReactionGroup(type: "👍", count: 2, own: true, users: [bob, currentUser])],
+                createdAt: Date().addingTimeInterval(-7200)
+            ),
+            Message(
+                id: "msg-2",
+                cid: "group:channel-1",
+                text: "This is looking great! Love the SwiftUI integration.",
+                user: bob,
+                createdAt: Date().addingTimeInterval(-3600)
+            ),
+            Message(
+                id: "msg-3",
+                cid: "group:channel-1",
+                text: "The real-time features are really smooth. Nice work!",
+                user: charlie,
+                reactions: [ReactionGroup(type: "🔥", count: 1, own: false, users: [alice])],
+                createdAt: Date().addingTimeInterval(-1800)
+            ),
+            Message(
+                id: "msg-4",
+                cid: "group:channel-1",
+                text: "Thanks! Let me know if you have any questions.",
+                user: currentUser,
+                createdAt: Date().addingTimeInterval(-900)
+            ),
+        ]
+
+        messages["channel-1"] = generalMessages
+
+        // Mock messages for DM
+        let dmMessages: [Message] = [
+            Message(
+                id: "dm-1",
+                cid: "messaging:channel-3",
+                text: "Hey! Did you see the new SDK features?",
+                user: alice,
+                createdAt: Date().addingTimeInterval(-3600)
+            ),
+            Message(
+                id: "dm-2",
+                cid: "messaging:channel-3",
+                text: "Yes! The typing indicators are cool 😎",
+                user: currentUser,
+                createdAt: Date().addingTimeInterval(-3500)
+            ),
+        ]
+
+        messages["channel-3"] = dmMessages
+
+        isLoading = false
+    }
+
     // MARK: - Event Handlers
 
     private func setupEventHandlers() {

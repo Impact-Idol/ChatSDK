@@ -41,10 +41,35 @@ export class ChatClient {
   private eventBus: EventBus;
   private currentUser: User | null = null;
   private connectionState: ConnectionState = 'disconnected';
-  private token: string | null = null;
+  private token: string | null = null;      // API token for REST calls
+  private wsToken: string | null = null;    // WebSocket token for Centrifugo
 
   constructor(options: ChatClientOptions) {
-    this.config = { ...DEFAULT_CONFIG, ...options } as ChatClientConfig;
+    // Debug logging
+    console.log('[ChatClient] Constructor called with options:', {
+      apiKey: options.apiKey ? options.apiKey.substring(0, 20) + '...' : 'UNDEFINED',
+      apiUrl: options.apiUrl,
+      debug: options.debug,
+    });
+
+    // Filter out undefined values from options to avoid overwriting defaults
+    const filteredOptions = Object.fromEntries(
+      Object.entries(options).filter(([, v]) => v !== undefined)
+    );
+
+    console.log('[ChatClient] Filtered options:', {
+      apiKey: filteredOptions.apiKey ? filteredOptions.apiKey.substring(0, 20) + '...' : 'UNDEFINED',
+      ...Object.fromEntries(Object.entries(filteredOptions).filter(([k]) => k !== 'apiKey'))
+    });
+
+    this.config = { ...DEFAULT_CONFIG, ...filteredOptions } as ChatClientConfig;
+
+    console.log('[ChatClient] Final config:', {
+      apiKey: this.config.apiKey ? this.config.apiKey.substring(0, 20) + '...' : 'UNDEFINED',
+      apiUrl: this.config.apiUrl,
+      debug: this.config.debug,
+    });
+
     this.eventBus = new EventBus({ debug: this.config.debug });
   }
 
@@ -54,9 +79,24 @@ export class ChatClient {
 
   /**
    * Connect a user to the chat service
+   * @param user - User info
+   * @param tokenOrTokens - Either a single token (for backwards compat) or { token, wsToken }
    */
-  async connectUser(user: ConnectUserOptions, token: string): Promise<User> {
-    this.token = token;
+  async connectUser(
+    user: ConnectUserOptions,
+    tokenOrTokens: string | { token: string; wsToken: string }
+  ): Promise<User> {
+    // Handle both token formats for backwards compatibility
+    if (typeof tokenOrTokens === 'string') {
+      // Legacy: single token used for both
+      this.token = tokenOrTokens;
+      this.wsToken = tokenOrTokens;
+    } else {
+      // New: separate tokens
+      this.token = tokenOrTokens.token;
+      this.wsToken = tokenOrTokens.wsToken;
+    }
+
     this.currentUser = {
       id: user.id,
       name: user.name ?? user.id,
@@ -70,13 +110,13 @@ export class ChatClient {
     this.eventBus.emit('connection.connecting', undefined);
 
     try {
-      // Initialize Centrifugo client
+      // Initialize Centrifugo client with WebSocket token
       this.centrifuge = new Centrifuge(this.config.wsUrl!, {
-        token,
+        token: this.wsToken!,
         debug: this.config.debug,
         getToken: async () => {
           // Token refresh callback - implement token refresh logic
-          return this.token!;
+          return this.wsToken!;
         },
       });
 
@@ -412,6 +452,14 @@ export class ChatClient {
     options?: RequestInit
   ): Promise<T> {
     const url = `${this.config.apiUrl}${endpoint}`;
+
+    // Always log for debugging API key issue
+    console.log('[ChatClient.fetch] DEBUG:', {
+      endpoint,
+      apiKey: this.config.apiKey ? this.config.apiKey.substring(0, 10) + '...' : 'UNDEFINED',
+      token: this.token ? 'SET' : 'NOT SET',
+    });
+
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
       'X-API-Key': this.config.apiKey,

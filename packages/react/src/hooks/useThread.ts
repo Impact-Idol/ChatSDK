@@ -109,7 +109,7 @@ export function useThread(
 
         setHasMore(response.hasMore);
         if (response.replies.length > 0) {
-          setCursor(response.replies[response.replies.length - 1].createdAt);
+          setCursor(response.replies[response.replies.length - 1].created_at);
         }
       } catch (error) {
         console.error('Failed to fetch thread:', error);
@@ -199,20 +199,19 @@ export function useThread(
       const optimisticReply: ThreadMessage = {
         id: clientMsgId,
         cid: channelId,
-        seq: 0,
         type: 'regular',
         text,
         attachments: attachments || [],
         user: {
           id: client.user?.id || '',
           name: client.user?.name || '',
-          image: client.user?.image || null,
+          image: client.user?.image,
         },
         parentId: messageId,
+        parent_id: messageId,
         status: 'sending',
-        createdAt: new Date().toISOString(),
+        created_at: new Date().toISOString(),
         reactions: [],
-        reactionGroups: [],
       };
 
       setReplies((prev) => [...prev, optimisticReply]);

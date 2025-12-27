@@ -32,6 +32,10 @@ declare module 'hono' {
 export const authMiddleware = createMiddleware(async (c, next) => {
   // Check for API key in header
   const apiKey = c.req.header('X-API-Key');
+
+  // Debug logging
+  console.log('[Auth] Request to:', c.req.path, 'X-API-Key:', apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING');
+
   if (!apiKey) {
     throw new HTTPException(401, { message: 'Missing API key' });
   }
@@ -43,6 +47,7 @@ export const authMiddleware = createMiddleware(async (c, next) => {
   );
 
   if (appResult.rows.length === 0) {
+    console.log('[Auth] API key not found in database:', apiKey.substring(0, 20) + '...');
     throw new HTTPException(401, { message: 'Invalid API key' });
   }
 

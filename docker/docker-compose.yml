@@ -193,6 +193,21 @@ services:
     profiles:
       - novu
 
+  # React Chat Demo - Frontend Application
+  react-chat:
+    build:
+      context: ..
+      dockerfile: examples/react-chat/Dockerfile
+    container_name: chatsdk-react-chat
+    ports:
+      - "5500:5500"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5500/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   meilisearch_data:

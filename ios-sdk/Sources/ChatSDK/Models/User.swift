@@ -32,7 +32,8 @@ public struct User: Codable, Identifiable, Sendable, Hashable {
 }
 
 /// Type-erased Codable wrapper for custom data
-public struct AnyCodable: Codable, Sendable, Hashable {
+/// Note: @unchecked Sendable because we only store immutable primitive types
+public struct AnyCodable: Codable, Hashable, @unchecked Sendable {
     public let value: Any
 
     public init(_ value: Any) {
