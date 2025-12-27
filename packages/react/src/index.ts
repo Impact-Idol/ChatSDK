@@ -15,6 +15,29 @@ export {
   formatTypingText,
   useReadState,
   useTotalUnreadCount,
+  useThread,
+  useThreadPreview,
+  useReactions,
+  updateMessageReactions,
+  formatReactionCount,
+  QUICK_REACTIONS,
+  usePresence,
+  useUserPresence,
+  useChannelPresence,
+  formatLastSeen,
+  useSearch,
+  useFileUpload,
+  formatFileSize,
+  isAllowedFileType,
+  getFileCategory,
+  useReadReceipts,
+  formatReadReceipt,
+  getReadReceiptStatus,
+  useMentions,
+  useMentionSearch,
+  parseMentions,
+  formatMention,
+  highlightMentions,
 } from './hooks';
 
 export type {
@@ -27,16 +50,48 @@ export type {
   UseTypingIndicatorResult,
   ReadReceipt,
   UseReadStateResult,
+  UploadProgress,
+  UploadedFile,
+  UseFileUploadOptions,
+  UseFileUploadResult,
+  SearchResult,
+  UseSearchOptions,
+  UseSearchResult,
+  UserPresence,
+  ChannelPresence,
+  UsePresenceOptions,
+  UsePresenceResult,
+  ThreadMessage,
+  ThreadParent,
+  ThreadParticipant,
+  UseThreadOptions,
+  UseThreadResult,
+  Reaction,
+  ReactionEvent,
+  UseReactionsOptions,
+  UseReactionsResult,
+  Reader,
+  MessageReceipt,
+  ChannelReadStatus,
+  UseReadReceiptsOptions,
+  UseReadReceiptsResult,
+  ReadReceiptStatus,
+  MentionUser,
+  Mention,
+  UseMentionsOptions,
+  UseMentionsResult,
+  UseMentionSearchOptions,
+  UseMentionSearchResult,
 } from './hooks';
 
 // Re-export core types for convenience
 export type {
-  User,
-  Channel,
-  Message,
+  User as CoreUser,
+  Channel as CoreChannel,
+  Message as CoreMessage,
   MessageWithSeq,
   Attachment,
-  Reaction,
+  Reaction as CoreReaction,
   ReactionGroup,
   ChannelMember,
   ConnectionState,
@@ -73,7 +128,6 @@ export { ThemeBuilder } from './components/onboarding/ThemeBuilder';
 export { Dashboard } from './components/admin/Dashboard';
 export { Sidebar } from './components/admin/Sidebar';
 export { UsersTable } from './components/admin/UsersTable';
-export { UserProfile } from './components/admin/UserProfile';
 export { ChannelsTable } from './components/admin/ChannelsTable';
 export { ModerationQueue } from './components/admin/ModerationQueue';
 export { APIKeysManager } from './components/admin/APIKeysManager';
@@ -92,18 +146,18 @@ export type { InputProps } from './components/shared/Input';
 export type { BadgeProps } from './components/shared/Badge';
 
 // Types - SDK
-export type { ChannelListProps, Channel } from './components/sdk/ChannelList';
-export type { MessageListProps, Message, MessageUser, Reaction } from './components/sdk/MessageList';
+export type { ChannelListProps } from './components/sdk/ChannelList';
+export type { MessageListProps, MessageUser } from './components/sdk/MessageList';
 export type { MessageInputProps, ReplyingTo } from './components/sdk/MessageInput';
 export type { ThreadProps } from './components/sdk/Thread';
 export type { ChatLayoutProps } from './components/sdk/ChatLayout';
 export type { VoiceMessageProps } from './components/sdk/VoiceMessage';
 export type { VoiceRecorderProps } from './components/sdk/VoiceRecorder';
-export type { MemberListProps, Member } from './components/sdk/MemberList';
+export type { MemberListProps } from './components/sdk/MemberList';
 export type { MediaGalleryProps, MediaItem } from './components/sdk/MediaGallery';
-export type { SearchResultsProps, SearchResult } from './components/sdk/SearchResults';
+export type { SearchResultsProps, SearchResult as SearchResultItem } from './components/sdk/SearchResults';
 export type { EmojiPickerProps, Emoji } from './components/sdk/EmojiPicker';
-export type { ThreadViewProps, ThreadMessage } from './components/sdk/ThreadView';
+export type { ThreadViewProps, ThreadMessage as ThreadMessageItem } from './components/sdk/ThreadView';
 export type { TypingIndicatorProps, TypingUser } from './components/sdk/TypingIndicator';
 export type { ReadReceiptsProps, ReadReceiptUser } from './components/sdk/ReadReceipts';
 
@@ -113,13 +167,12 @@ export type { ThemeBuilderProps, ThemeConfig } from './components/onboarding/The
 
 // Types - Admin
 export type { DashboardProps } from './components/admin/Dashboard';
-export type { UsersTableProps, User } from './components/admin/UsersTable';
-export type { UserProfileProps, UserProfileData, UserActivity, UserDevice, LinkedAccount } from './components/admin/UserProfile';
-export type { ChannelsTableProps, ChannelData } from './components/admin/ChannelsTable';
-export type { ModerationQueueProps, ModerationItem, AIInsight } from './components/admin/ModerationQueue';
+export type { UsersTableProps } from './components/admin/UsersTable';
+export type { ChannelsTableProps } from './components/admin/ChannelsTable';
+export type { ModerationQueueProps } from './components/admin/ModerationQueue';
 export type { APIKeysManagerProps, APIKey } from './components/admin/APIKeysManager';
 export type { WebhooksManagerProps, Webhook, WebhookDelivery } from './components/admin/WebhooksManager';
 export type { AuditLogProps, AuditLogEntry } from './components/admin/AuditLog';
 
 // Types - User
-export type { SettingsPageProps, UserProfile, NotificationSettings, AppearanceSettings, PrivacySettings } from './components/user/SettingsPage';
+export type { SettingsPageProps, NotificationSettings, AppearanceSettings, PrivacySettings } from './components/user/SettingsPage';

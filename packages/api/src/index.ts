@@ -5,11 +5,14 @@
 
 import 'dotenv/config';
 import { serve as honoServe } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
 import { timing } from 'hono/timing';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { authMiddleware } from './middleware/auth';
 import { channelRoutes } from './routes/channels';
@@ -23,6 +26,7 @@ import { presenceRoutes, channelPresenceRoutes } from './routes/presence';
 import { threadRoutes } from './routes/threads';
 import { receiptRoutes } from './routes/receipts';
 import { mentionRoutes } from './routes/mentions';
+import { webPushRoutes } from './routes/webpush';
 import { db, initDB } from './services/database';
 import { initCentrifugo } from './services/centrifugo';
 import { initNovu } from './services/novu';
@@ -41,7 +45,7 @@ app.use('*', prettyJSON());
 app.use(
   '*',
   cors({
-    origin: ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:6007', 'http://localhost:5500'],
+    origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:5173', 'http://localhost:6007', 'http://localhost:5500'],
     credentials: true,
   })
 );
@@ -65,6 +69,7 @@ app.route('/api/devices', deviceRoutes);
 app.route('/api/uploads', uploadRoutes);
 app.route('/api/search', searchRoutes);
 app.route('/api/presence', presenceRoutes);
+app.route('/api/webpush', webPushRoutes);
 
 // Channel-specific routes
 app.route('/api/channels/:channelId/messages', messageRoutes);
@@ -90,7 +95,16 @@ app.onError((err, c) => {
   );
 });
 
-// 404 handler
+// Serve React app static files
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const reactAppPath = path.resolve(__dirname, '../../../examples/react-chat/dist');
+
+app.use('/*', serveStatic({ root: reactAppPath }));
+
+// SPA fallback - serve index.html for non-API routes
+app.get('*', serveStatic({ path: reactAppPath + '/index.html' }));
+
+// 404 handler for API routes (this won't be reached due to SPA fallback)
 app.notFound((c) => {
   return c.json(
     {
