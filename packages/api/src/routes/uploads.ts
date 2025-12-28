@@ -14,6 +14,11 @@ import {
   deleteFile,
   getContentType,
 } from '../services/storage';
+import {
+  processAndUploadImage,
+  validateImageFile,
+  validateVideoFile,
+} from '../services/image-processing';
 import { db } from '../services/database';
 
 export const uploadRoutes = new Hono();
@@ -135,19 +140,48 @@ uploadRoutes.post('/direct', requireUser, async (c) => {
 
   // Upload file
   const buffer = Buffer.from(await file.arrayBuffer());
-  const result = await uploadFile(buffer, {
-    channelId,
-    userId: auth.userId!,
-    filename: file.name,
-    contentType: file.type || getContentType(file.name),
-  });
+
+  // Process images with blurhash and thumbnail generation
+  let result: any;
+  let width: number | null = null;
+  let height: number | null = null;
+  let blurhash: string | null = null;
+  let thumbnailUrl: string | null = null;
+
+  if (isImage) {
+    // Use image processing service for images
+    const processed = await processAndUploadImage(buffer, {
+      channelId,
+      userId: auth.userId!,
+      filename: file.name,
+      contentType: file.type || getContentType(file.name),
+      generateBlurhash: true,
+      generateThumbnail: true,
+      maxWidth: 1200,
+      quality: 85,
+    });
+
+    result = processed;
+    width = processed.width;
+    height = processed.height;
+    blurhash = processed.blurhash || null;
+    thumbnailUrl = processed.thumbnailUrl || null;
+  } else {
+    // Use basic upload for non-images
+    result = await uploadFile(buffer, {
+      channelId,
+      userId: auth.userId!,
+      filename: file.name,
+      contentType: file.type || getContentType(file.name),
+    });
+  }
 
   // Store upload record
   const uploadResult = await db.query(
-    `INSERT INTO upload (id, app_id, channel_id, user_id, filename, content_type, size, storage_key, url, status)
-     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, 'completed')
+    `INSERT INTO upload (id, app_id, channel_id, user_id, filename, content_type, size, storage_key, url, width, height, blurhash, thumbnail_url, status)
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'completed')
      RETURNING id`,
-    [auth.appId, channelId, auth.userId, result.filename, result.contentType, result.size, result.key, result.url]
+    [auth.appId, channelId, auth.userId, result.filename, result.contentType, result.size, result.key, result.url, width, height, blurhash, thumbnailUrl]
   );
 
   return c.json({
@@ -157,6 +191,10 @@ uploadRoutes.post('/direct', requireUser, async (c) => {
     filename: result.filename,
     contentType: result.contentType,
     size: result.size,
+    width,
+    height,
+    blurhash,
+    thumbnailUrl,
   });
 });
 

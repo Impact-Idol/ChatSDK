@@ -1,0 +1,199 @@
+services:
+  # PostgreSQL - Primary Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: chatsdk-test-postgres
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: chatsdk
+      POSTGRES_PASSWORD: chatsdk_test_123
+      POSTGRES_DB: chatsdk
+    volumes:
+      - test_postgres_data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatsdk"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Caching & Pub/Sub
+  redis:
+    image: redis:7-alpine
+    container_name: chatsdk-test-redis
+    ports:
+      - "6380:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass chatsdk_redis_test_123
+    volumes:
+      - test_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MinIO - S3-compatible Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: chatsdk-test-minio
+    ports:
+      - "9007:9000"
+      - "9008:9001"
+    environment:
+      MINIO_ROOT_USER: chatsdk
+      MINIO_ROOT_PASSWORD: chatsdk_minio_test_123
+    volumes:
+      - test_minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Centrifugo - Real-time WebSocket Server
+  centrifugo:
+    image: centrifugo/centrifugo:v5
+    container_name: chatsdk-test-centrifugo
+    ports:
+      - "8001:8000"
+    environment:
+      CENTRIFUGO_TOKEN_HMAC_SECRET_KEY: test_centrifugo_secret_key_123
+      CENTRIFUGO_API_KEY: test_centrifugo_api_key_123
+      CENTRIFUGO_ADMIN_PASSWORD: test_admin_pass_123
+      CENTRIFUGO_ADMIN_SECRET: test_admin_secret_123
+      CENTRIFUGO_LOG_LEVEL: info
+      CENTRIFUGO_ALLOWED_ORIGINS: "*"
+    volumes:
+      - ./docker/centrifugo.json:/centrifugo/config.json
+    command: centrifugo --config=/centrifugo/config.json
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Inngest Dev Server
+  inngest:
+    image: inngest/inngest:latest
+    container_name: chatsdk-test-inngest
+    ports:
+      - "8289:8288"
+    environment:
+      INNGEST_DEV: "true"
+      INNGEST_LOG_LEVEL: "info"
+    command: inngest dev -u http://api:5500/api/inngest --no-discovery
+    volumes:
+      - test_inngest_data:/var/lib/inngest
+
+  # ChatSDK API Server
+  api:
+    image: chatsdk-api:latest
+    container_name: chatsdk-test-api
+    ports:
+      - "5501:5500"
+    environment:
+      NODE_ENV: production
+      PORT: 5500
+      LOG_LEVEL: info
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: chatsdk
+      DB_USER: chatsdk
+      DB_PASSWORD: chatsdk_test_123
+      DB_SSL: "false"
+
+      # MinIO S3
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY: chatsdk
+      S3_SECRET_KEY: chatsdk_minio_test_123
+      S3_BUCKET: chatsdk
+      S3_PUBLIC_URL: http://localhost:9003/chatsdk
+      S3_USE_SSL: "false"
+
+      # Centrifugo
+      CENTRIFUGO_URL: ws://centrifugo:8000/connection/websocket
+      CENTRIFUGO_API_URL: http://centrifugo:8000/api
+      CENTRIFUGO_API_KEY: test_centrifugo_api_key_123
+      CENTRIFUGO_TOKEN_SECRET: test_centrifugo_secret_key_123
+      CENTRIFUGO_JWT_SECRET: test_centrifugo_jwt_secret_123
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: chatsdk_redis_test_123
+      REDIS_TLS: "false"
+
+      # Inngest
+      INNGEST_EVENT_KEY: test_inngest_event_key_123
+      INNGEST_SIGNING_KEY: test_inngest_signing_key_123
+
+      # JWT
+      JWT_SECRET: test_jwt_secret_key_for_testing_123
+
+      # Metrics
+      METRICS_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5500/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      centrifugo:
+        condition: service_healthy
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: chatsdk-test-prometheus
+    ports:
+      - "9091:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - test_prometheus_data:/prometheus
+    depends_on:
+      - api
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: chatsdk-test-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - test_grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  test_postgres_data:
+  test_redis_data:
+  test_minio_data:
+  test_inngest_data:
+  test_prometheus_data:
+  test_grafana_data:

@@ -38,6 +38,8 @@ export {
   parseMentions,
   formatMention,
   highlightMentions,
+  usePolls,
+  useWorkspaces,
 } from './hooks';
 
 export type {
@@ -82,6 +84,12 @@ export type {
   UseMentionsResult,
   UseMentionSearchOptions,
   UseMentionSearchResult,
+  Poll,
+  PollOption,
+  UsePollsResult,
+  Workspace,
+  UseWorkspacesResult,
+  CreateWorkspaceData,
 } from './hooks';
 
 // Re-export core types for convenience
@@ -119,6 +127,9 @@ export { EmojiPicker } from './components/sdk/EmojiPicker';
 export { ThreadView } from './components/sdk/ThreadView';
 export { TypingIndicator } from './components/sdk/TypingIndicator';
 export { ReadReceipts } from './components/sdk/ReadReceipts';
+export { PollMessage } from './components/sdk/PollMessage';
+export { CreatePollDialog } from './components/sdk/CreatePollDialog';
+export { WorkspaceSwitcher } from './components/sdk/WorkspaceSwitcher';
 
 // Onboarding Components
 export { AppSetupWizard } from './components/onboarding/AppSetupWizard';
@@ -161,6 +172,9 @@ export type { EmojiPickerProps, Emoji } from './components/sdk/EmojiPicker';
 export type { ThreadViewProps, ThreadMessage as ThreadMessageItem } from './components/sdk/ThreadView';
 export type { TypingIndicatorProps, TypingUser } from './components/sdk/TypingIndicator';
 export type { ReadReceiptsProps, ReadReceiptUser } from './components/sdk/ReadReceipts';
+export type { PollMessageProps } from './components/sdk/PollMessage';
+export type { CreatePollDialogProps } from './components/sdk/CreatePollDialog';
+export type { WorkspaceSwitcherProps } from './components/sdk/WorkspaceSwitcher';
 
 // Types - Onboarding
 export type { AppSetupWizardProps, AppConfig, WizardStep } from './components/onboarding/AppSetupWizard';
@@ -177,3 +191,13 @@ export type { AuditLogProps, AuditLogEntry } from './components/admin/AuditLog';
 
 // Types - User
 export type { SettingsPageProps, NotificationSettings, AppearanceSettings, PrivacySettings } from './components/user/SettingsPage';
+
+// Theming
+export {
+  defaultTheme,
+  impactIdolTheme,
+  darkTheme,
+  createTheme,
+  themeToCSSVariables,
+} from './styles/themes';
+export type { ChatSDKTheme } from './styles/themes';

@@ -181,6 +181,7 @@ CREATE TABLE upload (
   height INT,
   duration_ms INT,
   thumbnail_url TEXT,
+  blurhash VARCHAR(50),
   status VARCHAR(20) DEFAULT 'pending',  -- pending, completed, failed
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),

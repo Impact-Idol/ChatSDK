@@ -126,3 +126,19 @@ export {
   type UseMentionSearchOptions,
   type UseMentionSearchResult,
 } from './useMentions';
+
+// Polls
+export {
+  usePolls,
+  type Poll,
+  type PollOption,
+  type UsePollsResult,
+} from './usePolls';
+
+// Workspaces
+export {
+  useWorkspaces,
+  type Workspace,
+  type UseWorkspacesResult,
+  type CreateWorkspaceData,
+} from './useWorkspaces';

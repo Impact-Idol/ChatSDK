@@ -77,7 +77,7 @@ app.use('*', async (c, next) => {
   }
 
   if (c.req.method === 'OPTIONS') {
-    return new Response(null, { status: 204 });
+    return c.body(null, 204);
   }
 
   await next();
