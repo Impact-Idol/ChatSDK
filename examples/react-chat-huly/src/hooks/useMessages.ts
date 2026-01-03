@@ -143,7 +143,7 @@ export function usePinMessage() {
 
   return useMutation({
     mutationFn: ({ messageId, pinned, channelId }: { messageId: string; pinned: boolean; channelId: string }) =>
-      api.messages.pin(messageId, pinned),
+      api.messages.pin(messageId, pinned, channelId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['messages', variables.channelId] });
     },

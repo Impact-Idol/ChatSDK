@@ -507,7 +507,7 @@ const MessageItemComponent = forwardRef<HTMLDivElement, MessageItemProps>(({
                 <EmojiPicker
                   onSelect={handleReact}
                   onClose={() => setShowEmojiPicker(false)}
-                  position="top"
+                  position="bottom"
                 />
               )}
             </div>

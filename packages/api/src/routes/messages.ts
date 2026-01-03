@@ -164,9 +164,33 @@ messageRoutes.post(
 
     const channel = channelInfo.rows[0];
 
-    // Extract @mentions from message text
-    const mentionRegex = /@(\w+)/g;
+    // Extract @mentions from message text (support hyphens in user IDs)
+    const mentionRegex = /@([\w-]+)/g;
     const mentions = [...body.text.matchAll(mentionRegex)].map((m) => m[1]);
+
+    // Insert mentions into database
+    if (mentions.length > 0) {
+      for (const mentionedUserId of mentions) {
+        try {
+          await db.query(
+            `INSERT INTO mention (message_id, app_id, mentioned_user_id, mentioner_user_id)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT DO NOTHING`,
+            [result.id, auth.appId, mentionedUserId, auth.userId]
+          );
+
+          // Set mentioned flag in user_message for the mentioned user
+          await db.query(
+            `UPDATE user_message
+             SET flags = flags | 2
+             WHERE message_id = $1 AND user_id = $2 AND app_id = $3`,
+            [result.id, mentionedUserId, auth.appId]
+          );
+        } catch (err) {
+          console.warn(`Failed to insert mention for user ${mentionedUserId}:`, err);
+        }
+      }
+    }
 
     // Trigger Inngest notification event (async - don't await)
     inngest.send({
@@ -200,7 +224,12 @@ messageRoutes.post(
       console.warn('Failed to send link preview event:', err);
     });
 
-    return c.json(message, 201);
+    // Add mentions to response
+    return c.json({
+      ...message,
+      mentions,
+      reactions: [],
+    }, 201);
   }
 );
 
@@ -281,9 +310,10 @@ messageRoutes.get('/', requireUser, async (c) => {
 
   const result = await db.query(query, params);
 
-  // Get reactions for these messages
+  // Get reactions and mentions for these messages
   const messageIds = result.rows.map((m) => m.id);
   const reactions = await getReactionsForMessages(messageIds, auth.appId, auth.userId!);
+  const mentions = await getMentionsForMessages(messageIds, auth.appId);
 
   // Format messages
   const messages = result.rows.map((row) => ({
@@ -293,6 +323,7 @@ messageRoutes.get('/', requireUser, async (c) => {
       image: row.user_image,
     }),
     reactions: reactions[row.id] || [],
+    mentions: mentions[row.id] || [],
   }));
 
   // Reverse if we fetched in DESC order
@@ -334,6 +365,7 @@ messageRoutes.get('/:messageId', requireUser, async (c) => {
 
   const row = result.rows[0];
   const reactions = await getReactionsForMessages([messageId], auth.appId, auth.userId!);
+  const mentions = await getMentionsForMessages([messageId], auth.appId);
 
   return c.json({
     ...formatMessage(row, {
@@ -342,6 +374,7 @@ messageRoutes.get('/:messageId', requireUser, async (c) => {
       image: row.user_image,
     }),
     reactions: reactions[messageId] || [],
+    mentions: mentions[messageId] || [],
   });
 });
 
@@ -603,6 +636,29 @@ async function getReactionsForMessages(
   }
 
   return reactions;
+}
+
+async function getMentionsForMessages(
+  messageIds: string[],
+  appId: string
+): Promise<Record<string, string[]>> {
+  if (messageIds.length === 0) return {};
+
+  const result = await db.query(
+    `SELECT m.message_id, array_agg(m.mentioned_user_id) as mentioned_users
+     FROM mention m
+     WHERE m.message_id = ANY($1) AND m.app_id = $2
+     GROUP BY m.message_id`,
+    [messageIds, appId]
+  );
+
+  const mentions: Record<string, string[]> = {};
+
+  for (const row of result.rows) {
+    mentions[row.message_id] = row.mentioned_users || [];
+  }
+
+  return mentions;
 }
 
 // ============================================================================

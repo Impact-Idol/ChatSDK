@@ -283,12 +283,11 @@ export const messageApi = {
       method: 'DELETE',
     }),
 
-  pin: (id: string, pinned: boolean) =>
-    apiRequest<{ success: boolean; isPinned: boolean }>(
-      `/api/messages/${id}/pin`,
+  pin: (messageId: string, pinned: boolean, channelId: string) =>
+    apiRequest<{ success: boolean }>(
+      `/api/channels/${channelId}/messages/${messageId}/pin`,
       {
-        method: 'PATCH',
-        body: JSON.stringify({ pinned }),
+        method: pinned ? 'POST' : 'DELETE',
       }
     ),
 

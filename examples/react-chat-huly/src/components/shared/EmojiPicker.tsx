@@ -77,7 +77,7 @@ export function EmojiPicker({ onSelect, onClose, position = 'bottom' }: EmojiPic
       ref={containerRef}
       className={cn(
         'absolute z-50 w-80 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl',
-        position === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'
+        position === 'top' ? 'bottom-full mb-2 right-0' : 'top-full mt-2 right-0'
       )}
     >
       {/* Search */}
