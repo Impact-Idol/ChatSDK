@@ -5,11 +5,13 @@ import { ChatRoom } from './components/ChatRoom';
 import { ThreadView } from './components/ThreadView';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ConnectionStatus } from './components/ConnectionStatus';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import type { Channel, Message } from '@chatsdk/core';
 
 // Configuration
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5500';
 const API_KEY = import.meta.env.VITE_API_KEY || '57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/connection/websocket';
 const DEMO_USER = { id: 'user-1', name: 'Alice Johnson' };
 
 // Debug logging
@@ -221,11 +223,13 @@ function AuthWrapper({ children }: { children: React.ReactNode }) {
 
 function App() {
   return (
-    <ChatProvider apiKey={API_KEY} apiUrl={API_URL} debug={true}>
-      <AuthWrapper>
-        <AppContent />
-      </AuthWrapper>
-    </ChatProvider>
+    <ErrorBoundary>
+      <ChatProvider apiKey={API_KEY} apiUrl={API_URL} wsUrl={WS_URL} debug={true}>
+        <AuthWrapper>
+          <AppContent />
+        </AuthWrapper>
+      </ChatProvider>
+    </ErrorBoundary>
   );
 }
 

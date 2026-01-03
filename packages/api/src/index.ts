@@ -62,9 +62,11 @@ app.use('*', async (c, next) => {
     'http://localhost:3001',
     'http://localhost:3002',
     'http://localhost:5173',
+    'http://localhost:5175',
     'http://localhost:6007',
     'http://localhost:6001',
-    'http://localhost:5500'
+    'http://localhost:5500',
+    'http://localhost:5502'
   ];
 
   const origin = c.req.header('Origin');
@@ -92,7 +94,23 @@ app.route('/tokens', tokenRoutes);
 // Admin routes (uses own authentication middleware)
 app.route('/admin', adminRoutes);
 
-// Inngest webhook handler
+// Inngest webhook handler with development mode guard
+app.use('/api/inngest', async (c, next) => {
+  const eventKey = process.env.INNGEST_EVENT_KEY || '';
+  const signingKey = process.env.INNGEST_SIGNING_KEY || '';
+
+  // Check if using test/dummy keys (development mode)
+  if (eventKey.includes('test_') || signingKey.includes('test_')) {
+    const method = c.req.method;
+    if (method === 'PUT') {
+      // Inngest probe request - return success to stop spam
+      return c.json({ ok: true, message: 'Development mode - using test keys' }, 200);
+    }
+  }
+
+  await next();
+});
+
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', inngestServe({ client: inngest, functions: allFunctions }));
 
 // Protected routes

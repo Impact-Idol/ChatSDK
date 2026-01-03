@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useChannels, useSearch } from '@chatsdk/react';
 import type { Channel } from '@chatsdk/core';
+import { CreateChannelModal } from './CreateChannelModal';
 
 interface ChannelListProps {
   selectedId?: string;
@@ -13,6 +14,7 @@ export function ChannelList({ selectedId, onSelect }: ChannelListProps) {
   const { channels, loading, error, refresh } = useChannels();
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const filteredChannels = useMemo(() => {
     let result = channels;
@@ -95,26 +97,34 @@ export function ChannelList({ selectedId, onSelect }: ChannelListProps) {
 
   return (
     <div className="channel-list-container">
-      {/* Search */}
-      <div className="channel-search">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="8"/>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input
-          type="text"
-          placeholder="Search channels..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-        {searchQuery && (
-          <button className="clear-btn" onClick={() => setSearchQuery('')}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        )}
+      {/* Search and Create */}
+      <div className="channel-header-section">
+        <div className="channel-search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            type="text"
+            placeholder="Search channels..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button className="clear-btn" onClick={() => setSearchQuery('')}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          )}
+        </div>
+        <button className="create-channel-btn" onClick={() => setShowCreateModal(true)} title="Create Channel or DM">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
       </div>
 
       {/* Filter chips */}
@@ -186,6 +196,17 @@ export function ChannelList({ selectedId, onSelect }: ChannelListProps) {
           </div>
         )}
       </div>
+
+      {/* Create Channel Modal */}
+      {showCreateModal && (
+        <CreateChannelModal
+          onClose={() => setShowCreateModal(false)}
+          onChannelCreated={() => {
+            setShowCreateModal(false);
+            refresh();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -34,6 +34,7 @@ export function ChatRoom({ channel, onOpenThread }: ChatRoomProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<number>();
   const composerRef = useRef<HTMLDivElement>(null);
+  const blobUrlsRef = useRef<Map<File, string>>(new Map());
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -45,6 +46,34 @@ export function ChatRoom({ channel, onOpenThread }: ChatRoomProps) {
     setText('');
     setPendingFiles([]);
   }, [channel.id]);
+
+  // Create and cleanup blob URLs for pending files
+  useEffect(() => {
+    const blobUrls = blobUrlsRef.current;
+
+    // Create blob URLs for new files
+    pendingFiles.forEach(file => {
+      if (!blobUrls.has(file)) {
+        const url = URL.createObjectURL(file);
+        blobUrls.set(file, url);
+      }
+    });
+
+    // Cleanup removed files
+    const currentFiles = new Set(pendingFiles);
+    Array.from(blobUrls.entries()).forEach(([file, url]) => {
+      if (!currentFiles.has(file)) {
+        URL.revokeObjectURL(url);
+        blobUrls.delete(file);
+      }
+    });
+
+    // Cleanup all on unmount
+    return () => {
+      Array.from(blobUrls.values()).forEach(url => URL.revokeObjectURL(url));
+      blobUrls.clear();
+    };
+  }, [pendingFiles]);
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
@@ -250,7 +279,7 @@ export function ChatRoom({ channel, onOpenThread }: ChatRoomProps) {
             {pendingFiles.map((file, index) => (
               <div key={index} className="pending-file">
                 {file.type.startsWith('image/') ? (
-                  <img src={URL.createObjectURL(file)} alt={file.name} />
+                  <img src={blobUrlsRef.current.get(file) || ''} alt={file.name} />
                 ) : (
                   <div className="file-icon">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

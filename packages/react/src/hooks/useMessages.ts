@@ -105,13 +105,22 @@ export function useMessages(
       return;
     }
 
-    // Subscribe to channel
-    client.subscribeToChannel(channelId);
+    let isSubscribed = true;
 
-    // Load initial messages
-    if (initialLoad) {
-      loadMessages(false);
-    }
+    // Async initialization
+    const init = async () => {
+      if (isSubscribed) {
+        // Subscribe to channel
+        await client.subscribeToChannel(channelId);
+
+        // Load initial messages
+        if (initialLoad && isSubscribed) {
+          loadMessages(false);
+        }
+      }
+    };
+
+    init();
 
     // Subscribe to real-time message events
     const unsubNew = client.on('message.new', ({ channelId: cid, message }) => {
@@ -180,6 +189,7 @@ export function useMessages(
     );
 
     return () => {
+      isSubscribed = false;
       unsubNew();
       unsubUpdated();
       unsubDeleted();

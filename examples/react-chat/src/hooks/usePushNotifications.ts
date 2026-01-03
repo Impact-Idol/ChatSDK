@@ -54,6 +54,12 @@ export function usePushNotifications(token: string | null) {
       console.log('Service worker registered:', registration);
     } catch (error) {
       console.error('Service worker registration failed:', error);
+      // Update state to reflect failure
+      setState((prev) => ({
+        ...prev,
+        supported: false,
+        error: error instanceof Error ? error.message : 'Service worker registration failed'
+      }));
     }
   };
 

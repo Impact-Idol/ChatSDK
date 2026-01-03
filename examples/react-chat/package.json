@@ -4,12 +4,12 @@
   "private": true,
   "description": "Example React chat app using ChatSDK",
   "scripts": {
-    "dev": "vite --port 5500",
+    "dev": "vite --port 5502",
     "build": "vite build",
     "build:check": "tsc && vite build",
-    "preview": "vite preview --port 5500",
-    "start": "vite --port 5500",
-    "stop": "lsof -ti:5500 | xargs kill -9 || true"
+    "preview": "vite preview --port 5502",
+    "start": "vite --port 5502",
+    "stop": "lsof -ti:5502 | xargs kill -9 || true"
   },
   "dependencies": {
     "@chatsdk/core": "file:../../packages/core",

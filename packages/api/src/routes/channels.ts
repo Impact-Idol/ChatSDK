@@ -16,14 +16,28 @@ const createChannelSchema = z.object({
   type: z.enum(['messaging', 'group', 'team', 'livestream']).default('messaging'),
   name: z.string().optional(),
   image: z.string().url().optional(),
-  memberIds: z.array(z.string()).min(1),
+  memberIds: z.array(z.string()).default([]), // Allow empty for group channels
   config: z.object({
     typingEvents: z.boolean().optional(),
     readEvents: z.boolean().optional(),
     reactions: z.boolean().optional(),
     replies: z.boolean().optional(),
+    private: z.boolean().optional(), // Channel privacy
   }).optional(),
-});
+}).refine(
+  (data) => {
+    // For DM channels, require exactly 1 member (the other person)
+    if (data.type === 'messaging') {
+      return data.memberIds.length === 1;
+    }
+    // For group channels, members are optional
+    return true;
+  },
+  {
+    message: 'Direct messages require exactly one member ID',
+    path: ['memberIds'],
+  }
+);
 
 /**
  * Create channel

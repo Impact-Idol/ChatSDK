@@ -545,17 +545,25 @@ messageRoutes.delete('/:messageId/reactions/:emoji', requireUser, async (c) => {
 function formatMessage(row: any, user: any) {
   return {
     id: row.id,
+    channelId: row.channel_id,
     cid: row.channel_id,
+    userId: user.id,
     type: row.deleted_at ? 'deleted' : 'regular',
     text: row.deleted_at ? null : row.text,
-    seq: row.seq,
+    seq: parseInt(row.seq, 10),
     clientMsgId: row.id, // Using ID as clientMsgId for now
     user: user,
     attachments: row.attachments || [],
     parentId: row.parent_id,
     replyToId: row.reply_to_id,
     replyCount: row.reply_count || 0,
+    reactionCount: 0,
     status: row.status,
+    pinned: false,
+    createdAt: row.created_at,
+    updatedAt: row.edited_at || row.created_at,
+    deletedAt: row.deleted_at,
+    // Legacy snake_case fields for backward compatibility
     created_at: row.created_at,
     updated_at: row.edited_at,
     deleted_at: row.deleted_at,

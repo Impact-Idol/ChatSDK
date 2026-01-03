@@ -45,10 +45,18 @@ const DEFAULT_CONFIG: Partial<ChatClientConfig> = {
   reconnectIntervals: [1000, 2000, 4000, 8000, 16000],
 };
 
+enum SubscriptionState {
+  PENDING = 'pending',
+  ACTIVE = 'active',
+  CLEANING = 'cleaning'
+}
+
 export class ChatClient {
   private config: ChatClientConfig;
   private centrifuge: Centrifuge | null = null;
   private subscriptions = new Map<string, Subscription>();
+  private subscriptionStates = new Map<string, SubscriptionState>();
+  private subscriptionLocks = new Map<string, Promise<void>>();
   private eventBus: EventBus;
   private currentUser: User | null = null;
   private connectionState: ConnectionState = 'disconnected';
@@ -273,33 +281,81 @@ export class ChatClient {
       throw new Error('Not connected');
     }
 
-    // Check if already subscribed
-    if (this.subscriptions.has(channelName)) {
+    // Wait for any ongoing operations on this channel
+    if (this.subscriptionLocks.has(channelName)) {
+      if (this.config.debug) {
+        console.log('[ChatClient] Waiting for subscription lock:', channelName);
+      }
+      await this.subscriptionLocks.get(channelName);
+    }
+
+    // Check current state
+    const currentState = this.subscriptionStates.get(channelName);
+
+    // If already active, return existing subscription
+    if (currentState === SubscriptionState.ACTIVE && this.subscriptions.has(channelName)) {
+      if (this.config.debug) {
+        console.log('[ChatClient] Returning existing subscription:', channelName);
+      }
       return this.subscriptions.get(channelName)!;
     }
 
-    const subscription = this.centrifuge.newSubscription(channelName);
-
-    // Handle incoming messages
-    subscription.on('publication', (ctx: PublicationContext) => {
-      this.handlePublication(channelName, ctx);
-    });
-
-    subscription.on('subscribed', (ctx) => {
+    // If pending or cleaning, wait a bit and retry
+    if (currentState === SubscriptionState.PENDING || currentState === SubscriptionState.CLEANING) {
       if (this.config.debug) {
-        console.log('[ChatClient] Subscribed to', channelName, ctx);
+        console.log('[ChatClient] Subscription in transitional state:', currentState, channelName);
       }
-    });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return this.subscribe(channelName);
+    }
 
-    subscription.on('error', (ctx) => {
-      console.error('[ChatClient] Subscription error', channelName, ctx);
-    });
+    // Create new subscription with lock
+    const lockPromise = (async () => {
+      try {
+        // Set state to PENDING
+        this.subscriptionStates.set(channelName, SubscriptionState.PENDING);
 
-    // Subscribe
-    subscription.subscribe();
-    this.subscriptions.set(channelName, subscription);
+        if (this.config.debug) {
+          console.log('[ChatClient] Creating new subscription:', channelName);
+        }
 
-    return subscription;
+        const subscription = this.centrifuge!.newSubscription(channelName);
+
+        // Handle incoming messages
+        subscription.on('publication', (ctx: PublicationContext) => {
+          this.handlePublication(channelName, ctx);
+        });
+
+        subscription.on('subscribed', (ctx) => {
+          if (this.config.debug) {
+            console.log('[ChatClient] Subscribed to', channelName, ctx);
+          }
+        });
+
+        subscription.on('error', (ctx) => {
+          console.error('[ChatClient] Subscription error', channelName, ctx);
+        });
+
+        // Subscribe
+        subscription.subscribe();
+        this.subscriptions.set(channelName, subscription);
+
+        // Set state to ACTIVE
+        this.subscriptionStates.set(channelName, SubscriptionState.ACTIVE);
+
+        if (this.config.debug) {
+          console.log('[ChatClient] Subscription active:', channelName);
+        }
+      } finally {
+        // Remove lock
+        this.subscriptionLocks.delete(channelName);
+      }
+    })();
+
+    this.subscriptionLocks.set(channelName, lockPromise);
+    await lockPromise;
+
+    return this.subscriptions.get(channelName)!;
   }
 
   /**
@@ -307,15 +363,43 @@ export class ChatClient {
    */
   async unsubscribeFromChannel(channelId: string): Promise<void> {
     const channelName = this.appId ? `chat:${this.appId}:${channelId}` : `chat:${channelId}`;
+
+    // Wait for any ongoing operations
+    if (this.subscriptionLocks.has(channelName)) {
+      if (this.config.debug) {
+        console.log('[ChatClient] Waiting for subscription lock before unsubscribe:', channelName);
+      }
+      await this.subscriptionLocks.get(channelName);
+    }
+
     const subscription = this.subscriptions.get(channelName);
 
     if (subscription) {
-      subscription.unsubscribe();
-      this.subscriptions.delete(channelName);
+      // Create cleanup lock
+      const cleanupPromise = (async () => {
+        try {
+          // Set state to CLEANING
+          this.subscriptionStates.set(channelName, SubscriptionState.CLEANING);
 
-      if (this.config.debug) {
-        console.log('[ChatClient] Unsubscribed from', channelName);
-      }
+          if (this.config.debug) {
+            console.log('[ChatClient] Unsubscribing from', channelName);
+          }
+
+          subscription.unsubscribe();
+          this.subscriptions.delete(channelName);
+          this.subscriptionStates.delete(channelName);
+
+          if (this.config.debug) {
+            console.log('[ChatClient] Unsubscribed from', channelName);
+          }
+        } finally {
+          // Remove lock
+          this.subscriptionLocks.delete(channelName);
+        }
+      })();
+
+      this.subscriptionLocks.set(channelName, cleanupPromise);
+      await cleanupPromise;
     }
   }
 

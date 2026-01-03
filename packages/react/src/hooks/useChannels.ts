@@ -157,9 +157,16 @@ export function useChannel(channelId: string | null) {
 
     let cancelled = false;
 
-    const loadChannel = async () => {
+    const init = async () => {
       try {
         setLoading(true);
+
+        // Subscribe to this channel for real-time updates
+        if (!cancelled) {
+          await client.subscribeToChannel(channelId);
+        }
+
+        // Load channel data
         const result = await client.getChannel(channelId);
         if (!cancelled) {
           setChannel(result);
@@ -177,10 +184,7 @@ export function useChannel(channelId: string | null) {
       }
     };
 
-    loadChannel();
-
-    // Subscribe to this channel for real-time updates
-    client.subscribeToChannel(channelId);
+    init();
 
     // Listen for updates to this channel
     const unsubUpdated = client.on('channel.updated', ({ channel: updated }) => {
