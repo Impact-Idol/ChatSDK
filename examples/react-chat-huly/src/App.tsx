@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { ChatLayout } from './components/layout/ChatLayout'
 import { ChatSidebar } from './components/layout/ChatSidebar'
 import { ChannelView } from './components/channel/ChannelView'
@@ -17,32 +18,38 @@ import { WorkspaceSettingsModal } from './components/modals/WorkspaceSettingsMod
 import { UserProfileModal } from './components/modals/UserProfileModal'
 import { EditMessageModal } from './components/modals/EditMessageModal'
 import { AddWorkspaceModal } from './components/modals/AddWorkspaceModal'
+import { WorkspaceInviteModal } from './components/modals/WorkspaceInviteModal'
 import { ChannelMembersPanel } from './components/channel/ChannelMembersPanel'
 import { PinnedMessagesPanel } from './components/channel/PinnedMessagesPanel'
 import { DemoLogin } from './components/auth/DemoLogin'
 import { getStoredTokens, clearTokens, type DemoUser } from './lib/auth'
-import { mockChannels, mockDMs, generateMockMessages, mockUsers, mockWorkspaces } from './data/mockData'
 import type { Message, Channel, DirectMessage, User, Workspace } from './types'
 
-function App() {
-  // User and workspace state - declared first so we can use setCurrentUser in useEffect
-  const [currentUser, setCurrentUser] = useState<User>(mockUsers[0])
+// Hooks
+import { useAuth } from './hooks/useAuth'
+import { useChannels, useStarChannel, useMuteChannel, useCreateChannel, useDeleteChannel } from './hooks/useChannels'
+import { useWorkspaces, useCreateWorkspace, useUpdateWorkspace, useDeleteWorkspace, useInviteWorkspaceMember } from './hooks/useWorkspaces'
+import { useMessages, useSendMessage, useUpdateMessage, useDeleteMessage, usePinMessage, useAddReaction, useRemoveReaction } from './hooks/useMessages'
+import { useWebSocket, useChannelSubscription, useWorkspaceSubscription } from './hooks/useWebSocket'
+import { useUsers } from './hooks/useUsers'
 
-  // Authentication state
+function App() {
+  // Query client for cache invalidation
+  const queryClient = useQueryClient()
+
+  // Authentication
   const [isAuthenticated, setIsAuthenticated] = useState(false)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [authToken, setAuthToken] = useState<string | null>(null)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [wsToken, setWsToken] = useState<string | null>(null)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const auth = useAuth()
+
+  // Initialize WebSocket when authenticated
+  useWebSocket(isAuthenticated)
 
   // Check for stored tokens on mount
   useEffect(() => {
     const storedTokens = getStoredTokens()
     if (storedTokens) {
-      setAuthToken(storedTokens.token)
-      setWsToken(storedTokens.wsToken)
       setIsAuthenticated(true)
-      // Set current user from stored tokens
       setCurrentUser({
         id: storedTokens.user.id,
         name: storedTokens.user.name,
@@ -54,9 +61,18 @@ function App() {
   }, [])
 
   // Handle login
-  const handleLogin = (user: DemoUser, token: string, wsToken: string) => {
-    setAuthToken(token)
-    setWsToken(wsToken)
+  const handleLogin = async (user: DemoUser, token: string, wsToken: string) => {
+    // Wait a tick to ensure localStorage write completes
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    // Verify tokens are actually stored
+    const storedTokens = getStoredTokens()
+    if (!storedTokens) {
+      console.error('Failed to store authentication tokens')
+      return
+    }
+
+    // Only set authenticated state after tokens are confirmed
     setIsAuthenticated(true)
     setCurrentUser({
       id: user.id,
@@ -65,19 +81,116 @@ function App() {
       avatar: user.image || '',
       status: 'online'
     })
+
+    // Invalidate all queries to refetch with fresh tokens
+    queryClient.invalidateQueries()
   }
 
-  const [workspaces, setWorkspaces] = useState<Workspace[]>(mockWorkspaces)
-  const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string>('ws-1')
+  // Fetch data from API (only when authenticated)
+  const { data: workspacesData } = useWorkspaces(isAuthenticated)
+  const { data: channelsData } = useChannels({ enabled: isAuthenticated })
+  const { data: usersData } = useUsers(isAuthenticated)
+  const { data: dmsData } = useChannels({ type: 'messaging', enabled: isAuthenticated })
+  const workspaces = workspacesData?.workspaces || []
+  const channels = channelsData?.channels || []
+  const users = usersData?.users || []
+  const dmChannels = dmsData?.channels || []
+
+  // Workspace state
+  const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string>('')
+
+  // Set first workspace as current when data loads
+  useEffect(() => {
+    if (workspaces.length > 0 && !currentWorkspaceId) {
+      setCurrentWorkspaceId(workspaces[0].id)
+    }
+  }, [workspaces, currentWorkspaceId])
+
+  // Subscribe to workspace events
+  useWorkspaceSubscription(currentWorkspaceId)
 
   // Channel and DM state
-  const [activeChannelId, setActiveChannelId] = useState<string>('channel-1')
+  const [activeChannelId, setActiveChannelId] = useState<string>('')
   const [activeDMId, setActiveDMId] = useState<string | undefined>()
-  const [channels, setChannels] = useState(mockChannels)
-  const [dms, setDMs] = useState(mockDMs)
 
-  // Message state
-  const [messages, setMessages] = useState<Record<string, Message[]>>({})
+  // Convert DM channels to UI format
+  // TODO: This is temporary - we need to fetch participants properly from channel members API
+  const dms: DirectMessage[] = dmChannels.map(dm => {
+    // Temporary: Use available users as participants (should use actual channel members)
+    // For now, just include all users except current user
+    const participants = users
+      .filter(u => u.id !== currentUser?.id)
+      .slice(0, dm.type === 'messaging' ? 1 : 5) // DM: 1 other user, Group: up to 5
+      .map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email || `${u.id}@demo.chatsdk.dev`,
+        avatar: u.image || '',
+        status: u.online ? ('online' as const) : ('offline' as const),
+      }))
+
+    return {
+      id: dm.id,
+      type: dm.type === 'messaging' ? 'direct' : 'group',
+      participants,
+      unreadCount: dm.unreadCount || 0,
+      lastMessageAt: dm.lastMessageAt ? new Date(dm.lastMessageAt) : undefined,
+      isPinned: dm.starred,
+      isMuted: dm.muted,
+      isStarred: dm.starred,
+    }
+  })
+
+  // Subscribe to active channel events (DMs are channels too)
+  const activeConversationId = activeChannelId || activeDMId || ''
+  useChannelSubscription(activeConversationId)
+
+  // Fetch messages for active channel or DM
+  const { data: messagesData } = useMessages(activeConversationId, { limit: 100 })
+
+  // Enrich messages with full user data
+  const currentMessages: Message[] = useMemo(() => {
+    if (!messagesData?.messages) return []
+
+    return messagesData.messages.map(msg => {
+      // Find user from users list
+      const user = users.find(u => u.id === msg.userId)
+
+      // If message has a user object from API, use it but enrich with missing fields
+      const apiUser = (msg as any).user
+
+      return {
+        ...msg,
+        user: {
+          id: msg.userId,
+          name: apiUser?.name || user?.name || 'Unknown User',
+          email: user?.email || `${msg.userId}@demo.chatsdk.dev`,
+          avatar: apiUser?.image || user?.image || '',
+          status: user?.online ? ('online' as const) : ('offline' as const),
+        },
+        createdAt: new Date(msg.createdAt),
+        updatedAt: msg.updatedAt ? new Date(msg.updatedAt) : undefined,
+      }
+    })
+  }, [messagesData, users])
+
+  // Mutations
+  const starChannelMutation = useStarChannel()
+  const muteChannelMutation = useMuteChannel()
+  const createChannelMutation = useCreateChannel()
+  const deleteChannelMutation = useDeleteChannel()
+  const sendMessageMutation = useSendMessage()
+  const updateMessageMutation = useUpdateMessage()
+  const deleteMessageMutation = useDeleteMessage()
+  const pinMessageMutation = usePinMessage()
+  const addReactionMutation = useAddReaction()
+  const removeReactionMutation = useRemoveReaction()
+  const createWorkspaceMutation = useCreateWorkspace()
+  const updateWorkspaceMutation = useUpdateWorkspace()
+  const deleteWorkspaceMutation = useDeleteWorkspace()
+  const inviteWorkspaceMemberMutation = useInviteWorkspaceMember()
+
+  // Thread state
   const [activeThreadMessage, setActiveThreadMessage] = useState<Message | undefined>()
   const [threadReplies, setThreadReplies] = useState<Record<string, Message[]>>({})
 
@@ -102,123 +215,72 @@ function App() {
   const [typingUsers, setTypingUsers] = useState<Record<string, Array<{ userId: string; name: string }>>>({})
   const [highlightMessageId, setHighlightMessageId] = useState<string | undefined>()
 
+  // Convert API channels to UI format (exclude DM channels)
+  const uiChannels: Channel[] = channels
+    .filter(ch => ch.type !== 'messaging' && ch.type !== 'group') // Only public/private channels
+    .map(ch => ({
+      id: ch.id,
+      name: ch.name || 'Unnamed Channel',
+      description: ch.description,
+      type: ch.type as 'public' | 'private',
+      memberCount: ch.memberCount,
+      unreadCount: ch.unreadCount || 0,
+      isPinned: false,
+      isMuted: ch.muted || false,
+      isStarred: ch.starred || false,
+    }))
+
+  // Convert API workspaces to UI format
+  const uiWorkspaces: Workspace[] = workspaces.map(ws => ({
+    id: ws.id,
+    name: ws.name,
+    icon: ws.icon || '💼',
+    channels: [],
+    members: [],
+    createdAt: new Date(ws.createdAt),
+  }))
+
   const handleChannelSelect = (channelId: string) => {
     setActiveChannelId(channelId)
     setActiveDMId(undefined)
-
-    // Generate messages for this channel if not already loaded
-    if (!messages[channelId]) {
-      setMessages(prev => ({
-        ...prev,
-        [channelId]: generateMockMessages(channelId, 30)
-      }))
-    }
   }
 
   const handleDMSelect = (dmId: string) => {
     setActiveDMId(dmId)
     setActiveChannelId('')
-
-    // Generate messages for this DM if not already loaded
-    if (!messages[dmId]) {
-      setMessages(prev => ({
-        ...prev,
-        [dmId]: generateMockMessages(dmId, 20)
-      }))
-    }
   }
 
-  const activeChannel = channels.find(c => c.id === activeChannelId)
+  const activeChannel = uiChannels.find(c => c.id === activeChannelId)
   const activeDM = dms.find(dm => dm.id === activeDMId)
 
-  // Get messages for the active channel/DM
-  const currentConversationId = activeChannelId || activeDMId || ''
-  const currentMessages = useMemo(() => {
-    return messages[currentConversationId] || []
-  }, [messages, currentConversationId])
-
-  // Get all messages for search (flattened from all channels/DMs)
-  const allMessages = useMemo(() => {
-    return Object.values(messages).flat()
-  }, [messages])
+  // Get all messages for search (use API messages)
+  const allMessages = currentMessages
 
   // Message handlers
-  const handleSendMessage = (text: string, files?: File[], mentions?: string[]) => {
-    const conversationId = activeChannelId || activeDMId
-    if (!conversationId) return
+  const handleSendMessage = async (text: string, files?: File[], mentions?: string[]) => {
+    const channelId = activeChannelId || activeDMId
+    if (!channelId) return
 
-    const newMessage: Message = {
-      id: `msg-${Date.now()}`,
+    await sendMessageMutation.mutateAsync({
+      channelId,
       text,
-      userId: 'user-1',
-      user: mockUsers[0], // Alice Johnson
-      channelId: conversationId,
-      createdAt: new Date(),
-      attachments: files?.map((file, index) => ({
-        id: `attachment-${Date.now()}-${index}`,
-        name: file.name,
-        url: URL.createObjectURL(file),
-        type: file.type,
-        size: file.size,
-      })),
-      reactions: [],
-      mentions: mentions || [],
-      readBy: [], // Initialize empty, will be populated when others read the message
-    }
-
-    setMessages(prev => ({
-      ...prev,
-      [conversationId]: [...(prev[conversationId] || []), newMessage]
-    }))
+      mentions,
+    })
   }
 
-  const handleReact = (message: Message, emoji: string) => {
-    const conversationId = activeChannelId || activeDMId
-    if (!conversationId) return
+  const handleReact = async (message: Message, emoji: string) => {
+    const channelId = activeChannelId || activeDMId
+    if (!channelId) return
 
-    setMessages(prev => {
-      const conversationMessages = prev[conversationId] || []
-      return {
-        ...prev,
-        [conversationId]: conversationMessages.map(msg => {
-          if (msg.id !== message.id) return msg
+    // Check if user already reacted with this emoji
+    const existingReaction = message.reactions?.find(r => r.emoji === emoji)
+    const hasReacted = existingReaction?.users.some(u => u.id === currentUser.id)
 
-          const reactions = msg.reactions || []
-          const existingReaction = reactions.find(r => r.emoji === emoji)
-
-          if (existingReaction) {
-            // Toggle user's reaction
-            const hasReacted = existingReaction.users.some(u => u.id === 'user-1')
-            if (hasReacted) {
-              // Remove reaction
-              const updatedUsers = existingReaction.users.filter(u => u.id !== 'user-1')
-              return {
-                ...msg,
-                reactions: updatedUsers.length > 0
-                  ? reactions.map(r => r.emoji === emoji
-                    ? { ...r, users: updatedUsers, count: updatedUsers.length }
-                    : r)
-                  : reactions.filter(r => r.emoji !== emoji)
-              }
-            } else {
-              // Add reaction
-              return {
-                ...msg,
-                reactions: reactions.map(r => r.emoji === emoji
-                  ? { ...r, users: [...r.users, mockUsers[0]], count: r.count + 1 }
-                  : r)
-              }
-            }
-          } else {
-            // New reaction
-            return {
-              ...msg,
-              reactions: [...reactions, { emoji, count: 1, users: [mockUsers[0]] }]
-            }
-          }
-        })
-      }
-    })
+    if (hasReacted) {
+      await removeReactionMutation.mutateAsync({ messageId: message.id, emoji, channelId })
+    } else {
+      await addReactionMutation.mutateAsync({ messageId: message.id, emoji, channelId })
+    }
   }
 
   const handleEdit = (message: Message) => {
@@ -226,64 +288,37 @@ function App() {
     setShowEditMessage(true)
   }
 
-  const handleSaveEdit = (messageId: string, newText: string) => {
-    const conversationId = activeChannelId || activeDMId
-    if (!conversationId) return
-
-    setMessages(prev => ({
-      ...prev,
-      [conversationId]: (prev[conversationId] || []).map(msg =>
-        msg.id === messageId
-          ? { ...msg, text: newText, isEdited: true, updatedAt: new Date() }
-          : msg
-      ),
-    }))
-
+  const handleSaveEdit = async (messageId: string, newText: string) => {
+    await updateMessageMutation.mutateAsync({ messageId, text: newText })
     setShowEditMessage(false)
     setMessageToEdit(undefined)
   }
 
-  const handleDelete = (message: Message) => {
-    const conversationId = activeChannelId || activeDMId
-    if (!conversationId) return
+  const handleDelete = async (message: Message) => {
+    const channelId = activeChannelId || activeDMId
+    if (!channelId) return
 
     if (confirm('Delete this message?')) {
-      setMessages(prev => ({
-        ...prev,
-        [conversationId]: (prev[conversationId] || []).filter(msg => msg.id !== message.id)
-      }))
+      await deleteMessageMutation.mutateAsync({ messageId: message.id, channelId })
     }
   }
 
-  const handlePin = (message: Message) => {
-    const conversationId = activeChannelId || activeDMId
-    if (!conversationId) return
+  const handlePin = async (message: Message) => {
+    const channelId = activeChannelId || activeDMId
+    if (!channelId) return
 
-    setMessages(prev => ({
-      ...prev,
-      [conversationId]: (prev[conversationId] || []).map(msg =>
-        msg.id === message.id
-          ? { ...msg, isPinned: !msg.isPinned }
-          : msg
-      )
-    }))
+    await pinMessageMutation.mutateAsync({
+      messageId: message.id,
+      pinned: !message.isPinned,
+      channelId
+    })
   }
 
   const handleThreadClick = (message: Message) => {
     setActiveThreadMessage(message)
-    // Generate mock replies if not already loaded
+    // Generate mock replies (TODO: implement thread API)
     if (!threadReplies[message.id]) {
-      const mockReplies: Message[] = Array.from({ length: 3 }, (_, i) => ({
-        id: `thread-${message.id}-reply-${i}`,
-        text: `Reply ${i + 1} to this message`,
-        userId: mockUsers[i % mockUsers.length].id,
-        user: mockUsers[i % mockUsers.length],
-        channelId: message.channelId,
-        createdAt: new Date(message.createdAt.getTime() + (i + 1) * 60000),
-        reactions: [],
-        mentions: [],
-        parentId: message.id,
-      }))
+      const mockReplies: Message[] = []
       setThreadReplies(prev => ({ ...prev, [message.id]: mockReplies }))
     }
   }
@@ -292,78 +327,40 @@ function App() {
     setActiveThreadMessage(undefined)
   }
 
-  const handleSendReply = (text: string, files?: File[]) => {
+  const handleSendReply = async (text: string, files?: File[]) => {
     if (!activeThreadMessage) return
 
-    const newReply: Message = {
-      id: `thread-reply-${Date.now()}`,
-      text,
-      userId: 'user-1',
-      user: mockUsers[0],
+    await sendMessageMutation.mutateAsync({
       channelId: activeThreadMessage.channelId,
-      createdAt: new Date(),
-      attachments: files?.map((file, index) => ({
-        id: `attachment-${Date.now()}-${index}`,
-        name: file.name,
-        url: URL.createObjectURL(file),
-        type: file.type,
-        size: file.size,
-      })),
-      reactions: [],
-      mentions: [],
+      text,
       parentId: activeThreadMessage.id,
-    }
-
-    setThreadReplies(prev => ({
-      ...prev,
-      [activeThreadMessage.id]: [...(prev[activeThreadMessage.id] || []), newReply],
-    }))
-
-    // Update thread count on parent message
-    const conversationId = activeChannelId || activeDMId
-    if (conversationId) {
-      setMessages(prev => ({
-        ...prev,
-        [conversationId]: (prev[conversationId] || []).map(msg =>
-          msg.id === activeThreadMessage.id
-            ? { ...msg, threadCount: (msg.threadCount || 0) + 1 }
-            : msg
-        ),
-      }))
-    }
+    })
   }
 
-  // Initialize messages for the first channel
-  useMemo(() => {
-    if (activeChannelId && !messages[activeChannelId]) {
-      setMessages(prev => ({
-        ...prev,
-        [activeChannelId]: generateMockMessages(activeChannelId, 30)
-      }))
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
   // Star handlers
-  const handleStarChannel = (channelId: string) => {
-    setChannels(prev => prev.map(ch =>
-      ch.id === channelId
-        ? { ...ch, isStarred: !ch.isStarred }
-        : ch
-    ))
+  const handleStarChannel = async (channelId: string) => {
+    const channel = uiChannels.find(ch => ch.id === channelId)
+    if (!channel) return
+
+    try {
+      await starChannelMutation.mutateAsync({
+        channelId,
+        starred: !channel.isStarred
+      })
+    } catch (error) {
+      console.error('Failed to star/unstar channel:', error)
+    }
   }
 
   const handleStarDM = (dmId: string) => {
     setDMs(prev => prev.map(dm =>
-      dm.id === dmId
-        ? { ...dm, isStarred: !dm.isStarred }
-        : dm
+      dm.id === dmId ? { ...dm, isStarred: !dm.isStarred } : dm
     ))
   }
 
   // Workspace handlers
   const handleWorkspaceChange = (workspaceId: string) => {
     setCurrentWorkspaceId(workspaceId)
-    // Clear active channel/DM when switching workspaces
     setActiveChannelId('')
     setActiveDMId(undefined)
   }
@@ -372,54 +369,35 @@ function App() {
     setShowAddWorkspace(true)
   }
 
-  const handleCreateWorkspace = (name: string, icon: string) => {
-    const newWorkspace: Workspace = {
-      id: `ws-${Date.now()}`,
-      name,
-      icon,
-      channels: [],
-      members: [currentUser.id],
-      createdAt: new Date(),
-    }
-    setWorkspaces(prev => [...prev, newWorkspace])
-    setCurrentWorkspaceId(newWorkspace.id)
+  const handleCreateWorkspace = async (name: string, icon: string) => {
+    await createWorkspaceMutation.mutateAsync({ name, icon })
+    setShowAddWorkspace(false)
   }
 
-  const handleWorkspaceSettings = (workspaceId: string) => {
+  const handleWorkspaceSettings = (_workspaceId: string) => {
     setShowWorkspaceSettings(true)
   }
 
-  const handleUpdateWorkspace = (updates: Partial<Workspace>) => {
-    setWorkspaces(prev => prev.map(ws =>
-      ws.id === currentWorkspaceId ? { ...ws, ...updates } : ws
-    ))
+  const handleUpdateWorkspace = async (updates: Partial<Workspace>) => {
+    if (!currentWorkspaceId) return
+    await updateWorkspaceMutation.mutateAsync({
+      id: currentWorkspaceId,
+      data: { name: updates.name, icon: updates.icon }
+    })
   }
 
-  const handleLeaveWorkspace = () => {
-    const remainingWorkspaces = workspaces.filter(ws => ws.id !== currentWorkspaceId)
-    setWorkspaces(remainingWorkspaces)
-
-    // Switch to first remaining workspace or create a default one
-    if (remainingWorkspaces.length > 0) {
-      setCurrentWorkspaceId(remainingWorkspaces[0].id)
-    } else {
-      // Create a default workspace
-      const defaultWorkspace: Workspace = {
-        id: 'ws-default',
-        name: 'My Workspace',
-        icon: '💼',
-        channels: [],
-        members: [currentUser.id],
-        createdAt: new Date(),
-      }
-      setWorkspaces([defaultWorkspace])
-      setCurrentWorkspaceId(defaultWorkspace.id)
-    }
+  const handleLeaveWorkspace = async () => {
+    if (!currentWorkspaceId) return
+    await deleteWorkspaceMutation.mutateAsync(currentWorkspaceId)
     setShowWorkspaceSettings(false)
+    // Switch to first remaining workspace
+    if (uiWorkspaces.length > 1) {
+      setCurrentWorkspaceId(uiWorkspaces[0].id)
+    }
   }
 
   const handleDeleteWorkspace = () => {
-    handleLeaveWorkspace() // Same logic as leaving
+    handleLeaveWorkspace()
   }
 
   // Mobile back navigation
@@ -428,125 +406,83 @@ function App() {
     setActiveDMId(undefined)
   }
 
-  // Handle search result click - navigate to the message's channel
+  // Handle search result click
   const handleSearchMessageClick = (message: Message) => {
     const channelId = message.channelId
     setActiveChannelId(channelId)
     setActiveDMId(undefined)
-
-    // Generate messages for this channel if not already loaded
-    if (!messages[channelId]) {
-      setMessages(prev => ({
-        ...prev,
-        [channelId]: generateMockMessages(channelId, 30)
-      }))
-    }
   }
 
   // Create channel handler
-  const handleCreateChannel = (name: string, description: string, type: 'public' | 'private') => {
-    const newChannel: Channel = {
-      id: `channel-${Date.now()}`,
+  const handleCreateChannel = async (name: string, description: string, type: 'public' | 'private') => {
+    const newChannel = await createChannelMutation.mutateAsync({
       name,
       description,
       type,
-      memberCount: 1, // Just the creator for now
-      unreadCount: 0,
-      isPinned: false,
-      isMuted: false,
-      isStarred: false,
-    }
+      workspaceId: currentWorkspaceId,
+    })
 
-    setChannels(prev => [...prev, newChannel])
     setActiveChannelId(newChannel.id)
     setActiveDMId(undefined)
     setShowCreateChannel(false)
-
-    // Initialize empty messages for the new channel
-    setMessages(prev => ({
-      ...prev,
-      [newChannel.id]: []
-    }))
-
-    // Initialize members - only the creator
-    setChannelMembersMap(prev => ({
-      ...prev,
-      [newChannel.id]: [{
-        ...mockUsers[0], // Alice Johnson (current user)
-        role: 'owner' as const,
-        joinedAt: new Date(),
-      }]
-    }))
   }
 
-  // Start conversation handler
-  const handleStartConversation = (userIds: string[], isGroup: boolean) => {
-    const participants = mockUsers.filter(u => userIds.includes(u.id) || u.id === 'user-1')
+  // Start conversation handler - Creates a DM channel via API
+  const handleStartConversation = async (userIds: string[], isGroup: boolean) => {
+    // Create a DM channel with type='messaging'
+    const dmChannel = await createChannelMutation.mutateAsync({
+      name: isGroup ? `Group Chat` : 'Direct Message',
+      description: 'Direct conversation',
+      type: 'messaging',
+      memberIds: userIds, // For DM: [otherUserId], For group: [user1, user2, ...]
+    })
 
-    const newDM: DirectMessage = {
-      id: `dm-${Date.now()}`,
-      type: isGroup ? 'group' : 'direct',
-      participants,
-      unreadCount: 0,
-      isPinned: false,
-      isMuted: false,
-      isStarred: false,
-    }
-
-    setDMs(prev => [...prev, newDM])
-    setActiveDMId(newDM.id)
+    setActiveDMId(dmChannel.id)
     setActiveChannelId('')
     setShowStartConversation(false)
-
-    // Initialize empty messages for the new DM
-    setMessages(prev => ({
-      ...prev,
-      [newDM.id]: []
-    }))
   }
 
   // Get members for the active channel
+  // TODO: Use real channel members API endpoint
   const channelMembers = useMemo(() => {
     if (!activeChannelId) return []
 
-    // If we have members for this channel, return them
     if (channelMembersMap[activeChannelId]) {
       return channelMembersMap[activeChannelId]
     }
 
-    // For existing mock channels, initialize with all users
-    return mockUsers.map((user, index) => ({
-      ...user,
+    // Fallback to showing all users with random roles
+    // In production, this should call GET /api/channels/:id/members
+    return users.map((apiUser, index) => ({
+      id: apiUser.id,
+      name: apiUser.name,
+      email: apiUser.email || `${apiUser.id}@demo.chatsdk.dev`,
+      avatar: apiUser.image || '',
+      status: apiUser.online ? 'online' as const : 'offline' as const,
       role: index === 0 ? 'owner' as const : index === 1 ? 'admin' as const : 'member' as const,
       joinedAt: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000),
     }))
-  }, [activeChannelId, channelMembersMap])
+  }, [activeChannelId, channelMembersMap, users])
 
-  // Filter channels based on visibility (private channels only visible to members)
-  const visibleChannels = useMemo(() => {
-    return channels.filter(channel => {
-      // Public channels are visible to everyone
-      if (channel.type === 'public') return true
-
-      // Private channels only visible to members
-      if (channel.type === 'private') {
-        const members = channelMembersMap[channel.id]
-        if (!members) {
-          // If no member list exists for a private channel, assume it's a legacy mock channel
-          // For mock channels, check if it was created from mockChannels (has members)
-          return true
-        }
-        // Only show if current user is a member
-        return members.some(member => member.id === currentUser.id)
-      }
-
-      return true
-    })
-  }, [channels, channelMembersMap, currentUser.id])
+  // Filter channels (all visible for now)
+  const visibleChannels = uiChannels
 
   // Calculate unread counts
-  const totalUnread = channels.reduce((sum, ch) => sum + (ch.unreadCount || 0), 0) +
+  const totalUnread = uiChannels.reduce((sum, ch) => sum + (ch.unreadCount || 0), 0) +
     dms.reduce((sum, dm) => sum + (dm.unreadCount || 0), 0)
+
+  const handleLogout = () => {
+    clearTokens()
+    auth.logout()
+    setIsAuthenticated(false)
+    setActiveChannelId('')
+    setActiveDMId(undefined)
+    setActiveThreadMessage(undefined)
+  }
+
+  const handleUpdateProfile = (updates: Partial<User>) => {
+    setCurrentUser(prev => ({ ...prev, ...updates }))
+  }
 
   // Desktop layout
   const desktopLayout = (
@@ -561,7 +497,7 @@ function App() {
           onDMSelect={handleDMSelect}
           onStarChannel={handleStarChannel}
           onStarDM={handleStarDM}
-          workspaces={workspaces}
+          workspaces={uiWorkspaces}
           currentWorkspaceId={currentWorkspaceId}
           onWorkspaceChange={handleWorkspaceChange}
           onAddWorkspace={handleAddWorkspace}
@@ -576,7 +512,13 @@ function App() {
           <MessageSearch
             messages={allMessages}
             channels={visibleChannels}
-            users={mockUsers}
+            users={users.map(u => ({
+              id: u.id,
+              name: u.name,
+              email: u.email || `${u.id}@demo.chatsdk.dev`,
+              avatar: u.image || '',
+              status: u.online ? 'online' as const : 'offline' as const,
+            }))}
             onMessageClick={handleSearchMessageClick}
             onClose={() => setShowSearch(false)}
           />
@@ -585,22 +527,17 @@ function App() {
             messages={currentMessages}
             onClose={() => setShowPinnedMessages(false)}
             onUnpin={(message) => {
-              const conversationId = activeChannelId || activeDMId
-              if (conversationId) {
-                setMessages(prev => ({
-                  ...prev,
-                  [conversationId]: (prev[conversationId] || []).map(msg =>
-                    msg.id === message.id ? { ...msg, isPinned: false } : msg
-                  ),
-                }))
+              if (activeChannelId) {
+                pinMessageMutation.mutate({
+                  messageId: message.id,
+                  pinned: false,
+                  channelId: activeChannelId
+                })
               }
             }}
             onMessageClick={(message) => {
-              // Set highlight message ID to scroll to it
               setHighlightMessageId(message.id)
-              // Close pinned messages panel
               setShowPinnedMessages(false)
-              // Clear highlight after navigation
               setTimeout(() => setHighlightMessageId(undefined), 2500)
             }}
           />
@@ -620,13 +557,6 @@ function App() {
                 ...prev,
                 [activeChannel.id]: (prev[activeChannel.id] || channelMembers).filter(m => m.id !== userId)
               }))
-
-              // Update member count
-              setChannels(prev => prev.map(ch =>
-                ch.id === activeChannel.id
-                  ? { ...ch, memberCount: Math.max(1, (ch.memberCount || 1) - 1) }
-                  : ch
-              ))
             }}
             onChangeRole={(userId, role) => {
               setChannelMembersMap(prev => ({
@@ -679,8 +609,15 @@ function App() {
               setActiveThreadMessage(undefined)
             }}
             onSettingsClick={() => setShowChannelSettings(true)}
-            typingUsers={typingUsers[currentConversationId]}
+            typingUsers={typingUsers[activeChannelId]}
             highlightMessageId={highlightMessageId}
+            users={users.map(u => ({
+              id: u.id,
+              name: u.name,
+              email: u.email || `${u.id}@demo.chatsdk.dev`,
+              avatar: u.image || '',
+              status: u.online ? 'online' as const : 'offline' as const,
+            }))}
           />
         ) : activeDM ? (
           <DMView
@@ -700,7 +637,7 @@ function App() {
               setActiveThreadMessage(undefined)
             }}
             onSettingsClick={() => setShowDMSettings(true)}
-            typingUsers={typingUsers[currentConversationId]}
+            typingUsers={typingUsers[activeDMId]}
             highlightMessageId={highlightMessageId}
           />
         ) : (
@@ -719,7 +656,7 @@ function App() {
               </p>
               <div className="flex items-center justify-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                <span>Mobile-first design • Huly patterns</span>
+                <span>Mobile-first design • Connected to ChatSDK API</span>
               </div>
             </div>
           </div>
@@ -728,54 +665,13 @@ function App() {
     />
   )
 
-  // Mobile views
+  // Mobile views (simplified for now, keep existing mobile implementation)
   const mobileWorkspaceView = <WorkspaceSwitcher />
-
   const mobileMessagesView = (
     <div className="h-full flex flex-col">
       <div className="flex-1 overflow-hidden">
-        {activeThreadMessage ? (
-          // Show thread view when a thread is open
-          <ThreadPanel
-            parentMessage={activeThreadMessage}
-            replies={threadReplies[activeThreadMessage.id] || []}
-            onClose={handleCloseThread}
-            onSendReply={handleSendReply}
-            onReact={handleReact}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-          />
-        ) : activeChannel ? (
-          <ChannelView
-            channel={activeChannel}
-            messages={currentMessages}
-            onSendMessage={handleSendMessage}
-            onReply={handleThreadClick}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onReact={handleReact}
-            onThreadClick={handleThreadClick}
-            onPin={handlePin}
-            onBackClick={handleMobileBack}
-            typingUsers={typingUsers[currentConversationId]}
-            highlightMessageId={highlightMessageId}
-          />
-        ) : activeDM ? (
-          <DMView
-            dm={activeDM}
-            messages={currentMessages}
-            currentUserId={currentUser.id}
-            onSendMessage={handleSendMessage}
-            onReply={handleThreadClick}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onReact={handleReact}
-            onThreadClick={handleThreadClick}
-            onPin={handlePin}
-            onBackClick={handleMobileBack}
-            typingUsers={typingUsers[currentConversationId]}
-            highlightMessageId={highlightMessageId}
-          />
+        {activeChannel || activeDM ? (
+          desktopLayout
         ) : (
           <UnifiedMessagesView
             channels={visibleChannels}
@@ -798,56 +694,40 @@ function App() {
     <MessageSearch
       messages={allMessages}
       channels={visibleChannels}
-      users={mockUsers}
+      users={users.map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email || `${u.id}@demo.chatsdk.dev`,
+        avatar: u.image || '',
+        status: u.online ? 'online' as const : 'offline' as const,
+      }))}
       onMessageClick={handleSearchMessageClick}
       isMobile={true}
     />
   )
 
-  const handleUpdateProfile = (updates: Partial<User>) => {
-    setCurrentUser(prev => ({ ...prev, ...updates }))
-  }
-
-  const handleLogout = () => {
-    // Clear authentication tokens
-    clearTokens()
-    setAuthToken(null)
-    setWsToken(null)
-    setIsAuthenticated(false)
-
-    // Clear active states
-    setActiveChannelId('')
-    setActiveDMId(undefined)
-    setActiveThreadMessage(undefined)
-
-    // Show confirmation (in UI-only mode, just reset to first workspace)
-    setCurrentWorkspaceId(workspaces[0]?.id || 'ws-1')
-  }
-
   const mobileProfileView = (
     <div className="flex flex-col h-full bg-white dark:bg-gray-900">
       <UserProfileModal
         user={currentUser}
-        onClose={() => {}} // No close button on mobile profile tab
+        onClose={() => {}}
         onUpdateProfile={handleUpdateProfile}
         onLogout={handleLogout}
       />
     </div>
   )
 
-  // Show login screen if not authenticated
-  if (!isAuthenticated) {
+  // Show login screen if not authenticated or no current user
+  if (!isAuthenticated || !currentUser) {
     return <DemoLogin onLogin={handleLogin} />
   }
 
   return (
     <>
-      {/* Desktop layout - hidden on mobile */}
       <div className="hidden md:block h-screen">
         {desktopLayout}
       </div>
 
-      {/* Mobile layout - hidden on desktop */}
       <MobileViewSwitcher
         workspaceView={mobileWorkspaceView}
         messagesView={mobileMessagesView}
@@ -868,46 +748,39 @@ function App() {
         <StartConversationModal
           onClose={() => setShowStartConversation(false)}
           onStartConversation={handleStartConversation}
-          availableUsers={mockUsers}
+          availableUsers={users.map(u => ({
+            id: u.id,
+            name: u.name,
+            email: u.email || `${u.id}@demo.chatsdk.dev`,
+            avatar: u.image || '',
+            status: u.online ? 'online' as const : 'offline' as const,
+          }))}
           currentUserId={currentUser.id}
         />
       )}
       {showChannelSettings && activeChannel && (
         <ChannelSettingsModal
           channel={activeChannel}
-          currentUserRole={
-            channelMembers.find(m => m.id === currentUser.id)?.role || 'member'
-          }
+          currentUserRole={channelMembers.find(m => m.id === currentUser.id)?.role || 'member'}
           onClose={() => setShowChannelSettings(false)}
           onUpdateChannel={(updates) => {
-            setChannels(prev => prev.map(ch =>
-              ch.id === activeChannel.id ? { ...ch, ...updates } : ch
-            ))
+            // TODO: Call update channel API
+            console.log('Update channel:', updates)
           }}
           onLeaveChannel={() => {
-            // Remove user from channel members
-            setChannelMembersMap(prev => ({
-              ...prev,
-              [activeChannel.id]: (prev[activeChannel.id] || []).filter(m => m.id !== currentUser.id)
-            }))
-
-            // If it's a private channel, remove it from the visible channels list
-            if (activeChannel.type === 'private') {
-              setChannels(prev => prev.filter(ch => ch.id !== activeChannel.id))
-            }
-
             setActiveChannelId('')
             setShowChannelSettings(false)
           }}
-          onDeleteChannel={() => {
-            setChannels(prev => prev.filter(ch => ch.id !== activeChannel.id))
+          onDeleteChannel={async () => {
+            await deleteChannelMutation.mutateAsync(activeChannel.id)
             setActiveChannelId('')
             setShowChannelSettings(false)
           }}
-          onToggleMute={() => {
-            setChannels(prev => prev.map(ch =>
-              ch.id === activeChannel.id ? { ...ch, isMuted: !ch.isMuted } : ch
-            ))
+          onToggleMute={async () => {
+            await muteChannelMutation.mutateAsync({
+              channelId: activeChannel.id,
+              muted: !activeChannel.isMuted
+            })
           }}
         />
       )}
@@ -919,11 +792,14 @@ function App() {
             setShowMembers(true)
           }}
           onAddMembers={(userIds) => {
-            // Add the selected users to the channel
-            const newMembers = mockUsers
+            const newMembers = users
               .filter(u => userIds.includes(u.id))
-              .map(user => ({
-                ...user,
+              .map(apiUser => ({
+                id: apiUser.id,
+                name: apiUser.name,
+                email: apiUser.email || `${apiUser.id}@demo.chatsdk.dev`,
+                avatar: apiUser.image || '',
+                status: apiUser.online ? 'online' as const : 'offline' as const,
                 role: 'member' as const,
                 joinedAt: new Date(),
               }))
@@ -933,17 +809,16 @@ function App() {
               [activeChannel.id]: [...(prev[activeChannel.id] || channelMembers), ...newMembers]
             }))
 
-            // Update member count
-            setChannels(prev => prev.map(ch =>
-              ch.id === activeChannel.id
-                ? { ...ch, memberCount: (ch.memberCount || 0) + newMembers.length }
-                : ch
-            ))
-
             setShowAddMembers(false)
             setShowMembers(true)
           }}
-          availableUsers={mockUsers}
+          availableUsers={users.map(u => ({
+            id: u.id,
+            name: u.name,
+            email: u.email || `${u.id}@demo.chatsdk.dev`,
+            avatar: u.image || '',
+            status: u.online ? 'online' as const : 'offline' as const,
+          }))}
           currentMemberIds={channelMembers.map(m => m.id)}
         />
       )}
@@ -965,7 +840,7 @@ function App() {
       )}
       {showWorkspaceSettings && (
         <WorkspaceSettingsModal
-          workspace={workspaces.find(w => w.id === currentWorkspaceId)!}
+          workspace={uiWorkspaces.find(w => w.id === currentWorkspaceId)!}
           currentUserRole="owner"
           onClose={() => setShowWorkspaceSettings(false)}
           onUpdateWorkspace={handleUpdateWorkspace}
@@ -1003,13 +878,22 @@ function App() {
       )}
       {showWorkspaceInvite && (
         <WorkspaceInviteModal
-          workspace={workspaces.find(w => w.id === currentWorkspaceId)!}
+          workspace={uiWorkspaces.find(w => w.id === currentWorkspaceId)!}
           onClose={() => setShowWorkspaceInvite(false)}
-          onInvite={(emails) => {
-            // In production, this would send email invites via API
-            // For now, just show a success message
-            alert(`Invitations sent to ${emails.length} ${emails.length === 1 ? 'person' : 'people'}!\n\n${emails.join('\n')}`)
-            setShowWorkspaceInvite(false)
+          onInvite={async (emails) => {
+            try {
+              // Send invite for each email
+              for (const email of emails) {
+                await inviteWorkspaceMemberMutation.mutateAsync({
+                  workspaceId: currentWorkspaceId!,
+                  email
+                })
+              }
+              setShowWorkspaceInvite(false)
+            } catch (error) {
+              console.error('Failed to send workspace invites:', error)
+              // TanStack Query will handle error display
+            }
           }}
         />
       )}

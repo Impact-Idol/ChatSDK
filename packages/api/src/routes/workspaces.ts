@@ -73,7 +73,7 @@ workspaceRoutes.post(
       [workspace.id]
     );
 
-    return c.json({
+    const formattedWorkspace = {
       id: workspace.id,
       name: workspace.name,
       type: workspace.type,
@@ -83,7 +83,17 @@ workspaceRoutes.post(
       expiresAt: workspace.expires_at,
       createdAt: workspace.created_at,
       createdBy: workspace.created_by,
-    });
+    };
+
+    // Broadcast workspace created event
+    try {
+      const { centrifugo } = await import('../services/centrifugo');
+      await centrifugo.publishWorkspaceCreated(auth.appId, formattedWorkspace);
+    } catch (error) {
+      console.error('Failed to broadcast workspace.created event:', error);
+    }
+
+    return c.json(formattedWorkspace);
   }
 );
 
@@ -229,7 +239,7 @@ workspaceRoutes.put(
 
     const workspace = result.rows[0];
 
-    return c.json({
+    const formattedWorkspace = {
       id: workspace.id,
       name: workspace.name,
       type: workspace.type,
@@ -238,7 +248,17 @@ workspaceRoutes.put(
       channelCount: workspace.channel_count,
       expiresAt: workspace.expires_at,
       updatedAt: workspace.updated_at,
-    });
+    };
+
+    // Broadcast workspace updated event
+    try {
+      const { centrifugo } = await import('../services/centrifugo');
+      await centrifugo.publishWorkspaceUpdated(auth.appId, workspaceId, formattedWorkspace);
+    } catch (error) {
+      console.error('Failed to broadcast workspace.updated event:', error);
+    }
+
+    return c.json(formattedWorkspace);
   }
 );
 
@@ -265,6 +285,14 @@ workspaceRoutes.delete('/:id', requireUser, async (c) => {
     `DELETE FROM workspace WHERE id = $1 AND app_id = $2`,
     [workspaceId, auth.appId]
   );
+
+  // Broadcast workspace deleted event
+  try {
+    const { centrifugo } = await import('../services/centrifugo');
+    await centrifugo.publishWorkspaceDeleted(auth.appId, workspaceId);
+  } catch (error) {
+    console.error('Failed to broadcast workspace.deleted event:', error);
+  }
 
   return c.json({ success: true });
 });
@@ -424,4 +452,212 @@ workspaceRoutes.get('/:id/channels', requireUser, async (c) => {
   }));
 
   return c.json({ channels });
+});
+
+/**
+ * Invite users to workspace via email
+ * POST /api/workspaces/:id/invite
+ */
+const inviteSchema = z.object({
+  emails: z.array(z.string().email()).min(1).max(50),
+  role: z.enum(['owner', 'admin', 'member']).default('member'),
+  message: z.string().max(500).optional(),
+});
+
+workspaceRoutes.post(
+  '/:id/invite',
+  requireUser,
+  zValidator('json', inviteSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const workspaceId = c.req.param('id');
+    const body = c.req.valid('json');
+
+    // Check if user is admin/owner of workspace
+    const memberResult = await db.query(
+      `SELECT role FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+      [workspaceId, auth.appId, auth.userId]
+    );
+
+    if (memberResult.rows.length === 0) {
+      return c.json({ error: { message: 'Workspace not found' } }, 404);
+    }
+
+    const role = memberResult.rows[0].role;
+    if (!['owner', 'admin'].includes(role)) {
+      return c.json({ error: { message: 'Only admins can invite members' } }, 403);
+    }
+
+    // Get workspace details
+    const workspaceResult = await db.query(
+      `SELECT name FROM workspace WHERE id = $1 AND app_id = $2`,
+      [workspaceId, auth.appId]
+    );
+
+    if (workspaceResult.rows.length === 0) {
+      return c.json({ error: { message: 'Workspace not found' } }, 404);
+    }
+
+    const workspaceName = workspaceResult.rows[0].name;
+
+    // Generate invite tokens for each email
+    const invites = [];
+    const { generateToken } = await import('../utils/crypto');
+
+    for (const email of body.emails) {
+      const token = generateToken(32); // 64 hex chars
+
+      // Check if there's already a pending invite for this email
+      const existingInvite = await db.query(
+        `SELECT id FROM workspace_invite
+         WHERE workspace_id = $1 AND email = $2 AND status = 'pending' AND expires_at > NOW()`,
+        [workspaceId, email]
+      );
+
+      if (existingInvite.rows.length > 0) {
+        // Update existing invite with new token
+        await db.query(
+          `UPDATE workspace_invite
+           SET token = $1, invited_by = $2, message = $3, created_at = NOW(), expires_at = NOW() + INTERVAL '7 days'
+           WHERE id = $4`,
+          [token, auth.userId, body.message, existingInvite.rows[0].id]
+        );
+      } else {
+        // Create new invite
+        await db.query(
+          `INSERT INTO workspace_invite (workspace_id, app_id, email, token, invited_by, role, message)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [workspaceId, auth.appId, email, token, auth.userId, body.role, body.message]
+        );
+      }
+
+      invites.push({
+        email,
+        token,
+        inviteUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/invite/${token}`,
+      });
+    }
+
+    // Trigger email sending via Inngest
+    try {
+      const { inngest } = await import('../inngest');
+      await inngest.send({
+        name: 'workspace/invite.sent',
+        data: {
+          workspaceId,
+          workspaceName,
+          invites,
+          inviterUserId: auth.userId,
+          message: body.message,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to send invite emails:', error);
+      // Don't fail the request if email sending fails
+    }
+
+    return c.json({
+      success: true,
+      invites: invites.map((inv) => ({
+        email: inv.email,
+        inviteUrl: inv.inviteUrl,
+      })),
+    });
+  }
+);
+
+/**
+ * Accept workspace invite
+ * GET /api/workspaces/invites/:token
+ */
+workspaceRoutes.get('/invites/:token', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const token = c.req.param('token');
+
+  // Find the invite
+  const inviteResult = await db.query(
+    `SELECT * FROM workspace_invite
+     WHERE token = $1 AND status = 'pending' AND expires_at > NOW()`,
+    [token]
+  );
+
+  if (inviteResult.rows.length === 0) {
+    return c.json({ error: { message: 'Invalid or expired invite' } }, 404);
+  }
+
+  const invite = inviteResult.rows[0];
+
+  // Check if user is already a member
+  const memberCheck = await db.query(
+    `SELECT 1 FROM workspace_member
+     WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+    [invite.workspace_id, auth.appId, auth.userId]
+  );
+
+  if (memberCheck.rows.length > 0) {
+    // Update invite status to accepted anyway
+    await db.query(
+      `UPDATE workspace_invite SET status = 'accepted', accepted_by = $1, accepted_at = NOW() WHERE id = $2`,
+      [auth.userId, invite.id]
+    );
+
+    return c.json({
+      success: true,
+      message: 'You are already a member of this workspace',
+      alreadyMember: true,
+    });
+  }
+
+  // Add user to workspace
+  await db.query(
+    `INSERT INTO workspace_member (workspace_id, app_id, user_id, role)
+     VALUES ($1, $2, $3, $4)`,
+    [invite.workspace_id, auth.appId, auth.userId, invite.role]
+  );
+
+  // Update workspace member count
+  await db.query(
+    `UPDATE workspace SET member_count = member_count + 1, updated_at = NOW()
+     WHERE id = $1`,
+    [invite.workspace_id]
+  );
+
+  // Mark invite as accepted
+  await db.query(
+    `UPDATE workspace_invite SET status = 'accepted', accepted_by = $1, accepted_at = NOW()
+     WHERE id = $2`,
+    [auth.userId, invite.id]
+  );
+
+  // Get workspace details
+  const workspaceResult = await db.query(
+    `SELECT * FROM workspace WHERE id = $1`,
+    [invite.workspace_id]
+  );
+
+  const workspace = workspaceResult.rows[0];
+
+  // Broadcast workspace.member_joined event
+  try {
+    const { centrifugo } = await import('../services/centrifugo');
+    await centrifugo.publishWorkspaceMemberJoined(
+      auth.appId,
+      invite.workspace_id,
+      auth.userId
+    );
+  } catch (error) {
+    console.error('Failed to broadcast member joined event:', error);
+  }
+
+  return c.json({
+    success: true,
+    workspace: {
+      id: workspace.id,
+      name: workspace.name,
+      type: workspace.type,
+      image: workspace.image_url,
+      memberCount: workspace.member_count,
+    },
+  });
 });

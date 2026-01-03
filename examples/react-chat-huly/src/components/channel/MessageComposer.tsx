@@ -3,7 +3,6 @@ import { Paperclip, Smile, Send, AtSign, Hash, Bold, Italic, Code } from 'lucide
 import { cn } from '@/lib/utils'
 import { MentionAutocomplete } from '../chat/MentionAutocomplete'
 import { EmojiPicker } from '../shared/EmojiPicker'
-import { mockUsers } from '@/data/mockData'
 import type { User } from '@/types'
 
 interface MessageComposerProps {
@@ -11,6 +10,7 @@ interface MessageComposerProps {
   placeholder?: string
   disabled?: boolean
   channelId: string
+  users?: User[]
 }
 
 export function MessageComposer({
@@ -18,6 +18,7 @@ export function MessageComposer({
   placeholder = 'Type a message...',
   disabled = false,
   channelId,
+  users = [],
 }: MessageComposerProps) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
@@ -204,7 +205,7 @@ export function MessageComposer({
 
     // Handle mention autocomplete navigation
     if (showMentions) {
-      const filteredUsers = mockUsers.filter(user =>
+      const filteredUsers = users.filter(user =>
         user.name.toLowerCase().includes(mentionSearch.toLowerCase())
       )
 
@@ -352,7 +353,7 @@ export function MessageComposer({
             {/* Mention autocomplete */}
             {showMentions && (
               <MentionAutocomplete
-                users={mockUsers}
+                users={users}
                 searchQuery={mentionSearch}
                 selectedIndex={selectedMentionIndex}
                 onSelect={handleMentionSelect}

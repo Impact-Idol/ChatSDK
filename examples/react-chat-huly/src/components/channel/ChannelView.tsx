@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ChannelHeader } from './ChannelHeader'
 import { MessageList } from './MessageList'
 import { MessageComposer } from './MessageComposer'
-import type { Channel, Message } from '@/types'
+import type { Channel, Message, User } from '@/types'
 
 interface ChannelViewProps {
   channel: Channel
@@ -22,6 +22,7 @@ interface ChannelViewProps {
   typingUsers?: Array<{ userId: string; name: string }>
   highlightMessageId?: string
   isLoading?: boolean
+  users?: User[]
 }
 
 export function ChannelView({
@@ -42,6 +43,7 @@ export function ChannelView({
   typingUsers,
   highlightMessageId,
   isLoading = false,
+  users = [],
 }: ChannelViewProps) {
   const handleSendMessage = (text: string, files?: File[]) => {
     onSendMessage(text, files)
@@ -85,6 +87,7 @@ export function ChannelView({
         channelId={channel.id}
         onSendMessage={handleSendMessage}
         placeholder={`Message #${channel.name}`}
+        users={users}
       />
     </div>
   )

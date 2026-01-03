@@ -23,13 +23,13 @@ This document outlines all features implemented in the Huly Chat UI and the corr
 #### Backend Requirements:
 ```typescript
 // API Endpoints Needed:
-POST   /api/auth/login          // Authenticate user, return JWT
-POST   /api/auth/logout         // Invalidate session
 GET    /api/users/me            // Get current user profile
 PATCH  /api/users/me            // Update user profile (name, email, avatar, status)
 
 // WebSocket Events:
 user:status_changed             // Broadcast when user status changes
+
+// Note: Authentication handled via POST /tokens endpoint (see Authentication section)
 ```
 
 #### Data Structure:
@@ -420,33 +420,73 @@ POST /api/channels/:id/messages
 
 ---
 
-## 🔐 Authentication
+## 🔐 Authentication (SDK-as-Service Model)
 
-### Current UI:
-- Assumes user is logged in as `currentUser`
-- Logout clears state and shows alert
+### Architecture:
+ChatSDK uses an **SDK-as-Service** authentication model (similar to Twilio, Stream, SendGrid):
+- **Your backend** authenticates users (email/password, OAuth, SAML, etc.)
+- **Your backend** calls ChatSDK's `/tokens` endpoint to generate JWT tokens
+- **Your frontend** uses these tokens to access ChatSDK features
 
-### Backend Requirements:
+### Implementation:
 
+#### 1. Backend Token Generation (Your Server)
 ```typescript
-// JWT Authentication
-POST /api/auth/login
-{ email: string, password: string }
+// Your backend endpoint (after authenticating user)
+POST https://your-backend.com/api/chat-token
+
+// Your backend calls ChatSDK:
+POST https://chatsdk-api.com/tokens
+Headers: {
+  X-API-Key: 'your_chatsdk_api_key'
+  Content-Type: 'application/json'
+}
+Body: {
+  userId: user.id,
+  name: user.name,
+  image: user.avatarUrl,
+  custom: { email: user.email, role: user.role }
+}
 
 Response:
 {
-  token: string        // JWT token
-  user: User
-  workspaces: Workspace[]
+  token: string        // JWT for API requests
+  wsToken: string      // JWT for WebSocket connection
+  user: { id, name, image },
+  expiresIn: 86400     // 24 hours
 }
-
-// Store JWT in localStorage/cookie
-// Include in all requests:
-Authorization: Bearer <token>
-
-// WebSocket authentication:
-WS /api/ws?token=<jwt>
 ```
+
+#### 2. Frontend Usage
+```typescript
+// Get tokens from YOUR backend (after login)
+const { token, wsToken } = await fetch('/api/chat-token').then(r => r.json())
+
+// Store tokens
+localStorage.setItem('chat_token', token)
+localStorage.setItem('chat_ws_token', wsToken)
+
+// Use in API requests
+fetch('http://chatsdk-api.com/api/channels', {
+  headers: {
+    'Authorization': `Bearer ${token}`
+  }
+})
+
+// Use in WebSocket connection
+const ws = new WebSocket(`ws://chatsdk-api.com/ws?token=${wsToken}`)
+```
+
+### Demo Implementation:
+See [`/examples/react-chat-huly/src/lib/auth.ts`](../examples/react-chat-huly/src/lib/auth.ts) for a complete demo implementation, including:
+- Token generation using `/tokens` endpoint
+- Demo user selection UI
+- Token storage and retrieval
+- Error handling
+
+**For production:** Replace the demo implementation with your actual authentication system, but keep the same `/tokens` integration pattern.
+
+**Full Documentation:** See [TOKEN_GENERATION_GUIDE.md](TOKEN_GENERATION_GUIDE.md) for detailed integration guide with examples in Node.js, Python, Ruby, and PHP.
 
 ---
 
@@ -495,7 +535,7 @@ All modals and components accept callback functions that can be wired to API cal
 ## 🚀 Integration Checklist
 
 ### Phase 1: Core API (Week 1-2)
-- [ ] Authentication (login, logout, JWT)
+- [x] **Authentication** - COMPLETED via `/tokens` endpoint (SDK-as-Service model)
 - [ ] User management (get profile, update profile)
 - [ ] Workspace CRUD
 - [ ] Channel CRUD

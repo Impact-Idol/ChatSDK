@@ -123,6 +123,14 @@ channelRoutes.post(
       return channelResult.rows[0];
     });
 
+    // Broadcast channel created event
+    try {
+      const { centrifugo } = await import('../services/centrifugo');
+      await centrifugo.publishChannelCreated(auth.appId, formatChannel(result));
+    } catch (error) {
+      console.error('Failed to broadcast channel.created event:', error);
+    }
+
     return c.json(formatChannel(result), 201);
   }
 );
@@ -133,12 +141,18 @@ channelRoutes.post(
  */
 channelRoutes.get('/', requireUser, async (c) => {
   const auth = c.get('auth');
-  const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
-  const offset = parseInt(c.req.query('offset') || '0', 10);
+
+  // Safe parsing with NaN fallback
+  const rawLimit = parseInt(c.req.query('limit') || '50', 10);
+  const limit = isNaN(rawLimit) ? 50 : Math.min(rawLimit, 100);
+
+  const rawOffset = parseInt(c.req.query('offset') || '0', 10);
+  const offset = isNaN(rawOffset) ? 0 : rawOffset;
+
   const type = c.req.query('type');
 
   let query = `
-    SELECT c.*, cm.last_read_seq, cm.unread_count, cm.muted
+    SELECT c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.starred, cm.role
     FROM channel c
     JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id
     WHERE c.app_id = $1 AND cm.user_id = $2
@@ -170,7 +184,7 @@ channelRoutes.get('/:channelId', requireUser, async (c) => {
   const channelId = c.req.param('channelId');
 
   const result = await db.query(
-    `SELECT c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.role
+    `SELECT c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.starred, cm.role
      FROM channel c
      LEFT JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id AND cm.user_id = $3
      WHERE c.app_id = $1 AND c.id = $2`,
@@ -254,7 +268,17 @@ channelRoutes.patch(
       [auth.appId, channelId, body.name, body.image, body.config]
     );
 
-    return c.json(formatChannel(result.rows[0]));
+    const updatedChannel = formatChannel(result.rows[0]);
+
+    // Broadcast channel updated event
+    try {
+      const { centrifugo } = await import('../services/centrifugo');
+      await centrifugo.publishChannelUpdated(auth.appId, channelId, updatedChannel);
+    } catch (error) {
+      console.error('Failed to broadcast channel.updated event:', error);
+    }
+
+    return c.json(updatedChannel);
   }
 );
 
@@ -285,6 +309,14 @@ channelRoutes.delete('/:channelId', requireUser, async (c) => {
     'DELETE FROM channel WHERE app_id = $1 AND id = $2',
     [auth.appId, channelId]
   );
+
+  // Broadcast channel deleted event
+  try {
+    const { centrifugo } = await import('../services/centrifugo');
+    await centrifugo.publishChannelDeleted(auth.appId, channelId);
+  } catch (error) {
+    console.error('Failed to broadcast channel.deleted event:', error);
+  }
 
   return c.json({ success: true });
 });
@@ -334,6 +366,14 @@ channelRoutes.post(
       [channelId]
     );
 
+    // Broadcast channel member joined event
+    try {
+      const { centrifugo } = await import('../services/centrifugo');
+      await centrifugo.publishChannelMemberJoined(auth.appId, channelId, userId);
+    } catch (error) {
+      console.error('Failed to broadcast channel.member_joined event:', error);
+    }
+
     return c.json({ success: true });
   }
 );
@@ -379,6 +419,14 @@ channelRoutes.delete('/:channelId/members/:userId', requireUser, async (c) => {
      ) WHERE id = $1`,
     [channelId]
   );
+
+  // Broadcast channel member left event
+  try {
+    const { centrifugo } = await import('../services/centrifugo');
+    await centrifugo.publishChannelMemberLeft(auth.appId, channelId, userId);
+  } catch (error) {
+    console.error('Failed to broadcast channel.member_left event:', error);
+  }
 
   return c.json({ success: true });
 });
@@ -445,6 +493,78 @@ channelRoutes.post(
   }
 );
 
+/**
+ * Star/unstar channel
+ * PATCH /api/channels/:channelId/star
+ */
+channelRoutes.patch(
+  '/:channelId/star',
+  requireUser,
+  zValidator('json', z.object({ starred: z.boolean() })),
+  async (c) => {
+    const auth = c.get('auth');
+    const channelId = c.req.param('channelId');
+    const { starred } = c.req.valid('json');
+
+    // Check if user is a member of the channel
+    const memberCheck = await db.query(
+      `SELECT 1 FROM channel_member
+       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+      [channelId, auth.appId, auth.userId]
+    );
+
+    if (memberCheck.rows.length === 0) {
+      return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+    }
+
+    // Update starred status
+    await db.query(
+      `UPDATE channel_member
+       SET starred = $4
+       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+      [channelId, auth.appId, auth.userId, starred]
+    );
+
+    return c.json({ success: true, starred });
+  }
+);
+
+/**
+ * Mute/unmute channel
+ * PATCH /api/channels/:channelId/mute
+ */
+channelRoutes.patch(
+  '/:channelId/mute',
+  requireUser,
+  zValidator('json', z.object({ muted: z.boolean() })),
+  async (c) => {
+    const auth = c.get('auth');
+    const channelId = c.req.param('channelId');
+    const { muted } = c.req.valid('json');
+
+    // Check if user is a member of the channel
+    const memberCheck = await db.query(
+      `SELECT 1 FROM channel_member
+       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+      [channelId, auth.appId, auth.userId]
+    );
+
+    if (memberCheck.rows.length === 0) {
+      return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+    }
+
+    // Update muted status
+    await db.query(
+      `UPDATE channel_member
+       SET muted = $4
+       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+      [channelId, auth.appId, auth.userId, muted]
+    );
+
+    return c.json({ success: true, muted });
+  }
+);
+
 function formatChannel(row: any) {
   return {
     id: row.id,
@@ -463,6 +583,7 @@ function formatChannel(row: any) {
     lastReadSeq: row.last_read_seq,
     unreadCount: row.unread_count,
     muted: row.muted,
+    starred: row.starred,
     role: row.role,
   };
 }

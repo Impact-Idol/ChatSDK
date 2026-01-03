@@ -386,11 +386,67 @@ export const cleanupNotifications = inngest.createFunction(
   }
 );
 
+/**
+ * Handle workspace invite emails
+ * Sends email invitations to join a workspace
+ */
+export const handleWorkspaceInvite = inngest.createFunction(
+  {
+    id: 'send-workspace-invite-emails',
+    name: 'Send Workspace Invite Emails',
+  },
+  { event: 'workspace/invite.sent' },
+  async ({ event, step }) => {
+    const { data } = event;
+
+    // Step 1: Get inviter details
+    const inviter = await step.run('get-inviter', async () => {
+      const result = await db.query(
+        `SELECT name FROM app_user WHERE app_id = (
+          SELECT app_id FROM workspace WHERE id = $1
+        ) AND id = $2`,
+        [data.workspaceId, data.inviterUserId]
+      );
+      return result.rows[0]?.name || 'A team member';
+    });
+
+    // Step 2: Send emails to all invitees
+    await step.run('send-emails', async () => {
+      // In production, you would integrate with an email service here
+      // For now, we'll just log the emails that would be sent
+      console.log('Workspace invite emails to send:');
+      for (const invite of data.invites) {
+        console.log({
+          to: invite.email,
+          subject: `${inviter} invited you to join ${data.workspaceName}`,
+          inviteUrl: invite.inviteUrl,
+          message: data.message,
+        });
+
+        // TODO: Uncomment when email service is configured
+        // Example with Novu:
+        // await notifyWorkspaceInvite({
+        //   recipientEmail: invite.email,
+        //   inviterName: inviter,
+        //   workspaceName: data.workspaceName,
+        //   inviteUrl: invite.inviteUrl,
+        //   message: data.message,
+        // });
+      }
+
+      return data.invites.length;
+    });
+
+    return { sent: data.invites.length };
+  }
+);
+
 // Export all functions
 export const notificationFunctions = [
   handleNewMessage,
   handleReaction,
   handleThreadReply,
   handleChannelInvite,
+  handleWorkspaceInvite,
   cleanupNotifications,
 ];

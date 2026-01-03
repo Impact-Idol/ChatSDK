@@ -5,8 +5,7 @@ import { cn } from '@/lib/utils'
 import { formatMessageTime } from '@/utils/formatDate'
 import { Avatar } from '../ui/Avatar'
 import { EmojiPicker } from '../shared/EmojiPicker'
-import { mockUsers } from '@/data/mockData'
-import type { Message } from '@/types'
+import type { Message, User } from '@/types'
 
 // Helper to extract URLs from text
 function extractUrls(text: string): string[] {
@@ -255,7 +254,7 @@ function renderTextWithMentions(text: string, mentions?: string[]) {
         }
 
         const mentionedUsername = match[1]
-        const mentionedUser = mockUsers.find(
+        const mentionedUser = users.find(
           user => user.name.toLowerCase().replace(/\s+/g, '') === mentionedUsername.toLowerCase()
         )
 
@@ -300,6 +299,7 @@ interface MessageItemProps {
   onReact?: (message: Message, emoji: string) => void
   onThreadClick?: (message: Message) => void
   onPin?: (message: Message) => void
+  users?: User[]
 }
 
 const MessageItemComponent = forwardRef<HTMLDivElement, MessageItemProps>(({
@@ -313,6 +313,7 @@ const MessageItemComponent = forwardRef<HTMLDivElement, MessageItemProps>(({
   onReact,
   onThreadClick,
   onPin,
+  users = [],
 }, ref) => {
   const [showActions, setShowActions] = useState(false)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
@@ -390,7 +391,7 @@ const MessageItemComponent = forwardRef<HTMLDivElement, MessageItemProps>(({
                   title={
                     message.readBy && message.readBy.length > 0
                       ? `Read by ${message.readBy
-                          .map(id => mockUsers.find(u => u.id === id)?.name)
+                          .map(id => users.find(u => u.id === id)?.name)
                           .filter(Boolean)
                           .join(', ')}`
                       : 'Sent'

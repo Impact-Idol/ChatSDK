@@ -48,7 +48,7 @@ export function ChatSidebar({
   const [starredExpanded, setStarredExpanded] = useState(true)
 
   const filteredChannels = channels.filter(ch =>
-    ch.name.toLowerCase().includes(searchQuery.toLowerCase())
+    ch?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ?? true
   )
 
   const filteredDMs = dms.filter(dm => {

@@ -44,9 +44,10 @@ export function DMView({
   const displayUser = otherUsers[0]
   const isGroup = dm.type === 'group'
 
+  // Defensive: handle case where participants are not loaded yet
   const placeholderText = isGroup
-    ? `Message ${otherUsers.map(u => u.name.split(' ')[0]).join(', ')}`
-    : `Message ${displayUser.name.split(' ')[0]}`
+    ? `Message ${otherUsers.length > 0 ? otherUsers.map(u => u.name.split(' ')[0]).join(', ') : 'group'}`
+    : `Message ${displayUser?.name?.split(' ')[0] || 'user'}`
 
   const handleSendMessage = (text: string, files?: File[]) => {
     onSendMessage(text, files)

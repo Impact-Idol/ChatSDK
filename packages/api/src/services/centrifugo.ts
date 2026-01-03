@@ -227,4 +227,96 @@ export const centrifugo = {
       payload: { userId, lastSeen },
     });
   },
+
+  /**
+   * Publish workspace member joined event
+   */
+  async publishWorkspaceMemberJoined(appId: string, workspaceId: string, userId: string): Promise<void> {
+    await getCentrifugo().publish(`workspace:${appId}:${workspaceId}`, {
+      type: 'workspace.member_joined',
+      payload: { workspaceId, userId },
+    });
+  },
+
+  /**
+   * Publish workspace created event
+   */
+  async publishWorkspaceCreated(appId: string, workspace: any): Promise<void> {
+    // Broadcast to app-wide channel so all users can see new workspaces they have access to
+    await getCentrifugo().publish(`app:${appId}`, {
+      type: 'workspace.created',
+      payload: { workspace },
+    });
+  },
+
+  /**
+   * Publish workspace updated event
+   */
+  async publishWorkspaceUpdated(appId: string, workspaceId: string, workspace: any): Promise<void> {
+    await getCentrifugo().publish(`workspace:${appId}:${workspaceId}`, {
+      type: 'workspace.updated',
+      payload: { workspace },
+    });
+  },
+
+  /**
+   * Publish workspace deleted event
+   */
+  async publishWorkspaceDeleted(appId: string, workspaceId: string): Promise<void> {
+    await getCentrifugo().publish(`workspace:${appId}:${workspaceId}`, {
+      type: 'workspace.deleted',
+      payload: { workspaceId },
+    });
+  },
+
+  /**
+   * Publish channel created event
+   */
+  async publishChannelCreated(appId: string, channel: any): Promise<void> {
+    // Broadcast to app-wide channel
+    await getCentrifugo().publish(`app:${appId}`, {
+      type: 'channel.created',
+      payload: { channel },
+    });
+  },
+
+  /**
+   * Publish channel updated event
+   */
+  async publishChannelUpdated(appId: string, channelId: string, channel: any): Promise<void> {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
+      type: 'channel.updated',
+      payload: { channel },
+    });
+  },
+
+  /**
+   * Publish channel deleted event
+   */
+  async publishChannelDeleted(appId: string, channelId: string): Promise<void> {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
+      type: 'channel.deleted',
+      payload: { channelId },
+    });
+  },
+
+  /**
+   * Publish channel member joined event
+   */
+  async publishChannelMemberJoined(appId: string, channelId: string, userId: string): Promise<void> {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
+      type: 'channel.member_joined',
+      payload: { channelId, userId },
+    });
+  },
+
+  /**
+   * Publish channel member left event
+   */
+  async publishChannelMemberLeft(appId: string, channelId: string, userId: string): Promise<void> {
+    await getCentrifugo().publish(`chat:${appId}:${channelId}`, {
+      type: 'channel.member_left',
+      payload: { channelId, userId },
+    });
+  },
 };
