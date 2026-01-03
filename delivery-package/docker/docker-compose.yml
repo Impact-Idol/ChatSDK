@@ -1,0 +1,223 @@
+services:
+  # PostgreSQL - Primary Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: chatsdk-enterprise-postgres
+    ports:
+      - "5434:5432"  # Use 5434 to avoid conflict with other services
+    environment:
+      POSTGRES_USER: chatsdk
+      POSTGRES_PASSWORD: chatsdk_dev
+      POSTGRES_DB: chatsdk
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatsdk"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Centrifugo - Real-time WebSocket Server
+  centrifugo:
+    image: centrifugo/centrifugo:v5
+    container_name: chatsdk-enterprise-centrifugo
+    ports:
+      - "8001:8000"  # WebSocket/HTTP (changed from 8000)
+      - "9003:9000"  # gRPC API (changed from 9000)
+    volumes:
+      - ./centrifugo.json:/centrifugo/config.json
+    command: centrifugo -c config.json
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Inngest Dev Server - Async Workers
+  inngest:
+    image: inngest/inngest:latest
+    container_name: chatsdk-enterprise-inngest
+    ports:
+      - "8289:8288"  # Changed from 8288
+    environment:
+      INNGEST_DEV: "true"
+      INNGEST_LOG_LEVEL: "debug"
+    command: inngest dev -u http://host.docker.internal:5501/api/inngest --no-discovery
+    volumes:
+      - inngest_data:/var/lib/inngest
+
+  # Meilisearch - Text Search
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: chatsdk-enterprise-meilisearch
+    ports:
+      - "7701:7700"  # Changed from 7700
+    environment:
+      MEILI_MASTER_KEY: chatsdk_dev_key
+      MEILI_ENV: development
+    volumes:
+      - meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Qdrant - Vector Search (for AI features)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: chatsdk-enterprise-qdrant
+    ports:
+      - "6335:6333"  # REST API (changed from 6333)
+      - "6336:6334"  # gRPC (changed from 6334)
+    volumes:
+      - qdrant_data:/qdrant/storage
+    profiles:
+      - ai  # Only start when AI features are enabled
+
+  # Redis - Pub/Sub & Caching
+  redis:
+    image: redis:7-alpine
+    container_name: chatsdk-enterprise-redis
+    ports:
+      - "6380:6379"  # Changed from 6379 to avoid conflict
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MinIO - S3-compatible Object Storage (for attachments)
+  minio:
+    image: minio/minio:latest
+    container_name: chatsdk-enterprise-minio
+    ports:
+      - "9004:9000"   # API (changed from 9002)
+      - "9006:9001"   # Console (changed to 9006 to avoid conflict)
+    environment:
+      MINIO_ROOT_USER: chatsdk
+      MINIO_ROOT_PASSWORD: chatsdk_dev_123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB - Required for Novu (optional profile)
+  mongodb:
+    image: mongo:7
+    container_name: chatsdk-enterprise-mongodb
+    ports:
+      - "27018:27017"  # Changed from 27017 to avoid conflict
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: chatsdk
+      MONGO_INITDB_ROOT_PASSWORD: chatsdk_dev
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - novu  # Only start when novu features are enabled
+
+  # Novu API - Notification orchestration (optional profile)
+  # NOTE: Self-hosted Novu requires additional setup. See https://docs.novu.co/self-hosting
+  # For development, consider using Novu Cloud free tier instead.
+  novu-api:
+    image: ghcr.io/novuhq/novu/api:0.24.0
+    container_name: chatsdk-enterprise-novu-api
+    ports:
+      - "3001:3000"  # Changed from 3000 to avoid conflict
+    env_file:
+      - novu.env
+    environment:
+      NODE_ENV: local
+      API_ROOT_URL: http://localhost:3001
+      FRONT_BASE_URL: http://localhost:4201
+      MONGO_URL: mongodb://chatsdk:chatsdk_dev@mongodb:27017/novu?authSource=admin
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB_INDEX: 2
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - novu
+
+  # Novu Worker - Background job processor (optional profile)
+  novu-worker:
+    image: ghcr.io/novuhq/novu/worker:0.24.0
+    container_name: chatsdk-enterprise-novu-worker
+    env_file:
+      - novu.env
+    environment:
+      NODE_ENV: local
+      MONGO_URL: mongodb://chatsdk:chatsdk_dev@mongodb:27017/novu?authSource=admin
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB_INDEX: 2
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      novu-api:
+        condition: service_started
+    profiles:
+      - novu
+
+  # Novu Web Dashboard - Admin UI for managing notifications
+  novu-web:
+    image: ghcr.io/novuhq/novu/web:0.24.0
+    container_name: chatsdk-enterprise-novu-web
+    ports:
+      - "4201:4200"  # Changed from 4200
+    environment:
+      REACT_APP_API_URL: http://localhost:3001
+      REACT_APP_WS_URL: http://localhost:3001
+      REACT_APP_WIDGET_EMBED_PATH: http://localhost:4500/embed.umd.min.js
+    depends_on:
+      - novu-api
+    profiles:
+      - novu
+
+  # React Chat Demo - Frontend Application
+  react-chat:
+    build:
+      context: ..
+      dockerfile: examples/react-chat/Dockerfile
+    container_name: chatsdk-enterprise-react-chat
+    ports:
+      - "5501:5500"  # Changed from 5500 to avoid conflict
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5500/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  meilisearch_data:
+  qdrant_data:
+  redis_data:
+  minio_data:
+  inngest_data:
+  mongodb_data:
+
+networks:
+  default:
+    name: chatsdk-enterprise-network
