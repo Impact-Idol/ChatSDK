@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * ChatSDK React Hooks
  * Export all hooks for easy importing

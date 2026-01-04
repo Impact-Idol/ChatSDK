@@ -1,3 +1,5 @@
+'use client';
+
 // ChatSDK React Components
 // @chatsdk/react
 

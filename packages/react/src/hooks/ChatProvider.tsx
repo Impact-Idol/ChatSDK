@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * ChatProvider - React context provider for ChatSDK
  */

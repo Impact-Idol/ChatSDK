@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * ChatSDKQueryProvider - Pre-configured React Query provider for ChatSDK
  *
