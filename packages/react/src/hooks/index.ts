@@ -142,3 +142,11 @@ export {
   type UseWorkspacesResult,
   type CreateWorkspaceData,
 } from './useWorkspaces';
+
+// Channel Subscription
+export {
+  useChannelSubscription,
+  type ChannelEvent,
+  type UseChannelSubscriptionOptions,
+  type UseChannelSubscriptionResult,
+} from './useChannelSubscription';

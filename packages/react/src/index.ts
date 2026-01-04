@@ -40,6 +40,7 @@ export {
   highlightMentions,
   usePolls,
   useWorkspaces,
+  useChannelSubscription,
 } from './hooks';
 
 export type {
@@ -90,6 +91,9 @@ export type {
   Workspace,
   UseWorkspacesResult,
   CreateWorkspaceData,
+  ChannelEvent,
+  UseChannelSubscriptionOptions,
+  UseChannelSubscriptionResult,
 } from './hooks';
 
 // Re-export core types for convenience

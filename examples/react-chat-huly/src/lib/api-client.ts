@@ -112,16 +112,18 @@ export const workspaceApi = {
       method: 'DELETE',
     }),
 
-  invite: (workspaceId: string, email: string) =>
-    apiRequest<WorkspaceInvite>(`/api/workspaces/${workspaceId}/invite`, {
-      method: 'POST',
-      body: JSON.stringify({ email }),
-    }),
+  invite: (workspaceId: string, emails: string[], role: 'owner' | 'admin' | 'member' = 'member', message?: string) =>
+    apiRequest<{ success: boolean; invites: Array<{ email: string; inviteUrl: string }> }>(
+      `/api/workspaces/${workspaceId}/invite`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ emails, role, message }),
+      }
+    ),
 
-  acceptInvite: (workspaceId: string, token: string) =>
-    apiRequest<{ success: boolean; member: WorkspaceMember }>(
-      `/api/workspaces/${workspaceId}/invite/${token}`,
-      { method: 'POST' }
+  acceptInvite: (token: string) =>
+    apiRequest<{ success: boolean; workspace: Workspace }>(
+      `/api/workspaces/invites/${token}`
     ),
 };
 
@@ -272,14 +274,14 @@ export const messageApi = {
       body: JSON.stringify(data),
     }),
 
-  update: (id: string, text: string) =>
-    apiRequest<Message>(`/api/messages/${id}`, {
+  update: (channelId: string, messageId: string, text: string) =>
+    apiRequest<Message>(`/api/channels/${channelId}/messages/${messageId}`, {
       method: 'PATCH',
       body: JSON.stringify({ text }),
     }),
 
-  delete: (id: string) =>
-    apiRequest<{ success: boolean }>(`/api/messages/${id}`, {
+  delete: (channelId: string, messageId: string) =>
+    apiRequest<{ success: boolean }>(`/api/channels/${channelId}/messages/${messageId}`, {
       method: 'DELETE',
     }),
 
@@ -291,19 +293,19 @@ export const messageApi = {
       }
     ),
 
-  addReaction: (id: string, emoji: string) =>
-    apiRequest<{ success: boolean }>(`/api/messages/${id}/reactions`, {
+  addReaction: (channelId: string, messageId: string, emoji: string) =>
+    apiRequest<{ success: boolean }>(`/api/channels/${channelId}/messages/${messageId}/reactions`, {
       method: 'POST',
       body: JSON.stringify({ emoji }),
     }),
 
-  removeReaction: (id: string, emoji: string) =>
-    apiRequest<{ success: boolean }>(`/api/messages/${id}/reactions/${emoji}`, {
+  removeReaction: (channelId: string, messageId: string, emoji: string) =>
+    apiRequest<{ success: boolean }>(`/api/channels/${channelId}/messages/${messageId}/reactions/${emoji}`, {
       method: 'DELETE',
     }),
 
-  getThreadReplies: (id: string) =>
-    apiRequest<{ messages: Message[] }>(`/api/messages/${id}/replies`),
+  getThreadReplies: (channelId: string, messageId: string) =>
+    apiRequest<{ messages: Message[] }>(`/api/channels/${channelId}/messages/${messageId}/thread`),
 };
 
 // ============================================================================
