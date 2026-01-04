@@ -203,6 +203,93 @@ node scripts/test-auth.mjs
 2. `examples/integrations/auth0-integration.ts`
 3. `examples/integrations/README.md`
 
+## New Features (v1.1.0)
+
+### 🔄 **@chatsdk/react-query Package**
+
+A new optional package providing native React Query (TanStack Query) integration:
+
+```tsx
+import { useMessagesQuery, useSendMessageMutation } from '@chatsdk/react-query';
+
+function Chat({ channelId }) {
+  const { data, isLoading } = useMessagesQuery(channelId);
+  const sendMessage = useSendMessageMutation(channelId);
+
+  // Optimistic updates built-in!
+  const handleSend = () => sendMessage.mutateAsync({ text: 'Hello!' });
+}
+```
+
+**Features:**
+- ✅ Full React Query DevTools integration
+- ✅ Automatic caching and deduplication
+- ✅ Optimistic updates for messages
+- ✅ Infinite scroll pagination support
+- ✅ Real-time event synchronization with cache
+- ✅ Query keys factory for manual cache control
+
+### 🖥️ **Server Components Support**
+
+New server-side data fetching utilities for React Server Components:
+
+```tsx
+// app/chat/page.tsx (Server Component)
+import { getWorkspacesServer, getChannelsServer } from '@chatsdk/react/server';
+
+export default async function ChatPage() {
+  const workspaces = await getWorkspacesServer({
+    apiKey: process.env.CHATSDK_API_KEY!,
+    userToken: await getServerSession(),
+  });
+
+  return <WorkspaceList workspaces={workspaces} />;
+}
+```
+
+**Available Functions:**
+- `getWorkspacesServer()` - Fetch workspaces
+- `getChannelsServer()` - Fetch channels with filters
+- `getMessagesServer()` - Fetch channel messages
+- `getCurrentUserServer()` - Fetch authenticated user
+- `prefetchMessages()` - Prefetch for hydration
+
+### 🔌 **Reconnection Documentation**
+
+Added comprehensive documentation about WebSocket reconnection behavior:
+
+- Centrifuge-js handles reconnection automatically
+- Exponential backoff with jitter prevents thundering herd
+- Subscriptions are automatically recovered after reconnect
+- Token refresh is handled via the `getToken` callback
+- No custom implementation needed (Centrifuge is battle-tested)
+
+See `packages/core/src/client/ChatClient.ts` for detailed documentation.
+
+### 🛡️ **ChatSDKQueryProvider**
+
+Pre-configured React Query provider with chat-optimized defaults:
+
+```tsx
+import { ChatSDKQueryProvider } from '@chatsdk/react';
+
+function App() {
+  return (
+    <ChatSDKQueryProvider config={{ staleTime: 30000 }}>
+      <ChatProvider apiKey="...">
+        <YourApp />
+      </ChatProvider>
+    </ChatSDKQueryProvider>
+  );
+}
+```
+
+**Defaults:**
+- `retry: false` - Prevents console spam on auth errors
+- `staleTime: 30000` - Real-time updates keep data fresh
+- `refetchOnWindowFocus: false` - WebSocket handles updates
+- Smart retry logic that never retries 4xx errors
+
 ## Next Steps
 
 1. ✅ Commit improvements

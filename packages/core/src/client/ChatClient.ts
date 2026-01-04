@@ -1,6 +1,69 @@
 /**
  * ChatClient - Main SDK entry point
- * Handles connection to Centrifugo and coordinates sync/offline components
+ *
+ * Handles connection to Centrifugo and coordinates sync/offline components.
+ *
+ * ## Reconnection Behavior
+ *
+ * Reconnection is handled automatically by the underlying Centrifugo client library.
+ * The Centrifuge-js library implements sophisticated reconnection logic including:
+ *
+ * - **Automatic reconnection**: When the WebSocket connection drops, Centrifuge-js
+ *   automatically attempts to reconnect using exponential backoff with jitter.
+ *
+ * - **Exponential backoff**: Reconnection delays increase exponentially to prevent
+ *   thundering herd problems during server outages.
+ *
+ * - **Jitter**: Random jitter is added to prevent synchronized reconnection attempts
+ *   from multiple clients after an outage.
+ *
+ * - **Subscription recovery**: After reconnection, subscriptions are automatically
+ *   re-established and missed messages are recovered (if server-side history is enabled).
+ *
+ * - **Token refresh**: The `getToken` callback is invoked to refresh the token
+ *   before reconnection if the token has expired.
+ *
+ * ## Connection Events
+ *
+ * The SDK emits the following connection events that you can listen to:
+ *
+ * - `connection.connecting` - WebSocket is attempting to connect
+ * - `connection.connected` - Successfully connected
+ * - `connection.disconnected` - Connection lost (reconnection will be attempted)
+ * - `connection.reconnecting` - Attempting to reconnect (with attempt count)
+ * - `connection.error` - Connection error occurred
+ *
+ * @example Connection state handling
+ * ```typescript
+ * const client = createChatClient({ apiKey: 'your-key' });
+ *
+ * client.on('connection.connected', () => {
+ *   console.log('Connected!');
+ * });
+ *
+ * client.on('connection.disconnected', ({ reason }) => {
+ *   console.log('Disconnected:', reason);
+ *   // No need to manually reconnect - Centrifuge handles this
+ * });
+ *
+ * client.on('connection.reconnecting', ({ attempt }) => {
+ *   console.log(`Reconnecting... attempt ${attempt}`);
+ * });
+ * ```
+ *
+ * ## Why We Don't Implement Custom Reconnection
+ *
+ * Centrifuge-js is a battle-tested library used in production by many companies.
+ * Its reconnection logic is well-optimized and handles edge cases that custom
+ * implementations often miss. Rolling our own reconnection logic would:
+ *
+ * 1. Duplicate existing functionality
+ * 2. Risk introducing bugs in a critical path
+ * 3. Miss optimizations like proper jitter and backoff curves
+ * 4. Not integrate well with Centrifuge's subscription recovery
+ *
+ * For advanced reconnection customization, you can configure Centrifuge options
+ * when initializing the ChatClient (future enhancement).
  */
 
 import { Centrifuge, Subscription, PublicationContext } from 'centrifuge';
