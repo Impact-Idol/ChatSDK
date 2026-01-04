@@ -86,6 +86,8 @@ node scripts/health-check.mjs  # Verify services
 | [**START_HERE.md**](START_HERE.md) | **🚨 MUST READ - Complete setup guide (start here!)** |
 | [**SERVICES_GUIDE.md**](docs/SERVICES_GUIDE.md) | **🔧 Required vs optional services (Meilisearch, Inngest, etc.)** |
 | [**API_GUIDE.md**](docs/API_GUIDE.md) | **📖 React hooks, authentication, complete API examples** |
+| [SDK_INTEGRATION.md](docs/SDK_INTEGRATION.md) | Integration guide for React, React Native, Vue, Svelte |
+| [NEXTJS_INTEGRATION.md](docs/NEXTJS_INTEGRATION.md) | **Next.js App Router & Pages Router integration** |
 | [AUTHENTICATION.md](docs/AUTHENTICATION.md) | Deep dive on auth system, JWT tokens, secret management |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions (600+ lines) |
 | [INSTALLATION.md](docs/INSTALLATION.md) | Complete installation guide with prerequisites |
@@ -233,7 +235,8 @@ delivery-package/
 │   ├── nginx.prod.conf
 │   └── migrations/        # Database migrations
 ├── examples/
-│   └── react-chat-huly/   # Full React chat app (source)
+│   ├── react-chat-huly/   # Full React chat app (Vite)
+│   └── nextjs-chat/       # Next.js App Router example
 ├── docs/
 │   ├── INSTALLATION.md
 │   ├── DEPLOYMENT.md

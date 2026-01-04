@@ -342,33 +342,35 @@ client.on('connection.changed', handler);
 ## Framework Examples
 
 ### Next.js (App Router)
+
+> **See Also:** [Complete Next.js Integration Guide](./NEXTJS_INTEGRATION.md) and [examples/nextjs-chat](../../examples/nextjs-chat/)
+
 ```tsx
 // app/providers.tsx
 'use client';
 
-import { ChatProvider } from '@chatsdk/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
 
-export function Providers({ children, token }: { children: React.ReactNode; token: string }) {
+export function Providers({ children }: { children: React.ReactNode }) {
+  // Create QueryClient inside useState to avoid sharing between requests
+  const [queryClient] = useState(() => new QueryClient());
+
   return (
-    <ChatProvider apiUrl={process.env.NEXT_PUBLIC_CHAT_API_URL!} token={token}>
+    <QueryClientProvider client={queryClient}>
       {children}
-    </ChatProvider>
+    </QueryClientProvider>
   );
 }
 
 // app/layout.tsx
 import { Providers } from './providers';
-import { getServerSession } from 'next-auth';
-import { getChatToken } from '@/lib/chat';
 
-export default async function RootLayout({ children }) {
-  const session = await getServerSession();
-  const chatToken = await getChatToken(session.user.id);
-
+export default function RootLayout({ children }) {
   return (
     <html>
       <body>
-        <Providers token={chatToken}>{children}</Providers>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
@@ -378,26 +380,16 @@ export default async function RootLayout({ children }) {
 ### Next.js (Pages Router)
 ```tsx
 // pages/_app.tsx
-import { ChatProvider } from '@chatsdk/react';
-import { useSession } from 'next-auth/react';
-import { useEffect, useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState } from 'react';
 
 function MyApp({ Component, pageProps }) {
-  const { data: session } = useSession();
-  const [token, setToken] = useState(null);
-
-  useEffect(() => {
-    if (session) {
-      fetch('/api/chat-token')
-        .then(res => res.json())
-        .then(data => setToken(data.token));
-    }
-  }, [session]);
+  const [queryClient] = useState(() => new QueryClient());
 
   return (
-    <ChatProvider apiUrl={process.env.NEXT_PUBLIC_CHAT_API_URL} token={token}>
+    <QueryClientProvider client={queryClient}>
       <Component {...pageProps} />
-    </ChatProvider>
+    </QueryClientProvider>
   );
 }
 ```
@@ -605,6 +597,7 @@ CHAT_API_KEY=your-api-key-here
 
 ## Need Help?
 
+- [Next.js Integration Guide](./NEXTJS_INTEGRATION.md)
 - [API Reference](./API_REFERENCE.md)
 - [Authentication Guide](./AUTHENTICATION.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
