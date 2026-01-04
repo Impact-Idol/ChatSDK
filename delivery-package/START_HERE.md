@@ -324,6 +324,46 @@ node scripts/validate.mjs
 docker-compose logs -f api
 ```
 
+### CORS Errors in Browser
+**Problem:** `Access-Control-Allow-Origin` error when calling API from frontend
+
+**Solution:**
+```bash
+# Add your frontend port to .env.production
+ALLOWED_ORIGINS=http://localhost:4500,http://localhost:3000
+
+# OR for development, allow all origins
+ALLOWED_ORIGINS=*
+
+# Restart API
+docker compose restart api
+```
+
+**Common frontend ports:**
+- `http://localhost:3000` - Next.js default
+- `http://localhost:4500` - Custom React app
+- `http://localhost:5173` - Vite default
+- `http://localhost:5175` - Alternative Vite
+
+### WebSocket "invalid token" Error
+**Problem:** WebSocket connects but immediately disconnects with "invalid token"
+
+**Root Cause:** Cached tokens from old `CENTRIFUGO_TOKEN_SECRET`
+
+**Solution:**
+```javascript
+// In browser console
+localStorage.clear();
+// Then refresh the page
+```
+
+**Prevention:** After running bootstrap (Step 1), always:
+1. Restart services: `docker compose restart`
+2. Clear browser cache
+3. Get fresh tokens
+
+See full guide: `docs/TROUBLESHOOTING.md`
+
 ---
 
 ## 📚 Next Steps
