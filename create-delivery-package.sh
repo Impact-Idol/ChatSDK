@@ -80,13 +80,15 @@ echo -e "${YELLOW}[2/7]${NC} Preparing delivery package directory..."
 
 # Preserve docs and scripts if they exist
 TEMP_DOCS=""
-if [ -d "$PACKAGE_DIR/docs" ] || [ -d "$PACKAGE_DIR/scripts" ]; then
+if [ -d "$PACKAGE_DIR/docs" ] || [ -d "$PACKAGE_DIR/scripts" ] || [ -f "$PACKAGE_DIR/START_HERE.md" ]; then
     echo "  → Preserving documentation and scripts..."
     TEMP_DOCS=$(mktemp -d)
     [ -d "$PACKAGE_DIR/docs" ] && cp -r "$PACKAGE_DIR/docs" "$TEMP_DOCS/" || true
     [ -d "$PACKAGE_DIR/scripts" ] && cp -r "$PACKAGE_DIR/scripts" "$TEMP_DOCS/" || true
     cp "$PACKAGE_DIR/.env.production.example" "$TEMP_DOCS/" 2>/dev/null || true
     cp "$PACKAGE_DIR/README.md" "$TEMP_DOCS/" 2>/dev/null || true
+    cp "$PACKAGE_DIR/START_HERE.md" "$TEMP_DOCS/" 2>/dev/null || true
+    cp "$PACKAGE_DIR/start.sh" "$TEMP_DOCS/" 2>/dev/null || true
 fi
 
 # Remove old delivery package if exists
@@ -105,6 +107,8 @@ if [ -n "$TEMP_DOCS" ]; then
     [ -d "$TEMP_DOCS/scripts" ] && cp -r "$TEMP_DOCS/scripts"/* "$PACKAGE_DIR/scripts/" 2>/dev/null || true
     cp "$TEMP_DOCS/.env.production.example" "$PACKAGE_DIR/" 2>/dev/null || true
     cp "$TEMP_DOCS/README.md" "$PACKAGE_DIR/" 2>/dev/null || true
+    cp "$TEMP_DOCS/START_HERE.md" "$PACKAGE_DIR/" 2>/dev/null || true
+    cp "$TEMP_DOCS/start.sh" "$PACKAGE_DIR/" 2>/dev/null || true
     rm -rf "$TEMP_DOCS"
 fi
 
@@ -273,37 +277,41 @@ echo "  📱 Examples:"
 
 echo ""
 echo "  📚 Documentation:"
+[ -f "$PACKAGE_DIR/START_HERE.md" ] && echo "     ✓ START_HERE.md (🚨 READ THIS FIRST!)" || echo "     ✗ START_HERE.md (missing)"
+[ -f "$PACKAGE_DIR/README.md" ] && echo "     ✓ README.md" || echo "     ✗ README.md (missing)"
 [ -f "$PACKAGE_DIR/docs/AUTHENTICATION.md" ] && echo "     ✓ AUTHENTICATION.md" || echo "     ✗ AUTHENTICATION.md (missing)"
 [ -f "$PACKAGE_DIR/docs/INSTALLATION.md" ] && echo "     ✓ INSTALLATION.md" || echo "     ✗ INSTALLATION.md (missing)"
 [ -f "$PACKAGE_DIR/docs/DEPLOYMENT.md" ] && echo "     ✓ DEPLOYMENT.md" || echo "     ✗ DEPLOYMENT.md (missing)"
 [ -f "$PACKAGE_DIR/docs/API_REFERENCE.md" ] && echo "     ✓ API_REFERENCE.md" || echo "     ✗ API_REFERENCE.md (missing)"
-[ -f "$PACKAGE_DIR/README.md" ] && echo "     ✓ README.md" || echo "     ✗ README.md (missing)"
 
 echo ""
-echo "  🔧 Scripts:"
+echo "  🔧 Setup Tools:"
+[ -f "$PACKAGE_DIR/start.sh" ] && echo "     ✓ start.sh (guided setup)" || echo "     ✗ start.sh (missing)"
 [ -f "$PACKAGE_DIR/scripts/bootstrap.mjs" ] && echo "     ✓ bootstrap.mjs" || echo "     ✗ bootstrap.mjs (missing)"
+[ -f "$PACKAGE_DIR/scripts/validate.mjs" ] && echo "     ✓ validate.mjs" || echo "     ✗ validate.mjs (missing)"
+[ -f "$PACKAGE_DIR/scripts/health-check.mjs" ] && echo "     ✓ health-check.mjs" || echo "     ✗ health-check.mjs (missing)"
 [ -f "$PACKAGE_DIR/scripts/test-auth.mjs" ] && echo "     ✓ test-auth.mjs" || echo "     ✗ test-auth.mjs (missing)"
 
 echo ""
-echo -e "${GREEN}Next Steps:${NC}"
-echo "  1. Extract the archive:"
-echo -e "     ${BLUE}tar -xzf $ARCHIVE_NAME${NC}"
+echo -e "${GREEN}Client Instructions (Send This):${NC}"
 echo ""
-echo "  2. Bootstrap (IMPORTANT - Generate secrets & create app):"
-echo -e "     ${BLUE}cd $PACKAGE_DIR${NC}"
-echo -e "     ${BLUE}node scripts/bootstrap.mjs --app-name=\"Your App Name\"${NC}"
+echo -e "${BLUE}╔═══════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║  SEND TO CLIENT: ONLY THE .tar.gz FILE               ║${NC}"
+echo -e "${BLUE}╚═══════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "  3. Deploy to production:"
-echo -e "     ${BLUE}cd docker${NC}"
-echo -e "     ${BLUE}docker compose -f docker-compose.prod.yml up -d${NC}"
+echo -e "${BOLD}File to send:${NC} $ARCHIVE_NAME"
 echo ""
-echo "  4. Test authentication:"
-echo -e "     ${BLUE}cd ..${NC}"
-echo -e "     ${BLUE}node scripts/test-auth.mjs${NC}"
+echo -e "${BOLD}Client setup (2 options):${NC}"
 echo ""
-echo "  5. Read the documentation:"
-echo -e "     ${BLUE}cat docs/AUTHENTICATION.md${NC}"
-echo -e "     ${BLUE}cat docs/INSTALLATION.md${NC}"
+echo -e "${GREEN}Option 1: Guided Setup (Easiest)${NC}"
+echo -e "  ${BLUE}tar -xzf $ARCHIVE_NAME${NC}"
+echo -e "  ${BLUE}cd $PACKAGE_DIR${NC}"
+echo -e "  ${BLUE}./start.sh${NC}  # Interactive wizard"
+echo ""
+echo -e "${GREEN}Option 2: Manual Setup${NC}"
+echo -e "  ${BLUE}tar -xzf $ARCHIVE_NAME${NC}"
+echo -e "  ${BLUE}cd $PACKAGE_DIR${NC}"
+echo -e "  ${BLUE}cat START_HERE.md${NC}  # Step-by-step guide"
 echo ""
 echo -e "${BLUE}═══════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}Package ready for delivery!${NC} 🎉"

@@ -2,6 +2,26 @@
 
 > Mobile-first chat platform | Production-ready | Self-hosted
 
+---
+
+## 🚨 CRITICAL: Read This First!
+
+### ⚠️ Authentication Setup Required!
+
+**DO NOT skip these steps or deployment will fail:**
+
+1. **📖 READ FIRST:** [**START_HERE.md**](START_HERE.md) ← **Complete setup guide**
+2. **🔑 RUN BOOTSTRAP:** `node scripts/bootstrap.mjs --app-name="Your App"` ← **REQUIRED!**
+3. **✅ VALIDATE:** `node scripts/validate.mjs` ← **Check your setup**
+
+**Why this matters:**
+- ❌ **Skip bootstrap** → Authentication errors, API won't start
+- ✅ **Run bootstrap** → Secrets generated, everything configured
+
+**Time to complete:** 5-10 minutes following [START_HERE.md](START_HERE.md)
+
+---
+
 ## 📦 Package Contents
 
 - **SDK Packages**: Core, React, React Native SDKs (built & ready)
