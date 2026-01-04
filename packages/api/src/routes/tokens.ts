@@ -10,7 +10,8 @@ import * as jose from 'jose';
 import { db } from '../services/database';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'chatsdk-dev-secret-key-change-in-production';
-const CENTRIFUGO_SECRET = process.env.CENTRIFUGO_SECRET || 'chatsdk-dev-secret-key-change-in-production';
+// Support both CENTRIFUGO_TOKEN_SECRET (documented) and CENTRIFUGO_SECRET (legacy) for backward compatibility
+const CENTRIFUGO_SECRET = process.env.CENTRIFUGO_TOKEN_SECRET || process.env.CENTRIFUGO_SECRET || 'chatsdk-dev-secret-key-change-in-production';
 const TOKEN_EXPIRY = '24h';
 
 export const tokenRoutes = new Hono();
