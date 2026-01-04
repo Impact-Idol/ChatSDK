@@ -1,8 +1,153 @@
-# ChatSDK Release Notes - v1.0.1
+# ChatSDK Release Notes - v1.0.2
 
 **Release Date:** January 4, 2026
 **Repository:** https://github.com/piper5ul/ChatSDK.git
 **Branch:** main
+
+---
+
+## 🚀 v1.0.2 - v3 Integration Issues Resolved
+
+### Critical Fixes
+
+#### 1. CORS Preflight Headers Missing (CRITICAL)
+**Problem:** OPTIONS preflight requests returned 204 but without `Access-Control-Allow-Origin` header
+**Fixed:**
+- ✅ OPTIONS response now ensures CORS headers are always set
+- ✅ Added `Access-Control-Max-Age: 86400` for 24-hour preflight caching
+- ✅ Fallback headers added when origin doesn't match allowed list
+
+**Files Modified:** `packages/api/src/index.ts`
+
+**Verification:**
+```bash
+curl -I -X OPTIONS http://localhost:5500/api/channels \
+  -H "Origin: http://localhost:4500"
+# Now returns: Access-Control-Allow-Origin: http://localhost:4500
+```
+
+---
+
+#### 2. Workspace Auth Error Message Confusing (CRITICAL)
+**Problem:** Error "User authentication required" didn't explain you need BOTH X-API-Key AND Bearer token
+**Fixed:**
+- ✅ Improved error message: "User authentication required. Include both X-API-Key and Authorization: Bearer <token> headers."
+
+**Files Modified:** `packages/api/src/middleware/auth.ts`
+
+**Why Both Headers:**
+- X-API-Key identifies your application (app-level auth)
+- Bearer token identifies the end-user (user-level auth)
+- Most endpoints require BOTH for two-tier security
+
+---
+
+#### 3. No Default Workspace Created (CRITICAL)
+**Problem:** Bootstrap created app but no workspace, causing confusion
+**Fixed:**
+- ✅ Bootstrap now creates "General Workspace" automatically
+- ✅ Workspace ID saved to credentials JSON
+- ✅ SQL includes workspace creation
+
+**Files Modified:** `delivery-package/scripts/bootstrap.mjs`
+
+**Bootstrap Output:**
+```json
+{
+  "defaultWorkspace": {
+    "id": "ws-1234567890",
+    "name": "General Workspace",
+    "type": "team"
+  }
+}
+```
+
+---
+
+#### 4. React Hooks Documentation Missing (CRITICAL)
+**Problem:** `@chatsdk/react` included but no docs on how to use hooks vs REST API
+**Fixed:**
+- ✅ Created comprehensive `API_GUIDE.md` (15KB, 800+ lines)
+- ✅ Documents all React hooks with examples
+- ✅ Explains two-tier authentication system clearly
+- ✅ Includes NextAuth and Auth0 integration patterns
+- ✅ Documents JWT token claims structure
+
+**Files Added:** `delivery-package/docs/API_GUIDE.md`
+
+**Hooks Documented:**
+- useWorkspaces - List and manage workspaces
+- useChannels - List and manage channels
+- useMessages - Send/receive messages with real-time updates
+- usePresence - Track online/offline status
+- useTyping - Typing indicators
+- usePolls - Create and vote on polls
+
+---
+
+### Nice-to-Have Features
+
+#### ✅ Kubernetes Health Endpoints
+Already available:
+- `GET /health` - Basic health check
+- `GET /health/detailed` - Detailed health check
+- `GET /health/ready` - Readiness probe (Kubernetes)
+- `GET /live` - Liveness probe (Kubernetes)
+
+#### ✅ Token Claims Documentation
+Documented in `API_GUIDE.md`:
+```json
+{
+  "user_id": "user-123",
+  "app_id": "app-1234567890-abc",
+  "iat": 1704398400,
+  "exp": 1704484800
+}
+```
+
+#### ✅ Next.js App Router Example
+Available at `examples/integrations/nextauth-integration.ts`
+
+#### ✅ Project Cleanup Tools
+- `cleanup-project.sh` - Automated cleanup script
+- `PROJECT_STRUCTURE.md` - Best practices guide for large projects
+- `.archive/README.md` - Archive documentation
+
+---
+
+### Files Changed (v1.0.2)
+
+**Core API:**
+- `packages/api/src/index.ts` - Fixed CORS preflight response
+- `packages/api/src/middleware/auth.ts` - Improved error messages
+
+**Documentation:**
+- `delivery-package/docs/API_GUIDE.md` - **NEW** Complete API + React hooks guide (15KB)
+- `PROJECT_STRUCTURE.md` - **NEW** Project organization best practices
+
+**Scripts:**
+- `delivery-package/scripts/bootstrap.mjs` - Added default workspace creation
+- `cleanup-project.sh` - **NEW** Automated cleanup tool
+
+---
+
+### Issue Summary (v1.0.2)
+
+| Issue | Severity | Status | Impact |
+|-------|----------|--------|---------|
+| CORS preflight headers missing | CRITICAL | ✅ Fixed | OPTIONS now works correctly |
+| Workspace auth error confusing | HIGH | ✅ Fixed | Clear error messages |
+| No default workspace | CRITICAL | ✅ Fixed | Bootstrap creates workspace |
+| React hooks docs missing | CRITICAL | ✅ Fixed | Comprehensive guide added |
+| /health/ready endpoint | MEDIUM | ✅ Exists | Already available |
+| Token claims docs | LOW | ✅ Fixed | Documented in API_GUIDE.md |
+| Next.js example | LOW | ✅ Exists | Already available |
+
+**All v3 issues resolved. API documentation complete.**
+
+---
+
+## 📋 Previous Release - v1.0.1
 
 ---
 
