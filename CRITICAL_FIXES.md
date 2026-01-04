@@ -6,6 +6,42 @@
 
 ---
 
+## 📦 How to Get the Fixed Version
+
+**Repository:** `https://github.com/piper5ul/ChatSDK.git`
+**Branch:** `main`
+
+### First Time Setup:
+
+```bash
+# Clone the repository
+git clone https://github.com/piper5ul/ChatSDK.git
+cd ChatSDK/delivery-package/
+
+# Run interactive setup wizard
+./start.sh
+```
+
+### Updating Existing Installation:
+
+```bash
+# Navigate to your ChatSDK directory
+cd ChatSDK/
+
+# Pull latest fixes
+git pull origin main
+
+# Navigate to delivery package
+cd delivery-package/
+
+# Run setup wizard (if needed)
+./start.sh
+```
+
+**Everything you need is in the `delivery-package/` folder.**
+
+---
+
 ## Issues Fixed
 
 ### 1. ✅ CORS Not Configurable (CRITICAL)
