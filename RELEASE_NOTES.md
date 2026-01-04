@@ -123,7 +123,10 @@ Available at `examples/integrations/nextauth-integration.ts`
 
 **Documentation:**
 - `delivery-package/docs/API_GUIDE.md` - **NEW** Complete API + React hooks guide (15KB)
+- `delivery-package/docs/SERVICES_GUIDE.md` - **NEW** Required vs optional services guide (20KB)
 - `PROJECT_STRUCTURE.md` - **NEW** Project organization best practices
+- `delivery-package/START_HERE.md` - Added Quick Links section
+- `delivery-package/README.md` - Updated documentation index
 
 **Scripts:**
 - `delivery-package/scripts/bootstrap.mjs` - Added default workspace creation
