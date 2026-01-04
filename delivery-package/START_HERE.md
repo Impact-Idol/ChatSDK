@@ -2,6 +2,14 @@
 
 > **CRITICAL:** Follow these steps IN ORDER or deployment will fail!
 
+## 📖 Quick Links
+
+- **[Services Guide](docs/SERVICES_GUIDE.md)** - What's required vs optional (Meilisearch, Inngest, etc.)
+- **[API Guide](docs/API_GUIDE.md)** - React hooks, authentication, endpoints
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+
+---
+
 ## 🚨 BEFORE You Do Anything Else
 
 ChatSDK requires **secret generation** and **authentication setup** BEFORE it can run.

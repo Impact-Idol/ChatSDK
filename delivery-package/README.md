@@ -83,10 +83,14 @@ node scripts/health-check.mjs  # Verify services
 
 | Document | Description |
 |----------|-------------|
-| [**AUTHENTICATION.md**](docs/AUTHENTICATION.md) | **🔑 Auth setup, JWT tokens, secret management** |
+| [**START_HERE.md**](START_HERE.md) | **🚨 MUST READ - Complete setup guide (start here!)** |
+| [**SERVICES_GUIDE.md**](docs/SERVICES_GUIDE.md) | **🔧 Required vs optional services (Meilisearch, Inngest, etc.)** |
+| [**API_GUIDE.md**](docs/API_GUIDE.md) | **📖 React hooks, authentication, complete API examples** |
+| [AUTHENTICATION.md](docs/AUTHENTICATION.md) | Deep dive on auth system, JWT tokens, secret management |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues and solutions (600+ lines) |
 | [INSTALLATION.md](docs/INSTALLATION.md) | Complete installation guide with prerequisites |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Platform-specific deployment (AWS, DO, GCP, K8s) |
-| [API_REFERENCE.md](docs/API_REFERENCE.md) | Full REST API & WebSocket documentation |
+| [API_REFERENCE.md](docs/API_REFERENCE.md) | Full REST API & WebSocket reference |
 | [QUICK_START.md](docs/QUICK_START.md) | 5-minute quickstart guide |
 
 ## ✅ Prerequisites
