@@ -142,9 +142,21 @@ Available at `examples/integrations/nextauth-integration.ts`
 | Workspace auth error confusing | HIGH | ✅ Fixed | Clear error messages |
 | No default workspace | CRITICAL | ✅ Fixed | Bootstrap creates workspace |
 | React hooks docs missing | CRITICAL | ✅ Fixed | Comprehensive guide added |
+| CENTRIFUGO_SECRET mismatch | CRITICAL | ✅ Fixed | Now uses CENTRIFUGO_TOKEN_SECRET |
 | /health/ready endpoint | MEDIUM | ✅ Exists | Already available |
 | Token claims docs | LOW | ✅ Fixed | Documented in API_GUIDE.md |
 | Next.js example | LOW | ✅ Exists | Already available |
+
+---
+
+#### 5. CENTRIFUGO_SECRET vs CENTRIFUGO_TOKEN_SECRET (CRITICAL)
+**Problem:** Code used `CENTRIFUGO_SECRET` but docs/bootstrap used `CENTRIFUGO_TOKEN_SECRET`
+**Fixed:**
+- ✅ Code now checks `CENTRIFUGO_TOKEN_SECRET` first (documented standard)
+- ✅ Falls back to `CENTRIFUGO_SECRET` for backward compatibility
+- ✅ WebSocket tokens now work when following documentation
+
+**Files Modified:** `packages/api/src/routes/tokens.ts`
 
 **All v3 issues resolved. API documentation complete.**
 
