@@ -42,6 +42,23 @@ npm install && npm run build
 # 7. Deploy dist/ to your server or CDN
 ```
 
+## 🔧 Helpful Scripts
+
+ChatSDK includes automation scripts to make deployment easier:
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| **bootstrap.mjs** | Generate secrets & create first app | `node scripts/bootstrap.mjs` |
+| **validate.mjs** | Pre-flight validation before deployment | `node scripts/validate.mjs` |
+| **health-check.mjs** | Verify all services are running | `node scripts/health-check.mjs` |
+| **test-auth.mjs** | End-to-end authentication testing | `node scripts/test-auth.mjs` |
+
+**Pro tip:** Run validation before deployment!
+```bash
+node scripts/validate.mjs  # Check environment
+node scripts/health-check.mjs  # Verify services
+```
+
 ## 📚 Documentation
 
 | Document | Description |
@@ -133,6 +150,26 @@ CENTRIFUGO_API_KEY=<generated>
 DOMAIN=yourdomain.com
 ALLOWED_ORIGINS=https://yourdomain.com
 ```
+
+## 🔌 Authentication Integrations
+
+Ready-to-use code for popular auth providers - **just copy & paste!**
+
+| Provider | Framework | File | Status |
+|----------|-----------|------|--------|
+| **NextAuth** | Next.js | [nextauth-integration.ts](examples/integrations/nextauth-integration.ts) | ✅ Ready |
+| **Auth0** | React | [auth0-integration.ts](examples/integrations/auth0-integration.ts) | ✅ Ready |
+
+**Quick Start:**
+```bash
+# Copy integration file to your project
+cp examples/integrations/nextauth-integration.ts your-project/lib/
+
+# Add to your app
+import { ChatSDKProvider } from './lib/nextauth-integration';
+```
+
+See [Integration Examples README](examples/integrations/README.md) for complete setup guides.
 
 ## 📊 Deployment Costs
 
