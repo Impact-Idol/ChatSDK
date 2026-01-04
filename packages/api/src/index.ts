@@ -95,15 +95,23 @@ app.use('*', async (c, next) => {
     c.header('Access-Control-Allow-Credentials', 'true');
     c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
     c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+    c.header('Access-Control-Max-Age', '86400'); // 24 hours
   } else if (origin && allowedOrigins.includes(origin)) {
     // Allow specific origin
     c.header('Access-Control-Allow-Origin', origin);
     c.header('Access-Control-Allow-Credentials', 'true');
     c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
     c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+    c.header('Access-Control-Max-Age', '86400'); // 24 hours
   }
 
+  // Handle OPTIONS preflight - headers are already set above
   if (c.req.method === 'OPTIONS') {
+    // Ensure we always respond to OPTIONS, even if origin didn't match
+    if (!c.res.headers.get('Access-Control-Allow-Origin')) {
+      // Origin not allowed, but still need to respond
+      c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    }
     return c.body(null, 204);
   }
 

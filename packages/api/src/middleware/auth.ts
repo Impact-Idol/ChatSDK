@@ -103,7 +103,9 @@ export const requireUser = createMiddleware(async (c, next) => {
   const auth = c.get('auth');
 
   if (!auth?.userId) {
-    throw new HTTPException(401, { message: 'User authentication required' });
+    throw new HTTPException(401, {
+      message: 'User authentication required. Include both X-API-Key and Authorization: Bearer <token> headers.'
+    });
   }
 
   await next();

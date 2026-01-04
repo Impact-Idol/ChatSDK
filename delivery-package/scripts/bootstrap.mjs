@@ -121,6 +121,8 @@ async function bootstrap() {
   }
 
   const appId = `app-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+  const workspaceId = `ws-${Date.now()}`;
+
   const credentials = {
     app: {
       id: appId,
@@ -128,6 +130,12 @@ async function bootstrap() {
       apiKey: secrets.APP_API_KEY,
       secretKey: secrets.APP_SECRET_KEY,
       createdAt: new Date().toISOString(),
+    },
+    defaultWorkspace: {
+      id: workspaceId,
+      name: 'General Workspace',
+      type: 'team',
+      note: 'Created automatically during bootstrap',
     },
     usage: {
       createToken: {
@@ -234,8 +242,24 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
+-- Create default workspace
+INSERT INTO workspace (id, app_id, name, type, member_count, channel_count, config, created_at, updated_at)
+VALUES (
+  '${workspaceId}',
+  '${appId}',
+  'General Workspace',
+  'team',
+  0,
+  0,
+  '{}',
+  NOW(),
+  NOW()
+)
+ON CONFLICT (id) DO NOTHING;
+
 -- Verify
 SELECT id, name, api_key, api_secret, created_at FROM app WHERE id = '${appId}';
+SELECT id, name, type, member_count FROM workspace WHERE app_id = '${appId}';
 `;
 
   await writeFile(sqlPath, sql);
