@@ -78,12 +78,13 @@ echo ""
 
 echo -e "${YELLOW}[2/7]${NC} Preparing delivery package directory..."
 
-# Preserve docs if they exist
+# Preserve docs and scripts if they exist
 TEMP_DOCS=""
-if [ -d "$PACKAGE_DIR/docs" ]; then
-    echo "  → Preserving documentation..."
+if [ -d "$PACKAGE_DIR/docs" ] || [ -d "$PACKAGE_DIR/scripts" ]; then
+    echo "  → Preserving documentation and scripts..."
     TEMP_DOCS=$(mktemp -d)
-    cp -r "$PACKAGE_DIR/docs" "$TEMP_DOCS/"
+    [ -d "$PACKAGE_DIR/docs" ] && cp -r "$PACKAGE_DIR/docs" "$TEMP_DOCS/" || true
+    [ -d "$PACKAGE_DIR/scripts" ] && cp -r "$PACKAGE_DIR/scripts" "$TEMP_DOCS/" || true
     cp "$PACKAGE_DIR/.env.production.example" "$TEMP_DOCS/" 2>/dev/null || true
     cp "$PACKAGE_DIR/README.md" "$TEMP_DOCS/" 2>/dev/null || true
 fi
@@ -95,12 +96,13 @@ if [ -d "$PACKAGE_DIR" ]; then
 fi
 
 # Create directory structure
-mkdir -p "$PACKAGE_DIR"/{packages,docker,examples,docs}
+mkdir -p "$PACKAGE_DIR"/{packages,docker,examples,docs,scripts}
 
-# Restore docs if they were preserved
+# Restore docs and scripts if they were preserved
 if [ -n "$TEMP_DOCS" ]; then
-    echo "  → Restoring documentation..."
-    cp -r "$TEMP_DOCS/docs"/* "$PACKAGE_DIR/docs/" 2>/dev/null || true
+    echo "  → Restoring documentation and scripts..."
+    [ -d "$TEMP_DOCS/docs" ] && cp -r "$TEMP_DOCS/docs"/* "$PACKAGE_DIR/docs/" 2>/dev/null || true
+    [ -d "$TEMP_DOCS/scripts" ] && cp -r "$TEMP_DOCS/scripts"/* "$PACKAGE_DIR/scripts/" 2>/dev/null || true
     cp "$TEMP_DOCS/.env.production.example" "$PACKAGE_DIR/" 2>/dev/null || true
     cp "$TEMP_DOCS/README.md" "$PACKAGE_DIR/" 2>/dev/null || true
     rm -rf "$TEMP_DOCS"
@@ -271,26 +273,36 @@ echo "  📱 Examples:"
 
 echo ""
 echo "  📚 Documentation:"
+[ -f "$PACKAGE_DIR/docs/AUTHENTICATION.md" ] && echo "     ✓ AUTHENTICATION.md" || echo "     ✗ AUTHENTICATION.md (missing)"
 [ -f "$PACKAGE_DIR/docs/INSTALLATION.md" ] && echo "     ✓ INSTALLATION.md" || echo "     ✗ INSTALLATION.md (missing)"
 [ -f "$PACKAGE_DIR/docs/DEPLOYMENT.md" ] && echo "     ✓ DEPLOYMENT.md" || echo "     ✗ DEPLOYMENT.md (missing)"
 [ -f "$PACKAGE_DIR/docs/API_REFERENCE.md" ] && echo "     ✓ API_REFERENCE.md" || echo "     ✗ API_REFERENCE.md (missing)"
 [ -f "$PACKAGE_DIR/README.md" ] && echo "     ✓ README.md" || echo "     ✗ README.md (missing)"
 
 echo ""
+echo "  🔧 Scripts:"
+[ -f "$PACKAGE_DIR/scripts/bootstrap.mjs" ] && echo "     ✓ bootstrap.mjs" || echo "     ✗ bootstrap.mjs (missing)"
+[ -f "$PACKAGE_DIR/scripts/test-auth.mjs" ] && echo "     ✓ test-auth.mjs" || echo "     ✗ test-auth.mjs (missing)"
+
+echo ""
 echo -e "${GREEN}Next Steps:${NC}"
 echo "  1. Extract the archive:"
 echo -e "     ${BLUE}tar -xzf $ARCHIVE_NAME${NC}"
 echo ""
-echo "  2. Configure environment:"
+echo "  2. Bootstrap (IMPORTANT - Generate secrets & create app):"
 echo -e "     ${BLUE}cd $PACKAGE_DIR${NC}"
-echo -e "     ${BLUE}cp .env.production.example .env${NC}"
-echo -e "     ${BLUE}nano .env  # Edit with your values${NC}"
+echo -e "     ${BLUE}node scripts/bootstrap.mjs --app-name=\"Your App Name\"${NC}"
 echo ""
 echo "  3. Deploy to production:"
 echo -e "     ${BLUE}cd docker${NC}"
 echo -e "     ${BLUE}docker compose -f docker-compose.prod.yml up -d${NC}"
 echo ""
-echo "  4. Read the documentation:"
+echo "  4. Test authentication:"
+echo -e "     ${BLUE}cd ..${NC}"
+echo -e "     ${BLUE}node scripts/test-auth.mjs${NC}"
+echo ""
+echo "  5. Read the documentation:"
+echo -e "     ${BLUE}cat docs/AUTHENTICATION.md${NC}"
 echo -e "     ${BLUE}cat docs/INSTALLATION.md${NC}"
 echo ""
 echo -e "${BLUE}═══════════════════════════════════════════════════════${NC}"

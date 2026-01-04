@@ -16,28 +16,37 @@
 tar -xzf chatsdk-delivery-package-*.tar.gz
 cd delivery-package
 
-# 2. Configure environment
-cp .env.production.example .env
-# Edit .env with your database, S3, and secrets
+# 2. Bootstrap (Generate secrets & create first app)
+node scripts/bootstrap.mjs --app-name="My Chat App"
+# This creates .env.production with all secrets automatically
 
 # 3. Start services
 cd docker
 docker compose -f docker-compose.prod.yml up -d
 
-# 4. Run migrations
+# 4. Run migrations & bootstrap SQL
 docker exec chatsdk-api npm run migrate
+docker exec -i chatsdk-postgres psql -U chatsdk -d chatsdk < ../credentials/bootstrap-*.sql
 
-# 5. Build frontend
+# 5. Test authentication
+export API_KEY=$(cat ../credentials/app-*.json | grep apiKey | cut -d'"' -f4)
+curl -X POST http://localhost:5500/api/tokens \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"userId": "user-1", "name": "Test User"}'
+
+# 6. Build frontend
 cd ../examples/react-chat-huly
 npm install && npm run build
 
-# 6. Deploy dist/ to your server or CDN
+# 7. Deploy dist/ to your server or CDN
 ```
 
 ## 📚 Documentation
 
 | Document | Description |
 |----------|-------------|
+| [**AUTHENTICATION.md**](docs/AUTHENTICATION.md) | **🔑 Auth setup, JWT tokens, secret management** |
 | [INSTALLATION.md](docs/INSTALLATION.md) | Complete installation guide with prerequisites |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Platform-specific deployment (AWS, DO, GCP, K8s) |
 | [API_REFERENCE.md](docs/API_REFERENCE.md) | Full REST API & WebSocket documentation |

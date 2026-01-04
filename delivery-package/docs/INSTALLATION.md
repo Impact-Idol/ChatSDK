@@ -86,18 +86,32 @@ aws s3api put-public-access-block \
 aws s3api put-bucket-cors --bucket chatsdk-uploads-production --cors-configuration file://cors.json
 ```
 
-### 3. Environment Configuration
+### 3. Bootstrap Setup (IMPORTANT!)
+
+**Run the bootstrap script to generate all secrets and create your first app:**
 
 ```bash
-cp .env.production.example .env
+# This generates JWT_SECRET, ADMIN_API_KEY, CENTRIFUGO_TOKEN_SECRET,
+# creates your first application, and updates .env.production automatically
+node scripts/bootstrap.mjs --app-name="My Chat App"
 ```
 
-**Generate secrets:**
+**What the bootstrap does:**
+- ✅ Generates all cryptographically secure secrets
+- ✅ Creates `.env.production` with proper configuration
+- ✅ Creates your first application with API keys
+- ✅ Generates SQL file to insert app into database
+- ✅ Saves credentials securely in `credentials/` directory
+
+**Alternative - Manual Setup:**
+If you prefer to generate secrets manually:
 ```bash
-# Generate all required secrets
-openssl rand -hex 32  # JWT_SECRET
-openssl rand -hex 32  # CENTRIFUGO_TOKEN_SECRET
-openssl rand -hex 32  # CENTRIFUGO_API_KEY
+cp .env.production.example .env
+
+# Generate secrets manually
+openssl rand -hex 64  # JWT_SECRET (128 chars)
+openssl rand -hex 32  # ADMIN_API_KEY (64 chars)
+openssl rand -hex 32  # CENTRIFUGO_TOKEN_SECRET (64 chars)
 openssl rand -hex 32  # CENTRIFUGO_JWT_SECRET
 ```
 
@@ -157,12 +171,20 @@ docker exec chatsdk-api npm run migrate
 
 # Verify tables were created
 docker exec -it chatsdk-postgres psql -U chatsdk_user -d chatsdk_production -c "\dt"
+
+# Apply bootstrap SQL (created by bootstrap.mjs in step 3)
+docker exec -i chatsdk-postgres psql -U chatsdk_user -d chatsdk_production < credentials/bootstrap-*.sql
+
+# Verify your app was created
+docker exec -it chatsdk-postgres psql -U chatsdk_user -d chatsdk_production -c "SELECT id, name, api_key FROM app;"
 ```
 
 Expected tables:
-- users, channels, messages, reactions, attachments
+- app, app_user, channels, messages, reactions, attachments
 - channel_members, read_receipts, workspaces, threads
 - polls, audit_logs, webhooks
+
+**Important:** The bootstrap SQL creates your first application. Save the API key displayed - you'll need it to generate user tokens!
 
 ### 6. Frontend Setup
 
