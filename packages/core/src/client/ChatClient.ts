@@ -65,32 +65,91 @@ export class ChatClient {
   private appId: string | null = null;      // App ID extracted from wsToken
 
   constructor(options: ChatClientOptions) {
-    // Debug logging
-    console.log('[ChatClient] Constructor called with options:', {
-      apiKey: options.apiKey ? options.apiKey.substring(0, 20) + '...' : 'UNDEFINED',
-      apiUrl: options.apiUrl,
-      debug: options.debug,
-    });
-
     // Filter out undefined values from options to avoid overwriting defaults
     const filteredOptions = Object.fromEntries(
       Object.entries(options).filter(([, v]) => v !== undefined)
     );
 
-    console.log('[ChatClient] Filtered options:', {
-      apiKey: filteredOptions.apiKey ? filteredOptions.apiKey.substring(0, 20) + '...' : 'UNDEFINED',
-      ...Object.fromEntries(Object.entries(filteredOptions).filter(([k]) => k !== 'apiKey'))
-    });
-
     this.config = { ...DEFAULT_CONFIG, ...filteredOptions } as ChatClientConfig;
-
-    console.log('[ChatClient] Final config:', {
-      apiKey: this.config.apiKey ? this.config.apiKey.substring(0, 20) + '...' : 'UNDEFINED',
-      apiUrl: this.config.apiUrl,
-      debug: this.config.debug,
-    });
-
     this.eventBus = new EventBus({ debug: this.config.debug });
+
+    // Debug log initialization
+    this.log('init', 'ChatClient initialized', {
+      apiUrl: this.config.apiUrl,
+      wsUrl: this.config.wsUrl,
+      debug: this.config.debug,
+      offlineSupport: this.config.enableOfflineSupport,
+    });
+  }
+
+  // ============================================================================
+  // Debug Logging
+  // ============================================================================
+
+  /**
+   * Structured debug logger - only logs when debug mode is enabled
+   */
+  private log(
+    category: 'init' | 'connection' | 'subscription' | 'api' | 'event' | 'error',
+    message: string,
+    data?: Record<string, unknown>
+  ): void {
+    if (!this.config.debug) return;
+
+    const timestamp = new Date().toISOString();
+    const prefix = `[ChatSDK:${category}]`;
+
+    if (data) {
+      // Sanitize sensitive data
+      const sanitized = this.sanitizeLogData(data);
+      console.log(`${prefix} ${message}`, sanitized, `(${timestamp})`);
+    } else {
+      console.log(`${prefix} ${message}`, `(${timestamp})`);
+    }
+  }
+
+  /**
+   * Sanitize sensitive data from logs
+   */
+  private sanitizeLogData(data: Record<string, unknown>): Record<string, unknown> {
+    const sensitiveKeys = ['token', 'wsToken', 'apiKey', 'password', 'secret'];
+    const result: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(data)) {
+      if (sensitiveKeys.some(k => key.toLowerCase().includes(k))) {
+        if (typeof value === 'string' && value.length > 0) {
+          result[key] = value.substring(0, 8) + '...[redacted]';
+        } else {
+          result[key] = '[redacted]';
+        }
+      } else if (typeof value === 'object' && value !== null) {
+        result[key] = this.sanitizeLogData(value as Record<string, unknown>);
+      } else {
+        result[key] = value;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Log API request/response for debugging
+   */
+  private logApiCall(
+    method: string,
+    endpoint: string,
+    duration: number,
+    status: number | 'error',
+    error?: string
+  ): void {
+    if (!this.config.debug) return;
+
+    const emoji = status === 'error' ? '❌' : status >= 400 ? '⚠️' : '✅';
+    this.log('api', `${emoji} ${method} ${endpoint}`, {
+      status,
+      duration: `${duration}ms`,
+      ...(error && { error }),
+    });
   }
 
   // ============================================================================
@@ -106,22 +165,28 @@ export class ChatClient {
     user: ConnectUserOptions,
     tokenOrTokens: string | { token: string; wsToken: string }
   ): Promise<User> {
+    this.log('connection', 'Connecting user...', { userId: user.id });
+
     // Handle both token formats for backwards compatibility
     if (typeof tokenOrTokens === 'string') {
       // Legacy: single token used for both
       this.token = tokenOrTokens;
       this.wsToken = tokenOrTokens;
+      this.log('connection', 'Using single token for API and WebSocket');
     } else {
       // New: separate tokens
       this.token = tokenOrTokens.token;
       this.wsToken = tokenOrTokens.wsToken;
+      this.log('connection', 'Using separate tokens for API and WebSocket');
     }
 
     // Extract app_id from wsToken for channel namespacing
     if (this.wsToken) {
       this.appId = this.extractAppIdFromToken(this.wsToken);
       if (!this.appId) {
-        console.warn('[ChatClient] Failed to extract app_id from wsToken. Multi-tenant isolation may not work.');
+        this.log('error', 'Failed to extract app_id from wsToken - multi-tenant isolation may not work');
+      } else {
+        this.log('connection', 'Extracted app_id from token', { appId: this.appId });
       }
     }
 
@@ -138,6 +203,8 @@ export class ChatClient {
     this.eventBus.emit('connection.connecting', undefined);
 
     try {
+      this.log('connection', 'Initializing Centrifugo client', { wsUrl: this.config.wsUrl });
+
       // Initialize Centrifugo client with WebSocket token
       this.centrifuge = new Centrifuge(this.config.wsUrl!, {
         token: this.wsToken!,
@@ -156,6 +223,7 @@ export class ChatClient {
 
       // Wait for connection
       await this.waitForConnection();
+      this.log('connection', 'WebSocket connection established');
 
       // Subscribe to user's personal channel for notifications
       await this.subscribeToUserChannel(user.id);
@@ -163,12 +231,17 @@ export class ChatClient {
       this.setConnectionState('connected');
       this.eventBus.emit('connection.connected', undefined);
 
-      if (this.config.debug) {
-        console.log('[ChatClient] Connected as', user.id);
-      }
+      this.log('connection', '✅ User connected successfully', {
+        userId: user.id,
+        userName: user.name,
+      });
 
       return this.currentUser;
     } catch (error) {
+      this.log('error', '❌ Connection failed', {
+        error: (error as Error).message,
+        userId: user.id,
+      });
       this.setConnectionState('disconnected');
       this.eventBus.emit('connection.error', { error: error as Error });
       throw error;
@@ -179,12 +252,13 @@ export class ChatClient {
    * Disconnect from the chat service
    */
   async disconnect(): Promise<void> {
+    this.log('connection', 'Disconnecting...');
+
     // Unsubscribe from all channels
+    const channelCount = this.subscriptions.size;
     for (const [channelId, subscription] of this.subscriptions) {
       subscription.unsubscribe();
-      if (this.config.debug) {
-        console.log('[ChatClient] Unsubscribed from', channelId);
-      }
+      this.log('subscription', 'Unsubscribed from channel', { channel: channelId });
     }
     this.subscriptions.clear();
 
@@ -198,35 +272,40 @@ export class ChatClient {
     this.token = null;
     this.setConnectionState('disconnected');
     this.eventBus.emit('connection.disconnected', { reason: 'user_disconnect' });
+
+    this.log('connection', '✅ Disconnected', { channelsUnsubscribed: channelCount });
   }
 
   private setupConnectionHandlers(): void {
     if (!this.centrifuge) return;
 
     this.centrifuge.on('connecting', (ctx) => {
-      if (this.config.debug) {
-        console.log('[ChatClient] Connecting...', ctx);
-      }
+      this.log('connection', 'WebSocket connecting...', { code: ctx.code, reason: ctx.reason });
       this.setConnectionState('connecting');
     });
 
     this.centrifuge.on('connected', (ctx) => {
-      if (this.config.debug) {
-        console.log('[ChatClient] Connected', ctx);
-      }
+      this.log('connection', '✅ WebSocket connected', {
+        client: ctx.client,
+        transport: ctx.transport,
+      });
       this.setConnectionState('connected');
     });
 
     this.centrifuge.on('disconnected', (ctx) => {
-      if (this.config.debug) {
-        console.log('[ChatClient] Disconnected', ctx);
-      }
+      this.log('connection', '⚠️ WebSocket disconnected', {
+        code: ctx.code,
+        reason: ctx.reason,
+      });
       this.setConnectionState('disconnected');
       this.eventBus.emit('connection.disconnected', { reason: ctx.reason });
     });
 
     this.centrifuge.on('error', (ctx) => {
-      console.error('[ChatClient] Connection error', ctx);
+      this.log('error', '❌ WebSocket error', {
+        error: ctx.error?.message ?? 'Unknown error',
+        code: ctx.error?.code,
+      });
       this.eventBus.emit('connection.error', { error: new Error(ctx.error?.message ?? 'Unknown error') });
     });
   }
@@ -283,9 +362,7 @@ export class ChatClient {
 
     // Wait for any ongoing operations on this channel
     if (this.subscriptionLocks.has(channelName)) {
-      if (this.config.debug) {
-        console.log('[ChatClient] Waiting for subscription lock:', channelName);
-      }
+      this.log('subscription', 'Waiting for subscription lock', { channel: channelName });
       await this.subscriptionLocks.get(channelName);
     }
 
@@ -294,17 +371,16 @@ export class ChatClient {
 
     // If already active, return existing subscription
     if (currentState === SubscriptionState.ACTIVE && this.subscriptions.has(channelName)) {
-      if (this.config.debug) {
-        console.log('[ChatClient] Returning existing subscription:', channelName);
-      }
+      this.log('subscription', 'Returning existing subscription', { channel: channelName });
       return this.subscriptions.get(channelName)!;
     }
 
     // If pending or cleaning, wait a bit and retry
     if (currentState === SubscriptionState.PENDING || currentState === SubscriptionState.CLEANING) {
-      if (this.config.debug) {
-        console.log('[ChatClient] Subscription in transitional state:', currentState, channelName);
-      }
+      this.log('subscription', 'Subscription in transitional state, waiting...', {
+        channel: channelName,
+        state: currentState,
+      });
       await new Promise(resolve => setTimeout(resolve, 100));
       return this.subscribe(channelName);
     }
@@ -315,9 +391,7 @@ export class ChatClient {
         // Set state to PENDING
         this.subscriptionStates.set(channelName, SubscriptionState.PENDING);
 
-        if (this.config.debug) {
-          console.log('[ChatClient] Creating new subscription:', channelName);
-        }
+        this.log('subscription', 'Creating new subscription', { channel: channelName });
 
         const subscription = this.centrifuge!.newSubscription(channelName);
 
@@ -327,13 +401,18 @@ export class ChatClient {
         });
 
         subscription.on('subscribed', (ctx) => {
-          if (this.config.debug) {
-            console.log('[ChatClient] Subscribed to', channelName, ctx);
-          }
+          this.log('subscription', '✅ Subscribed to channel', {
+            channel: channelName,
+            wasRecovering: ctx.wasRecovering,
+          });
         });
 
         subscription.on('error', (ctx) => {
-          console.error('[ChatClient] Subscription error', channelName, ctx);
+          this.log('error', '❌ Subscription error', {
+            channel: channelName,
+            error: ctx.error?.message,
+            code: ctx.error?.code,
+          });
         });
 
         // Subscribe
@@ -343,9 +422,7 @@ export class ChatClient {
         // Set state to ACTIVE
         this.subscriptionStates.set(channelName, SubscriptionState.ACTIVE);
 
-        if (this.config.debug) {
-          console.log('[ChatClient] Subscription active:', channelName);
-        }
+        this.log('subscription', 'Subscription active', { channel: channelName });
       } finally {
         // Remove lock
         this.subscriptionLocks.delete(channelName);
@@ -366,9 +443,7 @@ export class ChatClient {
 
     // Wait for any ongoing operations
     if (this.subscriptionLocks.has(channelName)) {
-      if (this.config.debug) {
-        console.log('[ChatClient] Waiting for subscription lock before unsubscribe:', channelName);
-      }
+      this.log('subscription', 'Waiting for lock before unsubscribe', { channel: channelName });
       await this.subscriptionLocks.get(channelName);
     }
 
@@ -381,17 +456,13 @@ export class ChatClient {
           // Set state to CLEANING
           this.subscriptionStates.set(channelName, SubscriptionState.CLEANING);
 
-          if (this.config.debug) {
-            console.log('[ChatClient] Unsubscribing from', channelName);
-          }
+          this.log('subscription', 'Unsubscribing from channel', { channel: channelName });
 
           subscription.unsubscribe();
           this.subscriptions.delete(channelName);
           this.subscriptionStates.delete(channelName);
 
-          if (this.config.debug) {
-            console.log('[ChatClient] Unsubscribed from', channelName);
-          }
+          this.log('subscription', '✅ Unsubscribed from channel', { channel: channelName });
         } finally {
           // Remove lock
           this.subscriptionLocks.delete(channelName);
@@ -409,9 +480,10 @@ export class ChatClient {
       payload: any;
     };
 
-    if (this.config.debug) {
-      console.log('[ChatClient] Received publication', channelName, data);
-    }
+    this.log('event', `📥 Received: ${data.type}`, {
+      channel: channelName,
+      type: data.type,
+    });
 
     // Route to appropriate event handler based on message type
     switch (data.type) {
@@ -492,9 +564,7 @@ export class ChatClient {
         break;
 
       default:
-        if (this.config.debug) {
-          console.log('[ChatClient] Unknown message type', data.type);
-        }
+        this.log('event', `⚠️ Unknown message type: ${data.type}`, { channel: channelName });
     }
   }
 
@@ -556,12 +626,11 @@ export class ChatClient {
     options?: RequestInit
   ): Promise<T> {
     const url = `${this.config.apiUrl}${endpoint}`;
+    const method = options?.method ?? 'GET';
+    const startTime = Date.now();
 
-    // Always log for debugging API key issue
-    console.log('[ChatClient.fetch] DEBUG:', {
-      endpoint,
-      apiKey: this.config.apiKey ? this.config.apiKey.substring(0, 10) + '...' : 'UNDEFINED',
-      token: this.token ? 'SET' : 'NOT SET',
+    this.log('api', `🔄 ${method} ${endpoint}`, {
+      hasToken: !!this.token,
     });
 
     const headers: HeadersInit = {
@@ -571,17 +640,40 @@ export class ChatClient {
       ...options?.headers,
     };
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers,
+      });
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message ?? `HTTP ${response.status}`);
+      const duration = Date.now() - startTime;
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: { message: 'Request failed' } }));
+        const errorMessage = error.error?.message ?? error.message ?? `HTTP ${response.status}`;
+        const errorHint = error.error?.hint;
+
+        this.logApiCall(method, endpoint, duration, response.status, errorMessage);
+
+        // Include hint in error if available
+        const fullError = new Error(errorMessage);
+        if (errorHint) {
+          (fullError as any).hint = errorHint;
+        }
+        throw fullError;
+      }
+
+      this.logApiCall(method, endpoint, duration, response.status);
+
+      return response.json();
+    } catch (error) {
+      if (!(error instanceof Error) || !('hint' in error)) {
+        // Network error or other non-HTTP error
+        const duration = Date.now() - startTime;
+        this.logApiCall(method, endpoint, duration, 'error', (error as Error).message);
+      }
+      throw error;
     }
-
-    return response.json();
   }
 
   // ============================================================================
@@ -791,6 +883,7 @@ export class ChatClient {
       // JWT has 3 parts: header.payload.signature
       const parts = token.split('.');
       if (parts.length !== 3) {
+        this.log('error', 'Invalid token format - expected 3 parts');
         return null;
       }
 
@@ -805,7 +898,9 @@ export class ChatClient {
       const payload = JSON.parse(decoded);
       return payload.app_id || null;
     } catch (error) {
-      console.error('[ChatClient] Failed to extract app_id from token:', error);
+      this.log('error', 'Failed to extract app_id from token', {
+        error: (error as Error).message,
+      });
       return null;
     }
   }

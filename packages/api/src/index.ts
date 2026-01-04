@@ -180,23 +180,65 @@ app.route('/api/emoji', emojiRoutes);
 // TIER 4 Routes (Developer Experience)
 app.route('/api/webhooks', webhooksRoutes);
 
+// Error hints for common issues
+function getErrorHint(status: number, message: string): string | undefined {
+  const msg = message.toLowerCase();
+
+  if (status === 401) {
+    if (msg.includes('missing api key')) {
+      return 'Include the X-API-Key header with your API key';
+    }
+    if (msg.includes('invalid api key')) {
+      return 'Check that your API key is correct and active';
+    }
+    if (msg.includes('missing token') || msg.includes('user authentication required')) {
+      return 'Call POST /api/tokens first to get a user token, then include it as "Authorization: Bearer <token>"';
+    }
+    if (msg.includes('token expired')) {
+      return 'Your token has expired. Call POST /api/tokens/refresh or POST /api/tokens to get a new one';
+    }
+    if (msg.includes('invalid token')) {
+      return 'The token is malformed or was signed with a different secret. Ensure CENTRIFUGO_TOKEN_SECRET matches between API and client';
+    }
+  }
+
+  if (status === 403) {
+    if (msg.includes('not a member')) {
+      return 'Join the channel first or check that the user has access';
+    }
+    if (msg.includes('admin')) {
+      return 'This action requires admin privileges';
+    }
+  }
+
+  if (status === 404) {
+    return 'The requested resource does not exist or you do not have access to it';
+  }
+
+  return undefined;
+}
+
 // Error handling
 app.onError((err, c) => {
   // Check if it's an HTTPException with a specific status code
   if (err instanceof HTTPException) {
     const status = err.status;
+    const message = err.message || 'Request failed';
     const code = status === 401 ? 'UNAUTHORIZED'
       : status === 403 ? 'FORBIDDEN'
       : status === 404 ? 'NOT_FOUND'
       : status === 400 ? 'BAD_REQUEST'
       : 'ERROR';
 
-    console.error(`API Error [${status}]:`, err.message);
+    const hint = getErrorHint(status, message);
+
+    console.error(`API Error [${status}]:`, message);
     return c.json(
       {
         error: {
-          message: err.message || 'Request failed',
+          message,
           code,
+          ...(hint && { hint }),
         },
       },
       status
@@ -210,6 +252,7 @@ app.onError((err, c) => {
       error: {
         message: 'Internal Server Error',
         code: 'INTERNAL_ERROR',
+        hint: 'This is an unexpected error. Check server logs for details.',
       },
     },
     500

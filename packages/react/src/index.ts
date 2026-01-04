@@ -221,3 +221,10 @@ export {
   throttle,
   AVATAR_COLORS,
 } from './utils';
+
+// React Query Provider with ChatSDK-optimized defaults
+export {
+  ChatSDKQueryProvider,
+  createChatSDKQueryClient,
+} from './providers/ChatSDKQueryProvider';
+export type { ChatSDKQueryProviderProps } from './providers/ChatSDKQueryProvider';

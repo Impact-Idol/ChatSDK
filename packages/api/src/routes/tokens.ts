@@ -146,3 +146,145 @@ tokenRoutes.post('/refresh', async (c) => {
     return c.json({ error: { message: 'Invalid token' } }, 401);
   }
 });
+
+/**
+ * Validate token
+ * GET /tokens/validate
+ *
+ * Validates a JWT token and returns its payload if valid.
+ * Useful for debugging token issues and checking if a token is still valid.
+ */
+tokenRoutes.get('/validate', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return c.json({
+      valid: false,
+      error: {
+        message: 'Missing token',
+        hint: 'Include Authorization: Bearer <token> header',
+      },
+    }, 401);
+  }
+
+  const token = authHeader.slice(7);
+
+  try {
+    const secret = new TextEncoder().encode(JWT_SECRET);
+    const { payload } = await jose.jwtVerify(token, secret);
+
+    // Check if user exists
+    const userResult = await db.query(
+      'SELECT id, name, image_url FROM app_user WHERE app_id = $1 AND id = $2',
+      [payload.app_id, payload.user_id]
+    );
+
+    const user = userResult.rows[0] || null;
+
+    return c.json({
+      valid: true,
+      payload: {
+        userId: payload.user_id,
+        appId: payload.app_id,
+        issuedAt: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
+        expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+      },
+      user: user ? {
+        id: user.id,
+        name: user.name,
+        image: user.image_url,
+      } : null,
+    });
+  } catch (error) {
+    if (error instanceof jose.errors.JWTExpired) {
+      return c.json({
+        valid: false,
+        error: {
+          message: 'Token expired',
+          hint: 'Call POST /api/tokens/refresh to get a new token',
+        },
+      }, 401);
+    }
+
+    if (error instanceof jose.errors.JWSSignatureVerificationFailed) {
+      return c.json({
+        valid: false,
+        error: {
+          message: 'Invalid token signature',
+          hint: 'The token was signed with a different secret. Ensure JWT_SECRET is consistent.',
+        },
+      }, 401);
+    }
+
+    return c.json({
+      valid: false,
+      error: {
+        message: 'Invalid token',
+        hint: 'The token format is invalid or corrupted',
+      },
+    }, 401);
+  }
+});
+
+/**
+ * Validate WebSocket token
+ * GET /tokens/validate-ws
+ *
+ * Validates a Centrifugo WebSocket token.
+ */
+tokenRoutes.get('/validate-ws', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader?.startsWith('Bearer ')) {
+    return c.json({
+      valid: false,
+      error: {
+        message: 'Missing token',
+        hint: 'Include Authorization: Bearer <wsToken> header',
+      },
+    }, 401);
+  }
+
+  const token = authHeader.slice(7);
+
+  try {
+    const secret = new TextEncoder().encode(CENTRIFUGO_SECRET);
+    const { payload } = await jose.jwtVerify(token, secret);
+
+    return c.json({
+      valid: true,
+      payload: {
+        userId: payload.sub,
+        appId: payload.app_id,
+        issuedAt: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
+        expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+      },
+    });
+  } catch (error) {
+    if (error instanceof jose.errors.JWTExpired) {
+      return c.json({
+        valid: false,
+        error: {
+          message: 'WebSocket token expired',
+          hint: 'Call POST /api/tokens to get new tokens',
+        },
+      }, 401);
+    }
+
+    if (error instanceof jose.errors.JWSSignatureVerificationFailed) {
+      return c.json({
+        valid: false,
+        error: {
+          message: 'Invalid WebSocket token signature',
+          hint: 'Ensure CENTRIFUGO_TOKEN_SECRET matches between API server and Centrifugo config',
+        },
+      }, 401);
+    }
+
+    return c.json({
+      valid: false,
+      error: {
+        message: 'Invalid WebSocket token',
+        hint: 'The token format is invalid or corrupted',
+      },
+    }, 401);
+  }
+});
