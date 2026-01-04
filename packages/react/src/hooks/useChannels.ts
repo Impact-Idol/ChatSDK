@@ -1,10 +1,12 @@
 /**
  * useChannels - Hook for querying and subscribing to channels
+ *
+ * Connection-aware: Only fetches when the client is connected.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Channel } from '@chatsdk/core';
-import { useChatClient } from './ChatProvider';
+import { useChatClient, useChatContext } from './ChatProvider';
 
 export interface UseChannelsOptions {
   type?: string;
@@ -43,6 +45,7 @@ export interface UseChannelsResult {
 export function useChannels(options: UseChannelsOptions = {}): UseChannelsResult {
   const { type, limit = 50, watch = true } = options;
   const client = useChatClient();
+  const { isConnected } = useChatContext();
 
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,6 +54,7 @@ export function useChannels(options: UseChannelsOptions = {}): UseChannelsResult
   const [hasMore, setHasMore] = useState(true);
 
   const loadingRef = useRef(false);
+  const hasFetchedRef = useRef(false);
 
   // Load channels
   const loadChannels = useCallback(
@@ -86,10 +90,32 @@ export function useChannels(options: UseChannelsOptions = {}): UseChannelsResult
     [client, type, limit, offset]
   );
 
-  // Initial load
+  // Initial load - only when connected
   useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
+    // Prevent duplicate fetches on same params
+    if (hasFetchedRef.current) {
+      return;
+    }
+
+    hasFetchedRef.current = true;
     loadChannels(true);
-  }, [client, type, limit]);
+  }, [isConnected, client, type, limit, loadChannels]);
+
+  // Reset fetch state on disconnect or param change
+  useEffect(() => {
+    if (!isConnected) {
+      hasFetchedRef.current = false;
+    }
+  }, [isConnected]);
+
+  // Reset when params change
+  useEffect(() => {
+    hasFetchedRef.current = false;
+  }, [type, limit]);
 
   // Subscribe to channel updates
   useEffect(() => {
@@ -141,9 +167,12 @@ export function useChannels(options: UseChannelsOptions = {}): UseChannelsResult
 
 /**
  * useChannel - Get a single channel by ID
+ *
+ * Connection-aware: Only fetches when the client is connected.
  */
 export function useChannel(channelId: string | null) {
   const client = useChatClient();
+  const { isConnected } = useChatContext();
   const [channel, setChannel] = useState<Channel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -152,6 +181,11 @@ export function useChannel(channelId: string | null) {
     if (!channelId) {
       setChannel(null);
       setLoading(false);
+      return;
+    }
+
+    // Wait for connection
+    if (!isConnected) {
       return;
     }
 
@@ -198,7 +232,7 @@ export function useChannel(channelId: string | null) {
       unsubUpdated();
       client.unsubscribeFromChannel(channelId);
     };
-  }, [client, channelId]);
+  }, [client, channelId, isConnected]);
 
   const refresh = useCallback(async () => {
     if (!channelId) return;

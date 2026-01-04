@@ -7,6 +7,7 @@ import 'dotenv/config';
 import { serve as honoServe } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
@@ -181,11 +182,33 @@ app.route('/api/webhooks', webhooksRoutes);
 
 // Error handling
 app.onError((err, c) => {
-  console.error('API Error:', err);
+  // Check if it's an HTTPException with a specific status code
+  if (err instanceof HTTPException) {
+    const status = err.status;
+    const code = status === 401 ? 'UNAUTHORIZED'
+      : status === 403 ? 'FORBIDDEN'
+      : status === 404 ? 'NOT_FOUND'
+      : status === 400 ? 'BAD_REQUEST'
+      : 'ERROR';
+
+    console.error(`API Error [${status}]:`, err.message);
+    return c.json(
+      {
+        error: {
+          message: err.message || 'Request failed',
+          code,
+        },
+      },
+      status
+    );
+  }
+
+  // For unexpected errors, log full stack and return 500
+  console.error('API Error [500]:', err);
   return c.json(
     {
       error: {
-        message: err.message || 'Internal Server Error',
+        message: 'Internal Server Error',
         code: 'INTERNAL_ERROR',
       },
     },

@@ -1,9 +1,11 @@
 /**
  * useWorkspaces - Hook for querying and managing workspaces
+ *
+ * Connection-aware: Only fetches when the client is connected.
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { useChatClient } from './ChatProvider';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useChatClient, useChatContext } from './ChatProvider';
 
 export interface Workspace {
   id: string;
@@ -54,11 +56,13 @@ export interface CreateWorkspaceData {
  */
 export function useWorkspaces(): UseWorkspacesResult {
   const client = useChatClient();
+  const { isConnected } = useChatContext();
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspaceState] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const hasFetchedRef = useRef(false);
 
   // Fetch workspaces from API
   const fetchWorkspaces = useCallback(async () => {
@@ -214,8 +218,19 @@ export function useWorkspaces(): UseWorkspacesResult {
     }
   }, []);
 
-  // Initial load
+  // Initial load - only when connected
   useEffect(() => {
+    // Don't fetch until connected
+    if (!isConnected) {
+      return;
+    }
+
+    // Prevent duplicate fetches
+    if (hasFetchedRef.current) {
+      return;
+    }
+
+    hasFetchedRef.current = true;
     fetchWorkspaces();
 
     // Try to restore active workspace from localStorage (only in browser)
@@ -232,7 +247,14 @@ export function useWorkspaces(): UseWorkspacesResult {
         console.warn('Failed to restore active workspace:', err);
       }
     }
-  }, [fetchWorkspaces, workspaces]);
+  }, [isConnected, fetchWorkspaces, workspaces]);
+
+  // Reset fetch state on disconnect
+  useEffect(() => {
+    if (!isConnected) {
+      hasFetchedRef.current = false;
+    }
+  }, [isConnected]);
 
   return {
     workspaces,
