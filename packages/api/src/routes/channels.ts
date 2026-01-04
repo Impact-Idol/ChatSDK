@@ -322,6 +322,46 @@ channelRoutes.delete('/:channelId', requireUser, async (c) => {
 });
 
 /**
+ * Get channel members
+ * GET /api/channels/:channelId/members
+ */
+channelRoutes.get('/:channelId/members', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const channelId = c.req.param('channelId');
+
+  // Verify membership
+  const memberCheck = await db.query(
+    `SELECT 1 FROM channel_member
+     WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+    [channelId, auth.appId, auth.userId]
+  );
+
+  if (memberCheck.rows.length === 0) {
+    return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+  }
+
+  // Get all members
+  const membersResult = await db.query(
+    `SELECT cm.user_id, cm.role, cm.joined_at, u.name, u.image_url
+     FROM channel_member cm
+     LEFT JOIN app_user u ON cm.user_id = u.id AND cm.app_id = u.app_id
+     WHERE cm.channel_id = $1 AND cm.app_id = $2
+     ORDER BY cm.joined_at ASC`,
+    [channelId, auth.appId]
+  );
+
+  return c.json({
+    members: membersResult.rows.map((m) => ({
+      id: m.user_id,
+      name: m.name,
+      image: m.image_url,
+      role: m.role,
+      joinedAt: m.joined_at,
+    })),
+  });
+});
+
+/**
  * Add member to channel
  * POST /api/channels/:channelId/members
  */

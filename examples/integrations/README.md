@@ -6,8 +6,8 @@
 
 | Provider | File | Status |
 |----------|------|--------|
-| **NextAuth** | [nextauth-integration.ts](nextauth-integration.ts) | ✅ Production Ready |
-| **Auth0** | [auth0-integration.ts](auth0-integration.ts) | ✅ Production Ready |
+| **NextAuth** | [nextauth-integration.tsx](nextauth-integration.tsx) | ✅ Production Ready |
+| **Auth0** | [auth0-integration.tsx](auth0-integration.tsx) | ✅ Production Ready |
 
 ---
 
@@ -15,7 +15,7 @@
 
 ### 1. Copy Integration File
 ```bash
-cp integrations/nextauth-integration.ts lib/chatsdk-nextauth.ts
+cp integrations/nextauth-integration.tsx lib/chatsdk-nextauth.tsx
 ```
 
 ### 2. Install Dependencies
@@ -104,7 +104,7 @@ export function ChatComponent() {
 
 ### 1. Copy Integration File
 ```bash
-cp integrations/auth0-integration.ts src/lib/chatsdk-auth0.ts
+cp integrations/auth0-integration.tsx src/lib/chatsdk-auth0.tsx
 ```
 
 ### 2. Install Dependencies

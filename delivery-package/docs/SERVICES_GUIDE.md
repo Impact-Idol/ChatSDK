@@ -65,6 +65,23 @@ CENTRIFUGO_TOKEN_SECRET=your-token-secret
 CENTRIFUGO_JWT_SECRET=your-jwt-secret
 ```
 
+**Important: Secrets Must Match**
+The secret used by the API and Centrifugo MUST be **identical**:
+```bash
+# .env.production (API)
+CENTRIFUGO_TOKEN_SECRET=a1b2c3d4e5f6...64chars
+
+# docker/centrifugo.json (Centrifugo)
+"token_hmac_secret_key": "a1b2c3d4e5f6...64chars"  # SAME value!
+```
+
+**Common mistake:** Generating different secrets for each service.
+
+The bootstrap script handles this automatically - it:
+1. Generates a 64-char hex secret
+2. Sets it in `.env.production` as `CENTRIFUGO_TOKEN_SECRET`
+3. Updates `centrifugo.json` with the same value
+
 **What breaks without it:**
 - API starts but warns
 - No real-time message updates
