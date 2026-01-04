@@ -205,3 +205,20 @@ export {
   themeToCSSVariables,
 } from './styles/themes';
 export type { ChatSDKTheme } from './styles/themes';
+
+// Utility Functions
+export {
+  getInitials,
+  getAvatarColor,
+  formatFileSize,
+  formatRelativeTime,
+  formatMessageTime,
+  formatMessageDate,
+  truncate,
+  isImageUrl,
+  isVideoUrl,
+  generateId,
+  debounce,
+  throttle,
+  AVATAR_COLORS,
+} from './utils';

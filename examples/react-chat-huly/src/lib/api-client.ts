@@ -1,12 +1,75 @@
 /**
  * ChatSDK API Client
  * Type-safe wrapper around the ChatSDK REST API
+ *
+ * Configuration:
+ * - Set environment variables (Vite: VITE_*, Next.js: NEXT_PUBLIC_*)
+ * - Or call configureApi() before using
  */
 
 import { getStoredTokens } from './auth';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5501';
-const API_KEY = import.meta.env.VITE_API_KEY || '57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570';
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+interface ApiConfig {
+  apiUrl: string;
+  apiKey: string;
+}
+
+// Default configuration - tries multiple environment variable formats
+function getDefaultConfig(): ApiConfig {
+  // Try Vite format first (import.meta.env.VITE_*)
+  // Then try Next.js format (process.env.NEXT_PUBLIC_*)
+  // Then try generic format (process.env.*)
+  const getEnv = (viteKey: string, nextKey: string, genericKey: string, defaultValue: string): string => {
+    // Vite
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      const viteValue = (import.meta.env as Record<string, string>)[viteKey];
+      if (viteValue) return viteValue;
+    }
+
+    // Next.js / Node.js
+    if (typeof process !== 'undefined' && process.env) {
+      const nextValue = process.env[nextKey];
+      if (nextValue) return nextValue;
+      const genericValue = process.env[genericKey];
+      if (genericValue) return genericValue;
+    }
+
+    return defaultValue;
+  };
+
+  return {
+    apiUrl: getEnv('VITE_API_URL', 'NEXT_PUBLIC_API_URL', 'API_URL', 'http://localhost:5500'),
+    apiKey: getEnv('VITE_API_KEY', 'NEXT_PUBLIC_API_KEY', 'API_KEY', ''),
+  };
+}
+
+let config = getDefaultConfig();
+
+/**
+ * Configure the API client
+ * Call this before using any API functions if not using environment variables
+ *
+ * @example
+ * // In your app initialization
+ * configureApi({
+ *   apiUrl: 'https://api.myapp.com',
+ *   apiKey: 'your-api-key',
+ * });
+ */
+export function configureApi(newConfig: Partial<ApiConfig>): void {
+  config = { ...config, ...newConfig };
+}
+
+/**
+ * Get current API configuration
+ */
+export function getApiConfig(): ApiConfig {
+  return { ...config };
+}
 
 /**
  * API Error Response
@@ -28,16 +91,20 @@ async function apiRequest<T>(
   const tokens = getStoredTokens();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-API-Key': API_KEY,
     ...options.headers as Record<string, string>,
   };
+
+  // Add API key if configured
+  if (config.apiKey) {
+    headers['X-API-Key'] = config.apiKey;
+  }
 
   // Add auth token if available
   if (tokens?.token) {
     headers['Authorization'] = `Bearer ${tokens.token}`;
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
+  const response = await fetch(`${config.apiUrl}${endpoint}`, {
     ...options,
     headers,
   });

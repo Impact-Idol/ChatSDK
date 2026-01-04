@@ -3,8 +3,7 @@
  * Handles token generation using the /tokens endpoint
  */
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5501';
-const API_KEY = import.meta.env.VITE_API_KEY || '57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570';
+import { getApiConfig } from './api-client';
 
 export interface ChatTokens {
   token: string; // JWT for API requests
@@ -49,21 +48,30 @@ export const DEMO_USERS: DemoUser[] = [
  * This simulates what a third-party backend would do
  */
 export async function generateChatTokens(user: DemoUser): Promise<ChatTokens> {
-  const response = await fetch(`${API_URL}/tokens`, {
+  const config = getApiConfig();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Add API key if configured
+  if (config.apiKey) {
+    headers['X-API-Key'] = config.apiKey;
+  }
+
+  const response = await fetch(`${config.apiUrl}/tokens`, {
     method: 'POST',
-    headers: {
-      'X-API-Key': API_KEY,
-      'Content-Type': 'application/json'
-    },
+    headers,
     body: JSON.stringify({
       userId: user.id,
       name: user.name,
-      image: user.image
-    })
+      image: user.image,
+    }),
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to generate tokens: ${response.statusText}`);
+    const error = await response.json().catch(() => ({ error: { message: response.statusText } }));
+    throw new Error(`Failed to generate tokens: ${error.error?.message || response.statusText}`);
   }
 
   return response.json();

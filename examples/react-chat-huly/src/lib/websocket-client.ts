@@ -1,13 +1,62 @@
 /**
  * WebSocket Client
  * Centrifugo WebSocket connection for real-time events
+ *
+ * Configuration:
+ * - Set environment variables (Vite: VITE_WS_URL, Next.js: NEXT_PUBLIC_WS_URL)
+ * - Or call configureWebSocket() before connecting
  */
 
 import { Centrifuge } from 'centrifuge';
-import { queryClient } from './query-provider';
+import type { QueryClient } from '@tanstack/react-query';
 import type { Channel, Message, Workspace } from './api-client';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8001/connection/websocket';
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+interface WebSocketConfig {
+  wsUrl: string;
+  queryClient: QueryClient | null;
+}
+
+function getDefaultWsUrl(): string {
+  // Try Vite format
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    const viteValue = (import.meta.env as Record<string, string>).VITE_WS_URL;
+    if (viteValue) return viteValue;
+  }
+
+  // Try Next.js / Node.js format
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+    if (process.env.WS_URL) return process.env.WS_URL;
+  }
+
+  return 'ws://localhost:8001/connection/websocket';
+}
+
+let wsConfig: WebSocketConfig = {
+  wsUrl: getDefaultWsUrl(),
+  queryClient: null,
+};
+
+/**
+ * Configure WebSocket client
+ * @param config.wsUrl - WebSocket server URL
+ * @param config.queryClient - React Query client for cache updates
+ */
+export function configureWebSocket(config: Partial<WebSocketConfig>): void {
+  wsConfig = { ...wsConfig, ...config };
+}
+
+/**
+ * Set the QueryClient for cache updates
+ * Call this from your app's QueryProvider or initialization
+ */
+export function setQueryClient(client: QueryClient): void {
+  wsConfig.queryClient = client;
+}
 
 export interface ChatEvent {
   type: string;
@@ -29,7 +78,7 @@ class WebSocketClient {
       this.disconnect();
     }
 
-    this.client = new Centrifuge(WS_URL, {
+    this.client = new Centrifuge(wsConfig.wsUrl, {
       token: wsToken,
     });
 
@@ -235,31 +284,33 @@ class WebSocketClient {
   // Event Handlers - Update React Query Cache
   // ============================================================================
 
-  private handleChannelCreated(channel: Channel) {
-    queryClient.invalidateQueries({ queryKey: ['channels'] });
+  private handleChannelCreated(_channel: Channel) {
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['channels'] });
   }
 
   private handleChannelUpdated(channel: Channel) {
-    queryClient.setQueryData(['channels', channel.id], channel);
-    queryClient.invalidateQueries({ queryKey: ['channels'] });
+    wsConfig.queryClient?.setQueryData(['channels', channel.id], channel);
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['channels'] });
   }
 
   private handleChannelDeleted(channelId: string) {
-    queryClient.removeQueries({ queryKey: ['channels', channelId] });
-    queryClient.invalidateQueries({ queryKey: ['channels'] });
+    wsConfig.queryClient?.removeQueries({ queryKey: ['channels', channelId] });
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['channels'] });
   }
 
   private handleChannelMemberJoined(channelId: string, _userId: string) {
-    queryClient.invalidateQueries({ queryKey: ['channels', channelId, 'members'] });
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['channels', channelId, 'members'] });
   }
 
   private handleChannelMemberLeft(channelId: string, _userId: string) {
-    queryClient.invalidateQueries({ queryKey: ['channels', channelId, 'members'] });
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['channels', channelId, 'members'] });
   }
 
   private handleMessageNew(message: Message) {
+    if (!wsConfig.queryClient) return;
+
     // Add message to channel's message list
-    queryClient.setQueryData(['messages', message.channelId], (old: any) => {
+    wsConfig.queryClient.setQueryData(['messages', message.channelId], (old: any) => {
       if (!old) return { messages: [message] };
 
       // Avoid duplicates
@@ -273,11 +324,11 @@ class WebSocketClient {
     });
 
     // Update channel's lastMessageAt
-    queryClient.invalidateQueries({ queryKey: ['channels'] });
+    wsConfig.queryClient.invalidateQueries({ queryKey: ['channels'] });
   }
 
   private handleMessageUpdated(message: Message) {
-    queryClient.setQueryData(['messages', message.channelId], (old: any) => {
+    wsConfig.queryClient?.setQueryData(['messages', message.channelId], (old: any) => {
       if (!old) return old;
       return {
         ...old,
@@ -289,7 +340,7 @@ class WebSocketClient {
   }
 
   private handleMessageDeleted(channelId: string, messageId: string) {
-    queryClient.setQueryData(['messages', channelId], (old: any) => {
+    wsConfig.queryClient?.setQueryData(['messages', channelId], (old: any) => {
       if (!old) return old;
       return {
         ...old,
@@ -300,21 +351,21 @@ class WebSocketClient {
 
   private handleReactionChange(channelId: string, _messageId: string) {
     // Refetch messages to get updated reaction counts
-    queryClient.invalidateQueries({ queryKey: ['messages', channelId] });
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['messages', channelId] });
   }
 
-  private handleWorkspaceCreated(workspace: Workspace) {
-    queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+  private handleWorkspaceCreated(_workspace: Workspace) {
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['workspaces'] });
   }
 
   private handleWorkspaceUpdated(workspace: Workspace) {
-    queryClient.setQueryData(['workspaces', workspace.id], workspace);
-    queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+    wsConfig.queryClient?.setQueryData(['workspaces', workspace.id], workspace);
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['workspaces'] });
   }
 
   private handleWorkspaceDeleted(workspaceId: string) {
-    queryClient.removeQueries({ queryKey: ['workspaces', workspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+    wsConfig.queryClient?.removeQueries({ queryKey: ['workspaces', workspaceId] });
+    wsConfig.queryClient?.invalidateQueries({ queryKey: ['workspaces'] });
   }
 }
 

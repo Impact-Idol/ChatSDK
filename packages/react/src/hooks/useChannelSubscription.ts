@@ -198,17 +198,17 @@ export function useChannelSubscription(
       }
     });
 
-    const unsubTypingStart = client.on('typing.start', ({ channelId: cid, userId, userName }) => {
+    const unsubTypingStart = client.on('typing.start', ({ channelId: cid, user }) => {
       if (cid === channelId) {
-        onTypingStart?.(userId, userName);
-        onEvent?.({ type: 'typing.start', channelId: cid, data: { userId, userName } });
+        onTypingStart?.(user.id, user.name);
+        onEvent?.({ type: 'typing.start', channelId: cid, data: { userId: user.id, userName: user.name } });
       }
     });
 
-    const unsubTypingStop = client.on('typing.stop', ({ channelId: cid, userId }) => {
+    const unsubTypingStop = client.on('typing.stop', ({ channelId: cid, user }) => {
       if (cid === channelId) {
-        onTypingStop?.(userId);
-        onEvent?.({ type: 'typing.stop', channelId: cid, data: { userId } });
+        onTypingStop?.(user.id);
+        onEvent?.({ type: 'typing.stop', channelId: cid, data: { userId: user.id } });
       }
     });
 
