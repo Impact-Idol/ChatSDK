@@ -27,7 +27,6 @@ export {
   formatLastSeen,
   useSearch,
   useFileUpload,
-  formatFileSize,
   isAllowedFileType,
   getFileCategory,
   useReadReceipts,
