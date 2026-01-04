@@ -50,7 +50,7 @@ docker exec -i chatsdk-postgres psql -U chatsdk -d chatsdk < ../credentials/boot
 
 # 5. Test authentication
 export API_KEY=$(cat ../credentials/app-*.json | grep apiKey | cut -d'"' -f4)
-curl -X POST http://localhost:5500/api/tokens \
+curl -X POST http://localhost:5500/tokens \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"userId": "user-1", "name": "Test User"}'

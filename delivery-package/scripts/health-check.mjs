@@ -183,7 +183,7 @@ async function checkTokenGeneration() {
 
   const result = await checkEndpoint(
     'Token Generation',
-    `${API_URL}/api/tokens`,
+    `${API_URL}/tokens`,
     {
       method: 'POST',
       headers: {

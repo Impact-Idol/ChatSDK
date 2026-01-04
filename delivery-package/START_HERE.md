@@ -59,7 +59,7 @@ node scripts/bootstrap.mjs --app-name="My Chat App"
    docker-compose restart api
 
 3️⃣  Test token creation:
-   curl -X POST http://localhost:5500/api/tokens \
+   curl -X POST http://localhost:5500/tokens \
      -H "X-API-Key: <your-api-key>" \
      -d '{"userId": "user-1", "name": "Test User"}'
 ```
@@ -262,7 +262,7 @@ cat credentials/app-*.json
 **Use the `apiKey` in your application:**
 ```javascript
 // Your backend code
-const response = await fetch('http://localhost:5500/api/tokens', {
+const response = await fetch('http://localhost:5500/tokens', {
   method: 'POST',
   headers: {
     'X-API-Key': 'd3b07384d113edec49eaa6238ad5ff00',  // From credentials file

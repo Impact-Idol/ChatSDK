@@ -131,7 +131,7 @@ async function bootstrap() {
     },
     usage: {
       createToken: {
-        endpoint: 'POST /api/tokens',
+        endpoint: 'POST /tokens',
         headers: {
           'X-API-Key': secrets.APP_API_KEY,
           'Content-Type': 'application/json',
@@ -158,6 +158,61 @@ async function bootstrap() {
   console.log(`✓ Saved to: ${credentialsPath}`);
   console.log('');
 
+  // Step 3.5: Update Centrifugo Configuration
+  console.log('📝 Step 3.5: Updating Centrifugo Configuration');
+  console.log('─'.repeat(60));
+
+  const centrifugoConfigPath = join(__dirname, '..', 'docker', 'centrifugo.json');
+
+  if (existsSync(centrifugoConfigPath)) {
+    try {
+      const centrifugoConfig = JSON.parse(await readFile(centrifugoConfigPath, 'utf-8'));
+
+      // Update secrets to match .env
+      centrifugoConfig.token_hmac_secret_key = secrets.CENTRIFUGO_TOKEN_SECRET;
+      centrifugoConfig.api_key = secrets.CENTRIFUGO_TOKEN_SECRET;
+
+      // Add common development ports if not present
+      const devPorts = [
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'http://localhost:3002',
+        'http://localhost:4500',
+        'http://localhost:5173',
+        'http://localhost:5175',
+        'http://localhost:5500',
+        'http://localhost:5502',
+        'http://localhost:6001',
+        'http://localhost:6007'
+      ];
+
+      if (!centrifugoConfig.allowed_origins || !Array.isArray(centrifugoConfig.allowed_origins)) {
+        centrifugoConfig.allowed_origins = devPorts;
+      } else {
+        // Add missing ports
+        devPorts.forEach(port => {
+          if (!centrifugoConfig.allowed_origins.includes(port)) {
+            centrifugoConfig.allowed_origins.push(port);
+          }
+        });
+      }
+
+      await writeFile(centrifugoConfigPath, JSON.stringify(centrifugoConfig, null, 2));
+      console.log('✓ Updated docker/centrifugo.json');
+      console.log(`  - token_hmac_secret_key: ${secrets.CENTRIFUGO_TOKEN_SECRET.substring(0, 20)}...`);
+      console.log(`  - api_key: ${secrets.CENTRIFUGO_TOKEN_SECRET.substring(0, 20)}...`);
+      console.log(`  - allowed_origins: ${centrifugoConfig.allowed_origins.length} origins`);
+    } catch (error) {
+      console.log(`⚠️  Could not update Centrifugo config: ${error.message}`);
+      console.log('   You may need to update docker/centrifugo.json manually');
+    }
+  } else {
+    console.log('⚠️  Centrifugo config not found at docker/centrifugo.json');
+    console.log('   You may need to update it manually with:');
+    console.log(`   "token_hmac_secret_key": "${secrets.CENTRIFUGO_TOKEN_SECRET}"`);
+  }
+  console.log('');
+
   // Step 4: Generate SQL to insert the app
   console.log('📝 Step 4: Database Setup');
   console.log('─'.repeat(60));
@@ -167,7 +222,7 @@ async function bootstrap() {
 -- Run this against your PostgreSQL database
 
 -- Insert your first application
-INSERT INTO app (id, name, api_key, secret_key, settings, created_at, updated_at)
+INSERT INTO app (id, name, api_key, api_secret, settings, created_at, updated_at)
 VALUES (
   '${appId}',
   '${appName.replace(/'/g, "''")}',
@@ -180,7 +235,7 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 -- Verify
-SELECT id, name, api_key, created_at FROM app WHERE id = '${appId}';
+SELECT id, name, api_key, api_secret, created_at FROM app WHERE id = '${appId}';
 `;
 
   await writeFile(sqlPath, sql);
@@ -202,7 +257,7 @@ SELECT id, name, api_key, created_at FROM app WHERE id = '${appId}';
   console.log('   docker-compose restart api');
   console.log('');
   console.log('3️⃣  Test token creation:');
-  console.log(`   curl -X POST http://localhost:5500/api/tokens \\`);
+  console.log(`   curl -X POST http://localhost:5500/tokens \\`);
   console.log(`     -H "X-API-Key: ${secrets.APP_API_KEY}" \\`);
   console.log(`     -H "Content-Type: application/json" \\`);
   console.log(`     -d '{"userId": "user-1", "name": "Test User"}'`);

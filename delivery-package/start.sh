@@ -306,7 +306,7 @@ echo -e "${BOLD}1. Get your API key:${NC}"
 echo "   cat credentials/app-*.json"
 echo ""
 echo -e "${BOLD}2. Use in your application:${NC}"
-echo '   const response = await fetch("http://localhost:5500/api/tokens", {'
+echo '   const response = await fetch("http://localhost:5500/tokens", {'
 echo '     headers: { "X-API-Key": "your-api-key-here" }'
 echo '   });'
 echo ""

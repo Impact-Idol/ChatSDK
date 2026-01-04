@@ -191,7 +191,7 @@ async function main() {
   const tokenResult = await testEndpoint(
     'Create Token',
     'POST',
-    '/api/tokens',
+    '/tokens',
     { 'X-API-Key': appApiKey },
     {
       userId: userId,
@@ -251,7 +251,7 @@ async function main() {
   const refreshResult = await testEndpoint(
     'Refresh Token',
     'POST',
-    '/api/tokens/refresh',
+    '/tokens/refresh',
     { 'Authorization': `Bearer ${token}` }
   );
 

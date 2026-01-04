@@ -57,10 +57,15 @@ app.use('*', metricsMiddleware);
 
 // Manual CORS middleware
 app.use('*', async (c, next) => {
-  const allowedOrigins = [
+  // Read allowed origins from environment variable or use defaults
+  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || '';
+
+  // Default origins for development
+  const defaultOrigins = [
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:3002',
+    'http://localhost:4500',
     'http://localhost:5173',
     'http://localhost:5175',
     'http://localhost:6007',
@@ -69,9 +74,29 @@ app.use('*', async (c, next) => {
     'http://localhost:5502'
   ];
 
+  // Parse allowed origins from env (comma-separated)
+  let allowedOrigins = defaultOrigins;
+  if (allowedOriginsEnv) {
+    if (allowedOriginsEnv === '*') {
+      // Allow all origins (development only!)
+      allowedOrigins = ['*'];
+    } else {
+      // Parse comma-separated list
+      allowedOrigins = allowedOriginsEnv.split(',').map((origin) => origin.trim());
+    }
+  }
+
   const origin = c.req.header('Origin');
 
-  if (origin && allowedOrigins.includes(origin)) {
+  // Handle wildcard or specific origin
+  if (allowedOrigins.includes('*')) {
+    // Allow all origins (development mode)
+    c.header('Access-Control-Allow-Origin', origin || '*');
+    c.header('Access-Control-Allow-Credentials', 'true');
+    c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+  } else if (origin && allowedOrigins.includes(origin)) {
+    // Allow specific origin
     c.header('Access-Control-Allow-Origin', origin);
     c.header('Access-Control-Allow-Credentials', 'true');
     c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');

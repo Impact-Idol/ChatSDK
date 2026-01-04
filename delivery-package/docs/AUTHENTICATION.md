@@ -40,7 +40,7 @@ Admin (You)                    App (Client)                 End Users
      │                              │  (userId, name, image)     │
      │                              │                            │
      │                              │  4. Generate JWT           │
-     │                              │  POST /api/tokens          │
+     │                              │  POST /tokens          │
      │                              │  X-API-Key: <API_KEY>      │
      │                              │                            │
      │                              │  5. Return Tokens          │
@@ -102,7 +102,7 @@ curl http://localhost:5500/health
 export API_KEY="your-api-key-from-credentials"
 
 # Create a user token
-curl -X POST http://localhost:5500/api/tokens \
+curl -X POST http://localhost:5500/tokens \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -191,7 +191,7 @@ Content-Type: application/json
 3. ChatSDK returns JWT tokens
 4. Your frontend uses these tokens to access chat features
 
-**Endpoint:** `POST /api/tokens`
+**Endpoint:** `POST /tokens`
 
 **Headers:**
 ```
@@ -236,7 +236,7 @@ Content-Type: application/json
 
 **Use Case:** User's token is about to expire, refresh without re-authentication.
 
-**Endpoint:** `POST /api/tokens/refresh`
+**Endpoint:** `POST /tokens/refresh`
 
 **Headers:**
 ```
@@ -438,7 +438,7 @@ Returns: {
 
 #### Create Token
 ```
-POST /api/tokens
+POST /tokens
 X-API-Key: <APP_API_KEY>
 
 Body: {
@@ -458,7 +458,7 @@ Returns: {
 
 #### Refresh Token
 ```
-POST /api/tokens/refresh
+POST /tokens/refresh
 Authorization: Bearer <EXPIRED_TOKEN>
 
 Returns: {
@@ -514,7 +514,7 @@ Implement rate limiting for token endpoints:
 # In nginx.conf
 limit_req_zone $binary_remote_addr zone=token_limit:10m rate=10r/m;
 
-location /api/tokens {
+location /tokens {
     limit_req zone=token_limit burst=5 nodelay;
     proxy_pass http://api:5500;
 }
@@ -536,7 +536,7 @@ app.use(cors({
 
 ### "Missing API key" Error
 
-**Problem:** Getting 401 when calling `/api/tokens`
+**Problem:** Getting 401 when calling `/tokens`
 
 **Solution:**
 ```bash
@@ -544,7 +544,7 @@ app.use(cors({
 psql -U chatsdk -d chatsdk -c "SELECT id, name, api_key FROM app;"
 
 # Make sure you're sending the header
-curl -X POST http://localhost:5500/api/tokens \
+curl -X POST http://localhost:5500/tokens \
   -H "X-API-Key: YOUR_ACTUAL_API_KEY" \  # ← Must match database
   -H "Content-Type: application/json" \
   -d '{"userId": "test", "name": "Test"}'
@@ -612,7 +612,7 @@ docker-compose exec centrifugo env | grep CENTRIFUGO_TOKEN_HMAC_SECRET_KEY
 curl http://localhost:8000/health
 
 # 3. Test WebSocket token
-# Use wsToken from /api/tokens response
+# Use wsToken from /tokens response
 # Connect to: ws://localhost:8000/connection/websocket
 ```
 
