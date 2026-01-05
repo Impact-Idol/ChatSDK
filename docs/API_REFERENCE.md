@@ -217,6 +217,97 @@ Use `@username` syntax in message text. The API automatically:
 }
 ```
 
+---
+
+## Link Previews
+
+Link previews are **automatically generated** when messages contain URLs. The system extracts OpenGraph metadata and creates rich previews for shared links.
+
+### How It Works
+
+1. User sends a message containing a URL
+2. Message is saved and returned immediately
+3. Background job (Inngest) fetches URL metadata
+4. Message is updated with `linkPreviews` data
+5. Real-time event broadcasts the update
+
+### Supported Platforms
+
+| Platform | Features |
+|----------|----------|
+| **YouTube** | Video embed, thumbnail, title, channel name |
+| **Vimeo** | Video embed, thumbnail, title |
+| **Any website** | OpenGraph title, description, image |
+
+### Message Response with Link Preview
+
+```json
+{
+  "id": "message-uuid",
+  "text": "Check out this video: https://youtube.com/watch?v=abc123",
+  "linkPreviews": [
+    {
+      "url": "https://youtube.com/watch?v=abc123",
+      "title": "Amazing Video Title",
+      "description": "Video description here...",
+      "image": "https://img.youtube.com/vi/abc123/maxresdefault.jpg",
+      "siteName": "YouTube",
+      "type": "video",
+      "videoId": "abc123",
+      "embedUrl": "https://www.youtube.com/embed/abc123"
+    }
+  ],
+  ...
+}
+```
+
+### Link Preview Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | Original URL from message |
+| `title` | string | Page/video title |
+| `description` | string | Meta description |
+| `image` | string | Preview image URL |
+| `siteName` | string | Website name (e.g., "YouTube") |
+| `type` | string | Content type: `website`, `video`, `article` |
+| `videoId` | string | Video ID (YouTube/Vimeo only) |
+| `embedUrl` | string | Embeddable video URL |
+
+### React Component
+
+```tsx
+import { LinkPreview } from '@chatsdk/react';
+
+function Message({ message }) {
+  return (
+    <div>
+      <p>{message.text}</p>
+      {message.linkPreviews?.map((preview, i) => (
+        <LinkPreview key={i} preview={preview} />
+      ))}
+    </div>
+  );
+}
+```
+
+### Configuration
+
+Link previews require **Inngest** for background processing:
+
+```bash
+# .env.production
+INNGEST_EVENT_KEY=your-inngest-key
+INNGEST_SIGNING_KEY=your-signing-key
+
+# Or use Inngest Dev Server locally
+INNGEST_DEV=true
+```
+
+If Inngest is not configured, messages will be sent without link previews.
+
+---
+
 ### PATCH /api/channels/:channelId/messages/:messageId
 
 Edit a message (owner only).
