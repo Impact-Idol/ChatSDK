@@ -139,6 +139,10 @@ channelRoutes.post(
 /**
  * Query channels
  * GET /api/channels
+ *
+ * Returns:
+ * - All channels the user is a member of
+ * - All public/team channels (visible to everyone in the app)
  */
 channelRoutes.get('/', requireUser, async (c) => {
   const auth = c.get('auth');
@@ -152,11 +156,19 @@ channelRoutes.get('/', requireUser, async (c) => {
 
   const type = c.req.query('type');
 
+  // Query combines:
+  // 1. Channels where user is a member (with their membership data)
+  // 2. Public/team channels user is NOT a member of (visible to discover)
+  // DISTINCT ON prevents duplicates when user is member of a public channel
   let query = `
-    SELECT c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.starred, cm.role
+    SELECT DISTINCT ON (c.id) c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.starred, cm.role
     FROM channel c
-    JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id
-    WHERE c.app_id = $1 AND cm.user_id = $2
+    LEFT JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id AND cm.user_id = $2
+    WHERE c.app_id = $1
+      AND (
+        cm.user_id IS NOT NULL  -- User is a member
+        OR c.type IN ('public', 'team')  -- Or it's a public channel
+      )
   `;
   const params: any[] = [auth.appId, auth.userId];
 
@@ -171,8 +183,48 @@ channelRoutes.get('/', requireUser, async (c) => {
 
   const result = await db.query(query, params);
 
+  // For messaging/DM channels, fetch members to include in response
+  const channels = result.rows.map(formatChannel);
+  const messagingChannelIds = result.rows
+    .filter((row) => row.type === 'messaging')
+    .map((row) => row.id);
+
+  if (messagingChannelIds.length > 0) {
+    // Batch fetch members for all messaging channels
+    const membersResult = await db.query(
+      `SELECT cm.channel_id, cm.user_id, cm.role, u.name, u.image_url, u.custom_data->>'email' as email
+       FROM channel_member cm
+       LEFT JOIN app_user u ON cm.user_id = u.id AND cm.app_id = u.app_id
+       WHERE cm.app_id = $1 AND cm.channel_id = ANY($2)
+       ORDER BY cm.joined_at ASC`,
+      [auth.appId, messagingChannelIds]
+    );
+
+    // Group members by channel_id
+    const membersByChannel: Record<string, any[]> = {};
+    for (const member of membersResult.rows) {
+      if (!membersByChannel[member.channel_id]) {
+        membersByChannel[member.channel_id] = [];
+      }
+      membersByChannel[member.channel_id].push({
+        id: member.user_id,
+        name: member.name,
+        image: member.image_url,
+        email: member.email,
+        role: member.role,
+      });
+    }
+
+    // Attach members to messaging channels
+    for (const channel of channels) {
+      if (channel.type === 'messaging' && membersByChannel[channel.id]) {
+        (channel as any).members = membersByChannel[channel.id];
+      }
+    }
+  }
+
   return c.json({
-    channels: result.rows.map(formatChannel),
+    channels,
   });
 });
 
