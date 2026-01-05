@@ -140,7 +140,9 @@ Open http://localhost:5175 and select a demo user to start chatting!
 
 ## 6. Environment Variables
 
-Create a `.env` file for your application:
+### Frontend (React/Vite)
+
+Create a `.env` file for your frontend application:
 
 ```env
 # Required
@@ -152,7 +154,75 @@ VITE_WS_URL=ws://localhost:8001/connection/websocket
 VITE_DEBUG=true
 ```
 
-## 7. Run Tests
+### Backend (API Server)
+
+Configure these in your backend `.env` or Docker environment:
+
+```env
+# Required
+DATABASE_URL=postgresql://chatsdk:chatsdk@localhost:5434/chatsdk
+CENTRIFUGO_API_URL=http://localhost:8000/api
+CENTRIFUGO_TOKEN_SECRET=your-secret-key
+
+# CORS Configuration (see section below)
+ALLOWED_ORIGINS=https://your-app.com,https://admin.your-app.com
+```
+
+## 7. CORS Configuration
+
+The API server has built-in CORS handling. By default, it allows common localhost ports for development.
+
+### Default Behavior (Development)
+
+Without any configuration, these origins are allowed:
+- `http://localhost:3000` - `http://localhost:3002`
+- `http://localhost:4500`
+- `http://localhost:5173`, `http://localhost:5175`
+- `http://localhost:5500`, `http://localhost:5502`
+- `http://localhost:6001`, `http://localhost:6007`
+
+### Production Configuration
+
+**You MUST set `ALLOWED_ORIGINS` for production deployments.**
+
+| Configuration | Value | Use Case |
+|--------------|-------|----------|
+| Specific origins | `https://app.example.com,https://admin.example.com` | Production (recommended) |
+| Allow all | `*` | Development only (insecure) |
+| Not set | *(uses localhost defaults)* | Local development |
+
+**Examples:**
+
+```bash
+# Single origin
+ALLOWED_ORIGINS=https://chat.mycompany.com
+
+# Multiple origins (comma-separated)
+ALLOWED_ORIGINS=https://app.mycompany.com,https://admin.mycompany.com,https://mobile.mycompany.com
+
+# Development: allow all (NOT for production!)
+ALLOWED_ORIGINS=*
+```
+
+**Docker Compose example:**
+
+```yaml
+services:
+  api:
+    environment:
+      - ALLOWED_ORIGINS=https://your-production-domain.com
+```
+
+### CORS Headers Set
+
+When a request matches an allowed origin, these headers are returned:
+- `Access-Control-Allow-Origin`: The requesting origin
+- `Access-Control-Allow-Credentials`: `true`
+- `Access-Control-Allow-Methods`: `GET, POST, PUT, DELETE, PATCH, OPTIONS`
+- `Access-Control-Allow-Headers`: `Content-Type, Authorization, X-API-Key`
+- `Access-Control-Max-Age`: `86400` (24 hours)
+
+## 8. Run Tests
 
 ```bash
 # E2E flow test
@@ -190,4 +260,17 @@ docker compose -f docker/docker-compose.yml ps
 Verify PostgreSQL is accessible:
 ```bash
 docker exec -it chatsdk-postgres psql -U chatsdk -d chatsdk -c "SELECT 1;"
+```
+
+### CORS Errors
+If you see `Access-Control-Allow-Origin` errors in the browser console:
+
+1. **Check your frontend origin** - Make sure the URL your app runs on is in `ALLOWED_ORIGINS`
+2. **Include the protocol** - Use `https://example.com` not just `example.com`
+3. **No trailing slashes** - Use `https://example.com` not `https://example.com/`
+4. **Restart the API server** after changing `ALLOWED_ORIGINS`
+
+Quick fix for development:
+```bash
+ALLOWED_ORIGINS=* npm run dev
 ```
