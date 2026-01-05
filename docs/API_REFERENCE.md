@@ -102,6 +102,8 @@ Create a new channel.
 | `group` | Group chat |
 | `team` | Team channel |
 | `livestream` | Livestream/broadcast channel |
+| `public` | Public channel - anyone can join |
+| `private` | Private channel - invite only |
 
 **Response:** `201 Created`
 ```json
@@ -320,6 +322,65 @@ List users in your app.
 ### GET /api/users/:userId
 
 Get user details.
+
+### POST /api/users/sync
+
+Bulk sync users from your system to ChatSDK. Use this to ensure ChatSDK has the latest user data.
+
+**Request Body:**
+```json
+{
+  "users": [
+    {
+      "id": "user-1",
+      "name": "Alice Johnson",
+      "image": "https://example.com/alice.jpg",
+      "email": "alice@example.com",
+      "custom": { "role": "admin", "department": "Engineering" }
+    },
+    {
+      "id": "user-2",
+      "name": "Bob Smith",
+      "image": "https://example.com/bob.jpg"
+    }
+  ]
+}
+```
+
+**Response:** `200 OK`
+```json
+{
+  "synced": 2,
+  "created": 1,
+  "updated": 1,
+  "errors": []
+}
+```
+
+### PUT /api/users/:userId
+
+Create or update a single user. Useful for real-time sync when a user updates their profile.
+
+**Request Body:**
+```json
+{
+  "name": "Alice Johnson",
+  "image": "https://example.com/alice.jpg",
+  "email": "alice@example.com",
+  "custom": { "role": "admin" }
+}
+```
+
+**Response:** `200 OK`
+```json
+{
+  "id": "user-1",
+  "name": "Alice Johnson",
+  "image": "https://example.com/alice.jpg",
+  "email": "alice@example.com",
+  "custom": { "role": "admin", "email": "alice@example.com" }
+}
+```
 
 ---
 

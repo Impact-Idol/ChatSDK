@@ -13,7 +13,8 @@ import { requireUser } from '../middleware/auth';
 export const channelRoutes = new Hono();
 
 const createChannelSchema = z.object({
-  type: z.enum(['messaging', 'group', 'team', 'livestream']).default('messaging'),
+  // Support standard types + common aliases (public/private)
+  type: z.enum(['messaging', 'group', 'team', 'livestream', 'public', 'private']).default('messaging'),
   name: z.string().optional(),
   image: z.string().url().optional(),
   memberIds: z.array(z.string()).default([]), // Allow empty for group channels

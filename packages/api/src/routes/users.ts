@@ -242,3 +242,141 @@ userRoutes.get('/me/blocked', requireUser, async (c) => {
 
   return c.json({ blockedUsers });
 });
+
+// ============================================================================
+// User Sync (Bulk User Management)
+// ============================================================================
+
+const syncUserSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().optional(),
+  image: z.string().url().optional().nullable(),
+  email: z.string().email().optional().nullable(),
+  custom: z.record(z.unknown()).optional(),
+});
+
+const syncUsersSchema = z.object({
+  users: z.array(syncUserSchema).min(1).max(100),
+});
+
+/**
+ * Sync users (bulk create/update)
+ * POST /api/users/sync
+ *
+ * Allows clients to sync their user database with ChatSDK.
+ * Users are created if they don't exist, or updated if they do.
+ * This ensures ChatSDK always has the latest user data from your system.
+ *
+ * Request body:
+ * {
+ *   "users": [
+ *     { "id": "user-1", "name": "Alice", "image": "https://...", "email": "alice@example.com" },
+ *     { "id": "user-2", "name": "Bob", "image": "https://...", "custom": { "role": "admin" } }
+ *   ]
+ * }
+ */
+userRoutes.post(
+  '/sync',
+  requireUser,
+  zValidator('json', syncUsersSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { users } = c.req.valid('json');
+
+    const results = {
+      synced: 0,
+      created: 0,
+      updated: 0,
+      errors: [] as { id: string; error: string }[],
+    };
+
+    for (const user of users) {
+      try {
+        // Store email in custom_data if provided
+        const customData = user.custom || {};
+        if (user.email) {
+          customData.email = user.email;
+        }
+
+        // Upsert user with RETURNING to determine if created or updated
+        const result = await db.query(
+          `INSERT INTO app_user (app_id, id, name, image_url, custom_data, last_active_at)
+           VALUES ($1, $2, $3, $4, $5, NOW())
+           ON CONFLICT (app_id, id) DO UPDATE SET
+             name = CASE WHEN $3 IS NOT NULL THEN $3 ELSE app_user.name END,
+             image_url = CASE WHEN $4 IS NOT NULL THEN $4 ELSE app_user.image_url END,
+             custom_data = app_user.custom_data || $5::jsonb,
+             last_active_at = NOW(),
+             updated_at = NOW()
+           RETURNING (xmax = 0) AS inserted`,
+          [auth.appId, user.id, user.name, user.image, customData]
+        );
+
+        results.synced++;
+        if (result.rows[0]?.inserted) {
+          results.created++;
+        } else {
+          results.updated++;
+        }
+      } catch (error) {
+        results.errors.push({
+          id: user.id,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    return c.json(results);
+  }
+);
+
+/**
+ * Sync single user
+ * PUT /api/users/:userId
+ *
+ * Create or update a single user. Useful for real-time sync when a user
+ * updates their profile in your system.
+ */
+userRoutes.put(
+  '/:userId',
+  requireUser,
+  zValidator('json', z.object({
+    name: z.string().optional(),
+    image: z.string().url().optional().nullable(),
+    email: z.string().email().optional().nullable(),
+    custom: z.record(z.unknown()).optional(),
+  })),
+  async (c) => {
+    const auth = c.get('auth');
+    const userId = c.req.param('userId');
+    const body = c.req.valid('json');
+
+    // Store email in custom_data if provided
+    const customData = body.custom || {};
+    if (body.email) {
+      customData.email = body.email;
+    }
+
+    const result = await db.query(
+      `INSERT INTO app_user (app_id, id, name, image_url, custom_data, last_active_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (app_id, id) DO UPDATE SET
+         name = CASE WHEN $3 IS NOT NULL THEN $3 ELSE app_user.name END,
+         image_url = CASE WHEN $4 IS NOT NULL THEN $4 ELSE app_user.image_url END,
+         custom_data = app_user.custom_data || $5::jsonb,
+         updated_at = NOW()
+       RETURNING id, name, image_url, custom_data`,
+      [auth.appId, userId, body.name, body.image, customData]
+    );
+
+    const user = result.rows[0];
+
+    return c.json({
+      id: user.id,
+      name: user.name,
+      image: user.image_url,
+      email: user.custom_data?.email,
+      custom: user.custom_data,
+    });
+  }
+);
