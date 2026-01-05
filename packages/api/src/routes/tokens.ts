@@ -19,6 +19,7 @@ export const tokenRoutes = new Hono();
 const createTokenSchema = z.object({
   userId: z.string().min(1),
   name: z.string().optional(),
+  email: z.string().email().optional(),
   image: z.string().url().optional(),
   custom: z.record(z.unknown()).optional(),
 });
@@ -50,6 +51,12 @@ tokenRoutes.post(
     const appId = appResult.rows[0].id;
     const body = c.req.valid('json');
 
+    // Build custom_data with email if provided
+    const customData = body.custom ?? {};
+    if (body.email) {
+      customData.email = body.email;
+    }
+
     // Upsert user - always update when values are provided (not just when non-null)
     // This ensures client-provided names/images always take precedence over existing data
     await db.query(
@@ -58,10 +65,10 @@ tokenRoutes.post(
        ON CONFLICT (app_id, id) DO UPDATE SET
          name = CASE WHEN $3 IS NOT NULL THEN $3 ELSE app_user.name END,
          image_url = CASE WHEN $4 IS NOT NULL THEN $4 ELSE app_user.image_url END,
-         custom_data = CASE WHEN $5::jsonb != '{}'::jsonb THEN $5 ELSE app_user.custom_data END,
+         custom_data = app_user.custom_data || $5::jsonb,
          last_active_at = NOW(),
          updated_at = NOW()`,
-      [appId, body.userId, body.name, body.image, body.custom ?? {}]
+      [appId, body.userId, body.name, body.image, customData]
     );
 
     // Generate JWT token
@@ -92,6 +99,7 @@ tokenRoutes.post(
       user: {
         id: body.userId,
         name: body.name,
+        email: body.email,
         image: body.image,
       },
       expiresIn: 86400, // 24 hours in seconds

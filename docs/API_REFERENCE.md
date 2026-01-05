@@ -27,9 +27,19 @@ Generate JWT tokens for a user. Call this from your backend after authenticating
 {
   "userId": "user-123",
   "name": "Alice Johnson",
-  "image": "https://example.com/avatar.jpg"
+  "email": "alice@example.com",
+  "image": "https://example.com/avatar.jpg",
+  "custom": { "role": "admin" }
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `userId` | string | Yes | Unique user identifier from your system |
+| `name` | string | No | Display name |
+| `email` | string | No | User's email address |
+| `image` | string | No | Avatar URL |
+| `custom` | object | No | Custom metadata |
 
 **Response:** `200 OK`
 ```json
@@ -39,6 +49,7 @@ Generate JWT tokens for a user. Call this from your backend after authenticating
   "user": {
     "id": "user-123",
     "name": "Alice Johnson",
+    "email": "alice@example.com",
     "image": "https://example.com/avatar.jpg"
   },
   "expiresIn": 86400
@@ -379,6 +390,38 @@ Create or update a single user. Useful for real-time sync when a user updates th
   "image": "https://example.com/alice.jpg",
   "email": "alice@example.com",
   "custom": { "role": "admin", "email": "alice@example.com" }
+}
+```
+
+### DELETE /api/users/:userId
+
+Delete a user and their associated data. Use this to clean up seed/test users.
+
+**Response:** `200 OK`
+```json
+{
+  "success": true,
+  "deletedUserId": "user-1"
+}
+```
+
+### POST /api/users/bulk-delete
+
+Delete multiple users at once. Useful for cleaning up seed data.
+
+**Request Body:**
+```json
+{
+  "userIds": ["user-1", "user-2", "user-3"]
+}
+```
+
+**Response:** `200 OK`
+```json
+{
+  "success": true,
+  "deleted": ["user-1", "user-2", "user-3"],
+  "count": 3
 }
 ```
 

@@ -244,6 +244,72 @@ userRoutes.get('/me/blocked', requireUser, async (c) => {
 });
 
 // ============================================================================
+// User Deletion (for cleaning up seed/test data)
+// ============================================================================
+
+/**
+ * Delete a user
+ * DELETE /api/users/:userId
+ *
+ * Removes a user and all their associated data (messages, reactions, etc.).
+ * Use this to clean up seed/test users or remove inactive accounts.
+ *
+ * Note: This is a destructive operation. Messages from deleted users
+ * will have their user_id set to NULL (orphaned).
+ */
+userRoutes.delete('/:userId', requireUser, async (c) => {
+  const auth = c.get('auth');
+  const userId = c.req.param('userId');
+
+  // Check if target user exists
+  const userCheck = await db.query(
+    `SELECT id FROM app_user WHERE app_id = $1 AND id = $2`,
+    [auth.appId, userId]
+  );
+
+  if (userCheck.rows.length === 0) {
+    return c.json({ error: { message: 'User not found' } }, 404);
+  }
+
+  // Delete user (cascades to channel_member, reactions, etc. via FK constraints)
+  await db.query(
+    `DELETE FROM app_user WHERE app_id = $1 AND id = $2`,
+    [auth.appId, userId]
+  );
+
+  return c.json({ success: true, deletedUserId: userId });
+});
+
+/**
+ * Bulk delete users
+ * POST /api/users/bulk-delete
+ *
+ * Delete multiple users at once. Useful for cleaning up seed data.
+ */
+userRoutes.post(
+  '/bulk-delete',
+  requireUser,
+  zValidator('json', z.object({
+    userIds: z.array(z.string()).min(1).max(100),
+  })),
+  async (c) => {
+    const auth = c.get('auth');
+    const { userIds } = c.req.valid('json');
+
+    const result = await db.query(
+      `DELETE FROM app_user WHERE app_id = $1 AND id = ANY($2) RETURNING id`,
+      [auth.appId, userIds]
+    );
+
+    return c.json({
+      success: true,
+      deleted: result.rows.map((r) => r.id),
+      count: result.rowCount,
+    });
+  }
+);
+
+// ============================================================================
 // User Sync (Bulk User Management)
 // ============================================================================
 
