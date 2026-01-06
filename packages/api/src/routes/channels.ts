@@ -159,25 +159,31 @@ channelRoutes.get('/', requireUser, async (c) => {
   // Query combines:
   // 1. Channels where user is a member (with their membership data)
   // 2. Public/team channels user is NOT a member of (visible to discover)
-  // DISTINCT ON prevents duplicates when user is member of a public channel
-  let query = `
-    SELECT DISTINCT ON (c.id) c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.starred, cm.role
-    FROM channel c
-    LEFT JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id AND cm.user_id = $2
-    WHERE c.app_id = $1
+  // Use subquery to deduplicate, then sort and paginate
+  const params: any[] = [auth.appId, auth.userId];
+
+  let innerWhere = `c.app_id = $1
       AND (
         cm.user_id IS NOT NULL  -- User is a member
         OR c.type IN ('public', 'team')  -- Or it's a public channel
-      )
-  `;
-  const params: any[] = [auth.appId, auth.userId];
+      )`;
 
   if (type) {
-    query += ` AND c.type = $${params.length + 1}`;
+    innerWhere += ` AND c.type = $${params.length + 1}`;
     params.push(type);
   }
 
-  query += ` ORDER BY c.last_message_at DESC NULLS LAST, c.created_at DESC`;
+  let query = `
+    SELECT * FROM (
+      SELECT DISTINCT ON (c.id) c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.starred, cm.role
+      FROM channel c
+      LEFT JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id AND cm.user_id = $2
+      WHERE ${innerWhere}
+      ORDER BY c.id
+    ) sub
+    ORDER BY last_message_at DESC NULLS LAST, created_at DESC
+  `;
+
   query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
   params.push(limit, offset);
 
@@ -395,7 +401,7 @@ channelRoutes.get('/:channelId/members', requireUser, async (c) => {
 
   // Get all members
   const membersResult = await db.query(
-    `SELECT cm.user_id, cm.role, cm.joined_at, u.name, u.image_url
+    `SELECT cm.user_id, cm.role, cm.joined_at, u.name, u.image_url, u.custom_data->>'email' as email
      FROM channel_member cm
      LEFT JOIN app_user u ON cm.user_id = u.id AND cm.app_id = u.app_id
      WHERE cm.channel_id = $1 AND cm.app_id = $2
@@ -408,6 +414,7 @@ channelRoutes.get('/:channelId/members', requireUser, async (c) => {
       id: m.user_id,
       name: m.name,
       image: m.image_url,
+      email: m.email,
       role: m.role,
       joinedAt: m.joined_at,
     })),
@@ -415,17 +422,33 @@ channelRoutes.get('/:channelId/members', requireUser, async (c) => {
 });
 
 /**
- * Add member to channel
+ * Add member(s) to channel
  * POST /api/channels/:channelId/members
+ * Accepts either { userId: string } or { userIds: string[] }
  */
 channelRoutes.post(
   '/:channelId/members',
   requireUser,
-  zValidator('json', z.object({ userId: z.string() })),
+  zValidator(
+    'json',
+    z.object({
+      userId: z.string().optional(),
+      userIds: z.array(z.string()).optional(),
+    }).refine((data) => data.userId || data.userIds, {
+      message: 'Either userId or userIds must be provided',
+    })
+  ),
   async (c) => {
     const auth = c.get('auth');
     const channelId = c.req.param('channelId');
-    const { userId } = c.req.valid('json');
+    const body = c.req.valid('json');
+
+    // Support both single userId and array of userIds
+    const userIdsToAdd = body.userIds || (body.userId ? [body.userId] : []);
+
+    if (userIdsToAdd.length === 0) {
+      return c.json({ error: { message: 'No users to add' } }, 400);
+    }
 
     // Check permission
     const memberResult = await db.query(
@@ -443,13 +466,23 @@ channelRoutes.post(
       return c.json({ error: { message: 'Permission denied' } }, 403);
     }
 
-    // Add member
-    await db.query(
-      `INSERT INTO channel_member (channel_id, app_id, user_id, role)
-       VALUES ($1, $2, $3, 'member')
-       ON CONFLICT DO NOTHING`,
-      [channelId, auth.appId, userId]
-    );
+    // Add members (batch insert)
+    for (const userId of userIdsToAdd) {
+      await db.query(
+        `INSERT INTO channel_member (channel_id, app_id, user_id, role)
+         VALUES ($1, $2, $3, 'member')
+         ON CONFLICT DO NOTHING`,
+        [channelId, auth.appId, userId]
+      );
+
+      // Broadcast channel member joined event for each user
+      try {
+        const { centrifugo } = await import('../services/centrifugo');
+        await centrifugo.publishChannelMemberJoined(auth.appId, channelId, userId);
+      } catch (error) {
+        console.error('Failed to broadcast channel.member_joined event:', error);
+      }
+    }
 
     // Update member count
     await db.query(
@@ -459,15 +492,7 @@ channelRoutes.post(
       [channelId]
     );
 
-    // Broadcast channel member joined event
-    try {
-      const { centrifugo } = await import('../services/centrifugo');
-      await centrifugo.publishChannelMemberJoined(auth.appId, channelId, userId);
-    } catch (error) {
-      console.error('Failed to broadcast channel.member_joined event:', error);
-    }
-
-    return c.json({ success: true });
+    return c.json({ success: true, addedCount: userIdsToAdd.length });
   }
 );
 

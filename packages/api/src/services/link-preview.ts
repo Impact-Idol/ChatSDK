@@ -20,11 +20,23 @@ interface LinkPreview {
 
 /**
  * Extract URLs from text
+ * Matches both full URLs (http://...) and bare domains (example.com)
  */
 export function extractUrls(text: string): string[] {
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  const matches = text.match(urlRegex);
-  return matches || [];
+  // Match full URLs with protocol
+  const fullUrlRegex = /(https?:\/\/[^\s]+)/g;
+  // Match bare domains (word.tld pattern) - common TLDs
+  const bareDomainRegex = /(?<![\/\w])(\w+\.(?:com|org|net|io|co|edu|gov|info|biz|me|tv|app|dev|ai|xyz)[^\s]*)/gi;
+
+  const fullUrls = text.match(fullUrlRegex) || [];
+  const bareDomains = text.match(bareDomainRegex) || [];
+
+  // Normalize bare domains by prepending https://
+  const normalizedBareDomains = bareDomains
+    .filter((domain) => !fullUrls.some((url) => url.includes(domain)))
+    .map((domain) => `https://${domain}`);
+
+  return [...fullUrls, ...normalizedBareDomains];
 }
 
 /**

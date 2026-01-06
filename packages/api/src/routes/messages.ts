@@ -54,7 +54,30 @@ messageRoutes.post(
     );
 
     if (memberCheck.rows.length === 0) {
-      return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+      // Check if this is a public channel - auto-join if so
+      const channelCheck = await db.query(
+        `SELECT type FROM channel WHERE id = $1 AND app_id = $2`,
+        [channelId, auth.appId]
+      );
+
+      if (channelCheck.rows.length === 0) {
+        return c.json({ error: { message: 'Channel not found' } }, 404);
+      }
+
+      const channelType = channelCheck.rows[0].type;
+
+      if (channelType === 'public' || channelType === 'team') {
+        // Auto-join public/team channels
+        await db.query(
+          `INSERT INTO channel_member (channel_id, app_id, user_id, role, joined_at)
+           VALUES ($1, $2, $3, 'member', NOW())
+           ON CONFLICT (channel_id, app_id, user_id) DO NOTHING`,
+          [channelId, auth.appId, auth.userId]
+        );
+      } else {
+        // Private channels require explicit membership
+        return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+      }
     }
 
     // Check for duplicate using clientMsgId
@@ -260,48 +283,54 @@ messageRoutes.get('/', requireUser, async (c) => {
 
   if (sinceSeq > 0) {
     // Sequence-based pagination (OpenIMSDK sync pattern)
+    // Filter out thread replies (parent_id IS NULL) - they appear only in thread view
     query = `
       SELECT m.*, u.name as user_name, u.image_url as user_image
       FROM message m
       JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
-      WHERE m.channel_id = $1 AND m.app_id = $2 AND m.seq > $3 AND m.deleted_at IS NULL
+      WHERE m.channel_id = $1 AND m.app_id = $2 AND m.seq > $3
+        AND m.deleted_at IS NULL AND m.parent_id IS NULL
       ORDER BY m.seq ASC
       LIMIT $4
     `;
     params = [channelId, auth.appId, sinceSeq, limit];
   } else if (before) {
     // Cursor-based pagination (for infinite scroll up)
+    // Filter out thread replies (parent_id IS NULL) - they appear only in thread view
     query = `
       SELECT m.*, u.name as user_name, u.image_url as user_image
       FROM message m
       JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
       WHERE m.channel_id = $1 AND m.app_id = $2
         AND m.created_at < (SELECT created_at FROM message WHERE id = $3)
-        AND m.deleted_at IS NULL
+        AND m.deleted_at IS NULL AND m.parent_id IS NULL
       ORDER BY m.created_at DESC
       LIMIT $4
     `;
     params = [channelId, auth.appId, before, limit];
   } else if (after) {
     // Cursor-based pagination (for loading newer)
+    // Filter out thread replies (parent_id IS NULL) - they appear only in thread view
     query = `
       SELECT m.*, u.name as user_name, u.image_url as user_image
       FROM message m
       JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
       WHERE m.channel_id = $1 AND m.app_id = $2
         AND m.created_at > (SELECT created_at FROM message WHERE id = $3)
-        AND m.deleted_at IS NULL
+        AND m.deleted_at IS NULL AND m.parent_id IS NULL
       ORDER BY m.created_at ASC
       LIMIT $4
     `;
     params = [channelId, auth.appId, after, limit];
   } else {
     // Default: get latest messages
+    // Filter out thread replies (parent_id IS NULL) - they appear only in thread view
     query = `
       SELECT m.*, u.name as user_name, u.image_url as user_image
       FROM message m
       JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
-      WHERE m.channel_id = $1 AND m.app_id = $2 AND m.deleted_at IS NULL
+      WHERE m.channel_id = $1 AND m.app_id = $2
+        AND m.deleted_at IS NULL AND m.parent_id IS NULL
       ORDER BY m.created_at DESC
       LIMIT $3
     `;
@@ -310,10 +339,11 @@ messageRoutes.get('/', requireUser, async (c) => {
 
   const result = await db.query(query, params);
 
-  // Get reactions and mentions for these messages
+  // Get reactions, mentions, and pinned status for these messages
   const messageIds = result.rows.map((m) => m.id);
   const reactions = await getReactionsForMessages(messageIds, auth.appId, auth.userId!);
   const mentions = await getMentionsForMessages(messageIds, auth.appId);
+  const pinnedIds = await getPinnedMessageIds(messageIds, channelId, auth.appId);
 
   // Format messages
   const messages = result.rows.map((row) => ({
@@ -321,7 +351,7 @@ messageRoutes.get('/', requireUser, async (c) => {
       id: row.user_id,
       name: row.user_name,
       image: row.user_image,
-    }),
+    }, pinnedIds.has(row.id)),
     reactions: reactions[row.id] || [],
     mentions: mentions[row.id] || [],
   }));
@@ -575,7 +605,7 @@ messageRoutes.delete('/:messageId/reactions/:emoji', requireUser, async (c) => {
 // Helper Functions
 // ============================================================================
 
-function formatMessage(row: any, user: any) {
+function formatMessage(row: any, user: any, isPinned: boolean = false) {
   return {
     id: row.id,
     channelId: row.channel_id,
@@ -589,10 +619,10 @@ function formatMessage(row: any, user: any) {
     attachments: row.attachments || [],
     parentId: row.parent_id,
     replyToId: row.reply_to_id,
-    replyCount: row.reply_count || 0,
-    reactionCount: 0,
+    threadCount: row.reply_count || 0,
     status: row.status,
-    pinned: false,
+    pinned: isPinned,
+    linkPreviews: row.link_previews || [],
     createdAt: row.created_at,
     updatedAt: row.edited_at || row.created_at,
     deletedAt: row.deleted_at,
@@ -661,6 +691,22 @@ async function getMentionsForMessages(
   return mentions;
 }
 
+async function getPinnedMessageIds(
+  messageIds: string[],
+  channelId: string,
+  appId: string
+): Promise<Set<string>> {
+  if (messageIds.length === 0) return new Set();
+
+  const result = await db.query(
+    `SELECT message_id FROM pinned_message
+     WHERE message_id = ANY($1) AND channel_id = $2 AND app_id = $3`,
+    [messageIds, channelId, appId]
+  );
+
+  return new Set(result.rows.map((row) => row.message_id));
+}
+
 // ============================================================================
 // Work Stream 10: Pinned Messages
 // ============================================================================
@@ -674,15 +720,19 @@ messageRoutes.post('/:messageId/pin', requireUser, async (c) => {
   const channelId = c.req.param('channelId');
   const messageId = c.req.param('messageId');
 
-  // Verify user has admin/owner role in channel (simplified check)
-  // In production, you should have proper channel role management
+  // Verify user has admin/owner/moderator role in channel
   const memberCheck = await db.query(
-    `SELECT 1 FROM channel_member WHERE channel_id = $1 AND user_id = $2`,
-    [channelId, auth.userId]
+    `SELECT role FROM channel_member WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+    [channelId, auth.appId, auth.userId]
   );
 
   if (memberCheck.rows.length === 0) {
     return c.json({ error: { message: 'Not a channel member' } }, 403);
+  }
+
+  const userRole = memberCheck.rows[0].role;
+  if (!['owner', 'admin', 'moderator'].includes(userRole)) {
+    return c.json({ error: { message: 'Only admins can pin messages' } }, 403);
   }
 
   // Verify message exists in this channel
@@ -703,6 +753,13 @@ messageRoutes.post('/:messageId/pin', requireUser, async (c) => {
     [channelId, messageId, auth.appId, auth.userId]
   );
 
+  // Broadcast pin update to all channel members
+  await centrifugo.publishMessageUpdate(auth.appId, channelId, {
+    id: messageId,
+    channelId,
+    pinned: true,
+  });
+
   return c.json({ success: true });
 });
 
@@ -715,10 +772,32 @@ messageRoutes.delete('/:messageId/pin', requireUser, async (c) => {
   const channelId = c.req.param('channelId');
   const messageId = c.req.param('messageId');
 
+  // Verify user has admin/owner/moderator role in channel
+  const memberCheck = await db.query(
+    `SELECT role FROM channel_member WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+    [channelId, auth.appId, auth.userId]
+  );
+
+  if (memberCheck.rows.length === 0) {
+    return c.json({ error: { message: 'Not a channel member' } }, 403);
+  }
+
+  const userRole = memberCheck.rows[0].role;
+  if (!['owner', 'admin', 'moderator'].includes(userRole)) {
+    return c.json({ error: { message: 'Only admins can unpin messages' } }, 403);
+  }
+
   await db.query(
     `DELETE FROM pinned_message WHERE channel_id = $1 AND message_id = $2 AND app_id = $3`,
     [channelId, messageId, auth.appId]
   );
+
+  // Broadcast unpin update to all channel members
+  await centrifugo.publishMessageUpdate(auth.appId, channelId, {
+    id: messageId,
+    channelId,
+    pinned: false,
+  });
 
   return c.json({ success: true });
 });

@@ -5,6 +5,7 @@
 
 import { inngest } from '../client';
 import { db } from '../../services/database';
+import { centrifugo } from '../../services/centrifugo';
 import { generateLinkPreviews } from '../../services/link-preview';
 
 export const generateLinkPreview = inngest.createFunction(
@@ -32,12 +33,29 @@ export const generateLinkPreview = inngest.createFunction(
     }
 
     // Update message with link previews in another step
-    await step.run('update-message', async () => {
-      await db.query(
-        `UPDATE message SET link_previews = $1, updated_at = NOW() WHERE id = $2`,
+    const updatedMessage = await step.run('update-message', async () => {
+      const result = await db.query(
+        `UPDATE message SET link_previews = $1, edited_at = NOW() WHERE id = $2
+         RETURNING id, channel_id, app_id, link_previews`,
         [JSON.stringify(previews), messageId]
       );
+      return result.rows[0];
     });
+
+    // Publish link preview update to Centrifugo for real-time updates
+    if (updatedMessage) {
+      await step.run('publish-update', async () => {
+        await centrifugo.publishMessageUpdate(
+          updatedMessage.app_id,
+          updatedMessage.channel_id,
+          {
+            id: messageId,
+            channelId: updatedMessage.channel_id,
+            linkPreviews: previews,
+          }
+        );
+      });
+    }
 
     return {
       success: true,
