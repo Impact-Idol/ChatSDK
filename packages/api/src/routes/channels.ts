@@ -18,6 +18,7 @@ const createChannelSchema = z.object({
   name: z.string().optional(),
   image: z.string().url().optional(),
   memberIds: z.array(z.string()).default([]), // Allow empty for group channels
+  workspaceId: z.string().uuid().optional(), // Associate channel with a workspace
   config: z.object({
     typingEvents: z.boolean().optional(),
     readEvents: z.boolean().optional(),
@@ -80,8 +81,8 @@ channelRoutes.post(
     const result = await db.transaction(async (client) => {
       // Insert channel
       const channelResult = await client.query(
-        `INSERT INTO channel (id, app_id, cid, type, name, image_url, config, created_by, member_count)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO channel (id, app_id, cid, type, name, image_url, config, created_by, member_count, workspace_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           channelId,
@@ -93,6 +94,7 @@ channelRoutes.post(
           body.config ?? {},
           auth.userId,
           body.memberIds.length + 1, // +1 for creator
+          body.workspaceId ?? null,
         ]
       );
 
@@ -120,6 +122,14 @@ channelRoutes.post(
         `INSERT INTO channel_seq (channel_id, current_seq) VALUES ($1, 0)`,
         [channelId]
       );
+
+      // Update workspace channel_count if associated with a workspace
+      if (body.workspaceId) {
+        await client.query(
+          `UPDATE workspace SET channel_count = channel_count + 1 WHERE id = $1`,
+          [body.workspaceId]
+        );
+      }
 
       return channelResult.rows[0];
     });
@@ -155,6 +165,7 @@ channelRoutes.get('/', requireUser, async (c) => {
   const offset = isNaN(rawOffset) ? 0 : rawOffset;
 
   const type = c.req.query('type');
+  const workspaceId = c.req.query('workspaceId');
 
   // Query combines:
   // 1. Channels where user is a member (with their membership data)
@@ -171,6 +182,11 @@ channelRoutes.get('/', requireUser, async (c) => {
   if (type) {
     innerWhere += ` AND c.type = $${params.length + 1}`;
     params.push(type);
+  }
+
+  if (workspaceId) {
+    innerWhere += ` AND c.workspace_id = $${params.length + 1}`;
+    params.push(workspaceId);
   }
 
   let query = `
@@ -697,6 +713,7 @@ function formatChannel(row: any) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     config: row.config,
+    workspaceId: row.workspace_id,
     // User-specific fields
     lastReadSeq: row.last_read_seq,
     unreadCount: row.unread_count,
