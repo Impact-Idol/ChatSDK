@@ -339,11 +339,13 @@ messageRoutes.get('/', requireUser, async (c) => {
 
   const result = await db.query(query, params);
 
-  // Get reactions, mentions, and pinned status for these messages
+  // Get reactions, mentions, pinned status, and polls for these messages
   const messageIds = result.rows.map((m) => m.id);
+  const pollIds = result.rows.map((m) => m.poll_id);
   const reactions = await getReactionsForMessages(messageIds, auth.appId, auth.userId!);
   const mentions = await getMentionsForMessages(messageIds, auth.appId);
   const pinnedIds = await getPinnedMessageIds(messageIds, channelId, auth.appId);
+  const polls = await getPollsForMessages(pollIds, auth.appId, auth.userId!);
 
   // Format messages
   const messages = result.rows.map((row) => ({
@@ -351,7 +353,7 @@ messageRoutes.get('/', requireUser, async (c) => {
       id: row.user_id,
       name: row.user_name,
       image: row.user_image,
-    }, pinnedIds.has(row.id)),
+    }, pinnedIds.has(row.id), row.poll_id ? polls[row.poll_id] : null),
     reactions: reactions[row.id] || [],
     mentions: mentions[row.id] || [],
   }));
@@ -605,7 +607,7 @@ messageRoutes.delete('/:messageId/reactions/:emoji', requireUser, async (c) => {
 // Helper Functions
 // ============================================================================
 
-function formatMessage(row: any, user: any, isPinned: boolean = false) {
+function formatMessage(row: any, user: any, isPinned: boolean = false, poll?: any) {
   return {
     id: row.id,
     channelId: row.channel_id,
@@ -623,6 +625,8 @@ function formatMessage(row: any, user: any, isPinned: boolean = false) {
     status: row.status,
     pinned: isPinned,
     linkPreviews: row.link_previews || [],
+    pollId: row.poll_id || null,
+    poll: poll || null,
     createdAt: row.created_at,
     updatedAt: row.edited_at || row.created_at,
     deletedAt: row.deleted_at,
@@ -705,6 +709,78 @@ async function getPinnedMessageIds(
   );
 
   return new Set(result.rows.map((row) => row.message_id));
+}
+
+async function getPollsForMessages(
+  pollIds: (string | null)[],
+  appId: string,
+  userId: string
+): Promise<Record<string, any>> {
+  const validPollIds = pollIds.filter((id): id is string => id !== null);
+  if (validPollIds.length === 0) return {};
+
+  // Get polls with their options
+  const pollResult = await db.query(
+    `SELECT p.id, p.question, p.options, p.is_anonymous, p.is_multi_choice,
+            p.total_votes, p.ends_at, p.created_at
+     FROM poll p
+     WHERE p.id = ANY($1) AND p.app_id = $2`,
+    [validPollIds, appId]
+  );
+
+  // Get user's votes for these polls
+  const userVotesResult = await db.query(
+    `SELECT poll_id, option_id FROM poll_vote
+     WHERE poll_id = ANY($1) AND app_id = $2 AND user_id = $3`,
+    [validPollIds, appId, userId]
+  );
+
+  const userVotesMap: Record<string, string[]> = {};
+  for (const row of userVotesResult.rows) {
+    if (!userVotesMap[row.poll_id]) {
+      userVotesMap[row.poll_id] = [];
+    }
+    userVotesMap[row.poll_id].push(row.option_id);
+  }
+
+  // Get vote counts per option
+  const voteCountsResult = await db.query(
+    `SELECT poll_id, option_id, COUNT(*) as count
+     FROM poll_vote
+     WHERE poll_id = ANY($1)
+     GROUP BY poll_id, option_id`,
+    [validPollIds]
+  );
+
+  const voteCountsMap: Record<string, Record<string, number>> = {};
+  for (const row of voteCountsResult.rows) {
+    if (!voteCountsMap[row.poll_id]) {
+      voteCountsMap[row.poll_id] = {};
+    }
+    voteCountsMap[row.poll_id][row.option_id] = parseInt(row.count, 10);
+  }
+
+  const polls: Record<string, any> = {};
+  for (const row of pollResult.rows) {
+    const optionsWithCounts = row.options.map((opt: any) => ({
+      ...opt,
+      voteCount: voteCountsMap[row.id]?.[opt.id] || 0,
+    }));
+
+    polls[row.id] = {
+      id: row.id,
+      question: row.question,
+      options: optionsWithCounts,
+      isAnonymous: row.is_anonymous,
+      isMultiChoice: row.is_multi_choice,
+      totalVotes: row.total_votes || 0,
+      userVotes: userVotesMap[row.id] || [],
+      endsAt: row.ends_at,
+      createdAt: row.created_at,
+    };
+  }
+
+  return polls;
 }
 
 // ============================================================================

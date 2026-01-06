@@ -8,7 +8,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { requireUser } from '../middleware/auth';
 import { db } from '../services/database';
-import { centrifugo } from '../services/centrifugo';
+import { centrifugo, getCentrifugo } from '../services/centrifugo';
 
 export const receiptRoutes = new Hono();
 
@@ -88,7 +88,7 @@ receiptRoutes.post(
     );
 
     // Publish read receipt event for real-time updates
-    await centrifugo.getCentrifugo().publish(`chat:${channelId}`, {
+    await getCentrifugo().publish(`chat:${channelId}`, {
       type: 'read_receipt',
       payload: {
         channelId,

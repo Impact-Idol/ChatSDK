@@ -8,7 +8,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { requireUser } from '../middleware/auth';
 import { db } from '../services/database';
-import { centrifugo } from '../services/centrifugo';
+import { getCentrifugo } from '../services/centrifugo';
 
 export const pollRoutes = new Hono();
 
@@ -81,7 +81,7 @@ pollRoutes.post(
     );
 
     // Publish poll created event
-    await centrifugo.getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
+    await getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
       type: 'poll.created',
       payload: {
         channelId,
@@ -195,7 +195,7 @@ pollRoutes.post(
     );
 
     // Publish vote event
-    await centrifugo.getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
+    await getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
       type: 'poll.voted',
       payload: {
         channelId,
@@ -353,7 +353,7 @@ pollRoutes.delete('/:id/vote', requireUser, async (c) => {
   );
 
   // Publish event
-  await centrifugo.getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
+  await getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
     type: 'poll.vote_removed',
     payload: {
       channelId,

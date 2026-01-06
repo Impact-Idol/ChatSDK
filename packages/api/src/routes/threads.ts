@@ -8,7 +8,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { requireUser } from '../middleware/auth';
 import { db } from '../services/database';
-import { centrifugo } from '../services/centrifugo';
+import { centrifugo, getCentrifugo } from '../services/centrifugo';
 import { inngest } from '../inngest';
 
 export const threadRoutes = new Hono();
@@ -200,7 +200,7 @@ threadRoutes.post(
     await centrifugo.publishMessage(auth.appId, channelId, reply);
 
     // Also publish thread-specific event
-    await centrifugo.getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
+    await getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
       type: 'thread.reply',
       payload: {
         channelId,
