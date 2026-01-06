@@ -796,9 +796,12 @@ messageRoutes.post('/:messageId/pin', requireUser, async (c) => {
   const channelId = c.req.param('channelId');
   const messageId = c.req.param('messageId');
 
-  // Verify user has admin/owner/moderator role in channel
+  // Get channel type and user's role
   const memberCheck = await db.query(
-    `SELECT role FROM channel_member WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+    `SELECT cm.role, c.type as channel_type
+     FROM channel_member cm
+     JOIN channel c ON cm.channel_id = c.id
+     WHERE cm.channel_id = $1 AND cm.app_id = $2 AND cm.user_id = $3`,
     [channelId, auth.appId, auth.userId]
   );
 
@@ -807,8 +810,23 @@ messageRoutes.post('/:messageId/pin', requireUser, async (c) => {
   }
 
   const userRole = memberCheck.rows[0].role;
-  if (!['owner', 'admin', 'moderator'].includes(userRole)) {
+  const channelType = memberCheck.rows[0].channel_type;
+  const isDMOrGroupDM = channelType === 'messaging';
+  const isChannelAdmin = ['owner', 'admin', 'moderator'].includes(userRole);
+
+  // Allow pin if: channel admin OR participant in DM/group DM
+  if (!isChannelAdmin && !isDMOrGroupDM) {
     return c.json({ error: { message: 'Only admins can pin messages' } }, 403);
+  }
+
+  // Check pin limit (max 25 pins per channel)
+  const pinCount = await db.query(
+    `SELECT COUNT(*) as count FROM pinned_message WHERE channel_id = $1 AND app_id = $2`,
+    [channelId, auth.appId]
+  );
+
+  if (parseInt(pinCount.rows[0].count) >= 25) {
+    return c.json({ error: { message: 'Pin limit reached (max 25 pins per channel)' } }, 400);
   }
 
   // Verify message exists in this channel
@@ -848,9 +866,12 @@ messageRoutes.delete('/:messageId/pin', requireUser, async (c) => {
   const channelId = c.req.param('channelId');
   const messageId = c.req.param('messageId');
 
-  // Verify user has admin/owner/moderator role in channel
+  // Get channel type and user's role
   const memberCheck = await db.query(
-    `SELECT role FROM channel_member WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+    `SELECT cm.role, c.type as channel_type
+     FROM channel_member cm
+     JOIN channel c ON cm.channel_id = c.id
+     WHERE cm.channel_id = $1 AND cm.app_id = $2 AND cm.user_id = $3`,
     [channelId, auth.appId, auth.userId]
   );
 
@@ -859,7 +880,12 @@ messageRoutes.delete('/:messageId/pin', requireUser, async (c) => {
   }
 
   const userRole = memberCheck.rows[0].role;
-  if (!['owner', 'admin', 'moderator'].includes(userRole)) {
+  const channelType = memberCheck.rows[0].channel_type;
+  const isDMOrGroupDM = channelType === 'messaging';
+  const isChannelAdmin = ['owner', 'admin', 'moderator'].includes(userRole);
+
+  // Allow unpin if: channel admin OR participant in DM/group DM
+  if (!isChannelAdmin && !isDMOrGroupDM) {
     return c.json({ error: { message: 'Only admins can unpin messages' } }, 403);
   }
 
