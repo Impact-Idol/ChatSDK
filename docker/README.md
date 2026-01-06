@@ -98,3 +98,106 @@ Get the API key:
 ```sql
 SELECT api_key, api_secret FROM app WHERE name = 'Demo App';
 ```
+
+## Database Migrations
+
+ChatSDK uses [Flyway](https://flywaydb.org/) for automated database migrations.
+
+### How It Works
+
+1. **PostgreSQL starts** and becomes healthy
+2. **Flyway runs** all pending migrations in order (V001, V002, V003...)
+3. Migration history is tracked in `flyway_schema_history` table
+4. **Other services start** after migrations complete
+
+### Quick Commands
+
+```bash
+# Apply pending migrations
+docker compose run --rm flyway migrate
+
+# Check migration status
+docker compose run --rm flyway info
+
+# Validate migration checksums
+docker compose run --rm flyway validate
+
+# Repair failed migration state
+docker compose run --rm flyway repair
+```
+
+### Creating New Migrations
+
+```bash
+# 1. Create migration file (next version number)
+touch migrations/V004__add_user_badges.sql
+
+# 2. Write migration SQL
+cat > migrations/V004__add_user_badges.sql << 'EOF'
+-- Flyway Migration V004
+-- Description: Add user badge system
+
+CREATE TABLE IF NOT EXISTS user_badge (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_id UUID REFERENCES app(id) ON DELETE CASCADE,
+  user_id VARCHAR(255) NOT NULL,
+  badge_type VARCHAR(50) NOT NULL,
+  awarded_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+COMMIT;
+EOF
+
+# 3. Restart services to apply
+docker compose up -d
+
+# 4. Check migration was applied
+docker compose logs flyway
+```
+
+### Migration File Naming
+
+Format: `V<VERSION>__<DESCRIPTION>.sql`
+
+Examples:
+- `V001__baseline_schema.sql`
+- `V002__workspace_invites.sql`
+- `V003__channel_starring.sql`
+- `V004__add_user_badges.sql`
+
+### First-Time Setup (Existing Database)
+
+If you have an existing database without Flyway history:
+
+```bash
+# Baseline the database (ONE TIME ONLY)
+docker compose run --rm flyway baseline \
+  -baselineVersion=1 \
+  -baselineDescription="Existing schema"
+
+# Then start normally
+docker compose up -d
+```
+
+### Troubleshooting Migrations
+
+**Migration failed:**
+```bash
+# View error
+docker compose logs flyway
+
+# Fix migration SQL
+nano migrations/V00X__failed_migration.sql
+
+# Repair and retry
+docker compose run --rm flyway repair
+docker compose up -d
+```
+
+**Check migration history:**
+```bash
+psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk \
+  -c "SELECT version, description, installed_on, success FROM flyway_schema_history ORDER BY installed_rank;"
+```
+
+For detailed migration documentation, see [migrations/README.md](migrations/README.md).

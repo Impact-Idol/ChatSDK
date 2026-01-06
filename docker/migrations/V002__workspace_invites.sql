@@ -1,6 +1,9 @@
--- Migration: Add workspace invite system
+-- Flyway Migration V002
 -- Created: 2026-01-03
--- Description: Adds workspace_invite table for email-based workspace invitations
+-- Description: Add workspace invite system for email-based workspace invitations
+--
+-- This migration adds the workspace_invite table for managing email-based
+-- workspace invitations with secure tokens and expiration tracking
 
 -- Create workspace_invite table
 CREATE TABLE IF NOT EXISTS workspace_invite (

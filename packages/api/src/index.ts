@@ -290,6 +290,24 @@ async function main() {
     await initDB();
     console.log('Database connected');
 
+    // Log latest migration version (Flyway)
+    try {
+      const result = await db.query(`
+        SELECT version, description, installed_on
+        FROM flyway_schema_history
+        ORDER BY installed_rank DESC
+        LIMIT 1
+      `);
+      if (result.rows.length > 0) {
+        const latest = result.rows[0];
+        console.log(`Latest migration: V${latest.version} - ${latest.description}`);
+        console.log(`Applied at: ${latest.installed_on}`);
+      }
+    } catch (error) {
+      // Flyway table might not exist yet (first startup)
+      console.log('Migration history not available (first startup or pre-Flyway database)');
+    }
+
     // Initialize Centrifugo client
     await initCentrifugo();
     console.log('Centrifugo connected');

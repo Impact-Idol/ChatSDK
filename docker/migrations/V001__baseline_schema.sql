@@ -1,24 +1,15 @@
--- ============================================================================
--- DEPRECATED: This file is no longer used for database initialization
--- ============================================================================
+-- Flyway Migration V001
+-- Created: 2026-01-06
+-- Description: ChatSDK baseline schema
 --
--- This schema has been migrated to Flyway-managed migrations.
--- See: docker/migrations/V001__baseline_schema.sql
+-- This migration represents the initial ChatSDK schema that was previously
+-- applied via docker-entrypoint-initdb.d/init.sql
 --
--- For new databases:
---   Flyway will automatically apply all migrations in docker/migrations/
---
--- For existing databases (with this schema already applied):
---   Run: docker compose run --rm flyway baseline -baselineVersion=1
---   This marks V001 as applied and runs subsequent migrations only
---
--- Do NOT manually execute this file. Use Flyway migrations instead.
--- This file is kept for historical reference only.
---
--- ============================================================================
-
--- ChatSDK Database Schema
 -- Based on Zulip's UserMessage pattern + OpenIMSDK sequence-based sync
+--
+-- For existing databases that already have this schema, run:
+--   docker compose run --rm flyway baseline -baselineVersion=1
+-- For new databases, this migration will be applied automatically
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";

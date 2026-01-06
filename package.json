@@ -11,7 +11,13 @@
     "build-storybook": "npm run build-storybook --workspace=@chatsdk/react",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces",
-    "test": "npm run test --workspaces"
+    "test": "npm run test --workspaces",
+    "db:migrate": "cd docker && docker compose run --rm flyway migrate",
+    "db:info": "cd docker && docker compose run --rm flyway info",
+    "db:validate": "cd docker && docker compose run --rm flyway validate",
+    "db:repair": "cd docker && docker compose run --rm flyway repair",
+    "db:baseline": "cd docker && docker compose run --rm flyway baseline -baselineVersion=1",
+    "db:connect": "psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk"
   },
   "devDependencies": {
     "typescript": "^5.3.3"

@@ -11,7 +11,7 @@ let pool: Pool | null = null;
 // Configuration from environment
 const config = {
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5433', 10),  // 5433 to avoid conflict with local PostgreSQL
+  port: parseInt(process.env.DB_PORT || '5434', 10),  // 5434 to match docker-compose.yml port mapping
   user: process.env.DB_USER || 'chatsdk',
   password: process.env.DB_PASSWORD || 'chatsdk_dev',
   database: process.env.DB_NAME || 'chatsdk',

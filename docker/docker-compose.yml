@@ -12,12 +12,34 @@ services:
       POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U chatsdk"]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # Flyway - Database Migration Runner
+  flyway:
+    image: flyway/flyway:10-alpine
+    container_name: chatsdk-enterprise-flyway
+    command: -connectRetries=60 -baselineOnMigrate=true migrate
+    volumes:
+      - ./migrations:/flyway/sql
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/chatsdk
+      FLYWAY_USER: chatsdk
+      FLYWAY_PASSWORD: chatsdk_dev
+      FLYWAY_BASELINE_VERSION: 1
+      FLYWAY_BASELINE_DESCRIPTION: "Initial schema from init-db.sql"
+      FLYWAY_SCHEMAS: public
+      FLYWAY_VALIDATE_ON_MIGRATE: true
+      FLYWAY_OUT_OF_ORDER: false
+      FLYWAY_CLEAN_DISABLED: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - default
 
   # Centrifugo - Real-time WebSocket Server
   centrifugo:
@@ -30,7 +52,10 @@ services:
       - ./centrifugo.json:/centrifugo/config.json
     command: centrifugo -c config.json
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
       interval: 5s
@@ -202,6 +227,9 @@ services:
     container_name: chatsdk-enterprise-react-chat
     ports:
       - "5501:5500"  # Changed from 5500 to avoid conflict
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:5500/health"]
       interval: 30s
