@@ -35,3 +35,6 @@ export type { RetryConfig } from './lib/retry';
 // Circuit Breaker (Week 3)
 export { CircuitBreaker, CircuitState, CircuitBreakerOpenError } from './lib/circuit-breaker';
 export type { CircuitBreakerConfig } from './lib/circuit-breaker';
+
+// Request Deduplication (Week 3)
+export { RequestDeduplicator, DuplicateRequestError, Debouncer } from './lib/deduplication';

@@ -92,6 +92,7 @@ import {
 } from '../schemas';
 import { retryAsync } from '../lib/retry';
 import { CircuitBreaker } from '../lib/circuit-breaker';
+import { RequestDeduplicator } from '../lib/deduplication';
 
 export interface ChatClientConfig {
   apiKey: string;
@@ -130,6 +131,7 @@ export class ChatClient {
   private appId: string | null = null;      // App ID extracted from wsToken
   private apiCircuitBreaker: CircuitBreaker; // Circuit breaker for API requests
   private wsCircuitBreaker: CircuitBreaker;  // Circuit breaker for WebSocket
+  private deduplicator: RequestDeduplicator; // Request deduplication
 
   constructor(options: ChatClientOptions) {
     // Filter out undefined values from options to avoid overwriting defaults
@@ -154,6 +156,9 @@ export class ChatClient {
       timeout: 30000, // 30 seconds
       monitoringPeriod: 60000, // 1 minute
     });
+
+    // Initialize request deduplicator
+    this.deduplicator = new RequestDeduplicator(5000); // 5s deduplication window
 
     // Debug log initialization
     this.log('init', 'ChatClient initialized', {
@@ -720,6 +725,37 @@ export class ChatClient {
       ...(this.token && { Authorization: `Bearer ${this.token}` }),
       ...options?.headers,
     };
+
+    // Deduplicate requests (especially important for POST/PUT/DELETE to prevent duplicates)
+    // Only deduplicate mutation operations, not GET requests
+    const shouldDeduplicate = method !== 'GET';
+    const dedupParams = {
+      endpoint,
+      method,
+      body: options?.body,
+    };
+
+    if (shouldDeduplicate) {
+      return this.deduplicator.deduplicate(
+        'api-request',
+        dedupParams,
+        () => this.executeRequest<T>(url, headers, options)
+      );
+    }
+
+    return this.executeRequest<T>(url, headers, options);
+  }
+
+  /**
+   * Execute the actual HTTP request (used by fetch with deduplication)
+   */
+  private async executeRequest<T>(
+    url: string,
+    headers: HeadersInit,
+    options?: RequestInit
+  ): Promise<T> {
+    const method = options?.method ?? 'GET';
+    const endpoint = url.replace(this.config.apiUrl!, '');
 
     // Wrap fetch call in circuit breaker and retry logic
     return this.apiCircuitBreaker.execute(async () => {

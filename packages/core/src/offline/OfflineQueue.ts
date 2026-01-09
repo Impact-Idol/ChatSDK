@@ -13,6 +13,7 @@
 import { EventBus } from '../callbacks/EventBus';
 import type { ChatClient } from '../client/ChatClient';
 import type { PendingMessage, MessageWithSeq, MessageStatus, Attachment } from '../types';
+import { retryAsync } from '../lib/retry';
 
 export interface OfflineStorage {
   // Get all pending messages
@@ -139,7 +140,8 @@ export class OfflineQueue {
   }
 
   /**
-   * Send message to server
+   * Send message to server with automatic retry
+   * Week 3 Day 5: Integrated with retry logic for automatic recovery
    */
   private async sendToServer(message: LocalMessage): Promise<void> {
     // Prevent duplicate sends
@@ -152,11 +154,14 @@ export class OfflineQueue {
       // Update status to sending
       await this.updateStatus(message.clientMsgId, 'sending');
 
-      // Send to API
-      const response = await this.client.sendMessage(message.channelId, {
-        text: message.text,
-        clientMsgId: message.clientMsgId,
-        attachments: message.attachments as any,
+      // Send to API with automatic retry (Week 3 integration)
+      // retryAsync will handle exponential backoff and retry logic
+      const response = await retryAsync(async () => {
+        return this.client.sendMessage(message.channelId, {
+          text: message.text,
+          clientMsgId: message.clientMsgId,
+          attachments: message.attachments as any,
+        });
       });
 
       // Success - update status
@@ -180,12 +185,12 @@ export class OfflineQueue {
         console.log('[OfflineQueue] Message sent:', message.clientMsgId);
       }
     } catch (error) {
-      // Handle network timeout - check if server actually received it
+      // Retry logic exhausted - check if server actually received it
       if (await this.checkServerReceived(message)) {
         return; // Server got it, we're done
       }
 
-      // Mark as failed
+      // Mark as failed (after all retries exhausted)
       await this.storage.updateLocalMessage(message.clientMsgId, {
         status: 'failed',
         error: (error as Error).message,
@@ -204,7 +209,7 @@ export class OfflineQueue {
       });
 
       if (this.debug) {
-        console.error('[OfflineQueue] Message failed:', message.clientMsgId, error);
+        console.error('[OfflineQueue] Message failed after retries:', message.clientMsgId, error);
       }
     } finally {
       this.sending.delete(message.clientMsgId);
@@ -313,34 +318,42 @@ export class OfflineQueue {
 
   /**
    * Process pending messages on app startup/reconnection
-   * OpenIMSDK pattern: mark in-flight messages as failed (user must manually retry)
+   * Week 3 Day 5: Auto-retry pending messages instead of marking as failed
    */
   async processPending(): Promise<void> {
     const pending = await this.storage.getPending();
 
     for (const entry of pending) {
       if (entry.status === 'sending' || entry.status === 'pending') {
-        // Was in-flight when app closed - mark as failed
-        // User must manually retry (OpenIMSDK pattern - prevents duplicate sends)
-        await this.storage.updatePending(entry.clientMsgId, {
-          status: 'failed',
-          error: 'Connection lost during send',
-        });
+        // Check if server already received it (prevents duplicates)
+        const localMessage = await this.storage.getLocalMessage(entry.clientMsgId);
 
-        await this.storage.updateLocalMessage(entry.clientMsgId, {
-          status: 'failed',
-          error: 'Connection lost during send',
-        });
-
-        this.eventBus.emit('message.status_changed', {
-          channelId: entry.channelId,
-          messageId: entry.clientMsgId,
-          status: 'failed',
-        });
-
-        if (this.debug) {
-          console.log('[OfflineQueue] Marked message as failed:', entry.clientMsgId);
+        if (!localMessage) {
+          // No local message - clean up
+          await this.storage.removePending(entry.clientMsgId);
+          continue;
         }
+
+        // Check if server already has this message
+        if (await this.checkServerReceived(localMessage)) {
+          if (this.debug) {
+            console.log('[OfflineQueue] Server already received message:', entry.clientMsgId);
+          }
+          continue; // Server has it, no need to retry
+        }
+
+        // Auto-retry the message (Week 3 Day 5 improvement)
+        // This eliminates the need for manual retry
+        if (this.debug) {
+          console.log('[OfflineQueue] Auto-retrying pending message:', entry.clientMsgId);
+        }
+
+        // Retry send in background (don't await to avoid blocking)
+        this.sendToServer(localMessage).catch((error) => {
+          if (this.debug) {
+            console.error('[OfflineQueue] Auto-retry failed:', entry.clientMsgId, error);
+          }
+        });
       }
     }
   }
