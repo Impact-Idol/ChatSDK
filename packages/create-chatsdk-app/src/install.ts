@@ -6,11 +6,24 @@ export async function installDependencies(projectPath: string): Promise<void> {
   // Detect package manager based on project directory (not current directory)
   const packageManager = await detectPackageManager(projectPath);
 
-  // Run install command
-  await execa(packageManager, ['install'], {
-    cwd: projectPath,
-    stdio: 'ignore', // Silent install
-  });
+  try {
+    // Run install command
+    await execa(packageManager, ['install'], {
+      cwd: projectPath,
+      stdio: 'ignore', // Silent install
+    });
+  } catch (error) {
+    // Provide helpful error message
+    throw new Error(
+      `Failed to install dependencies with ${packageManager}.\n` +
+      `This usually means:\n` +
+      `  - Package '@chatsdk/core' is not published yet (expected during development)\n` +
+      `  - No internet connection\n` +
+      `  - npm registry is down\n\n` +
+      `You can skip installation and install manually:\n` +
+      `  npx create-chatsdk-app my-app --skip-install`
+    );
+  }
 }
 
 async function detectPackageManager(projectPath: string): Promise<'npm' | 'yarn' | 'pnpm' | 'bun'> {

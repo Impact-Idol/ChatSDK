@@ -125,7 +125,7 @@ program
       console.log('');
 
       // Step 5: Scaffold project
-      const spinner = ora('Creating project...').start();
+      const spinner = ora('Creating project files...').start();
       await scaffoldProject({
         projectName,
         projectPath,
@@ -133,7 +133,7 @@ program
         useTypeScript,
         includeExamples,
       });
-      spinner.succeed('Template copied');
+      spinner.succeed(`Created ${template === 'minimal' ? '4' : '15'} files`);
 
       // Step 6: Install dependencies
       if (!options.skipInstall) {
@@ -155,44 +155,107 @@ program
       }
 
       // Success message
-      console.log(chalk.bold.green('\n🎉 Success! Created ' + projectName + '\n'));
+      console.log(chalk.bold.green('\n✨ Success! Created ' + projectName + '\n'));
 
       const templateConfig = getTemplateConfig(template);
-      console.log('Next steps:');
-      console.log(chalk.cyan('  cd ' + projectName));
+
+      // Show next steps
+      console.log(chalk.bold('Next steps:\n'));
+      console.log('  ' + chalk.cyan('cd ' + projectName));
+
       if (options.skipInstall) {
-        console.log(chalk.cyan('  npm install'));
+        console.log('  ' + chalk.cyan('npm install'));
       }
+
       if (options.skipDocker) {
-        console.log(chalk.cyan('  docker compose up -d'));
+        console.log('  ' + chalk.cyan('docker compose up -d'));
       }
-      console.log(chalk.cyan('  ' + templateConfig.devCommand));
+
+      console.log('  ' + chalk.cyan(templateConfig.devCommand));
       console.log('');
 
-      if (!options.skipDocker) {
-        console.log('Your app will be running at:');
-        console.log('  🌐 ' + chalk.bold(templateConfig.appUrl));
-        console.log('  📡 WebSocket: ' + chalk.gray('ws://localhost:8001'));
-        console.log('  🗄️  Database: ' + chalk.gray('postgresql://localhost:5432'));
+      // Template-specific instructions
+      if (template === 'minimal') {
+        // Minimal template instructions
+        console.log(chalk.bold('What you got:\n'));
+        console.log('  ✅ Minimal ChatSDK setup with Node.js');
+        console.log('  ✅ Working example in ' + chalk.cyan('index.js'));
+        console.log('  ✅ Ready to customize for your use case');
         console.log('');
+
+        if (!options.skipDocker && !options.skipInstall) {
+          console.log(chalk.bold('Try it now:\n'));
+          console.log('  Run ' + chalk.cyan('npm run dev') + ' to see ChatSDK in action');
+          console.log('  Edit ' + chalk.cyan('index.js') + ' to build your chat app');
+          console.log('');
+        }
+      } else {
+        // Next.js template instructions
+        if (!options.skipDocker) {
+          console.log(chalk.bold('Your app is running at:\n'));
+          console.log('  🌐 App:       ' + chalk.bold(templateConfig.appUrl));
+          console.log('  📡 WebSocket: ' + chalk.gray('ws://localhost:8001'));
+          console.log('  🗄️  Database:  ' + chalk.gray('postgresql://localhost:5432'));
+          console.log('');
+        }
+
+        if (includeExamples) {
+          console.log(chalk.bold('Try it now:\n'));
+          console.log('  1. Open ' + chalk.cyan(templateConfig.appUrl + '?user=alice'));
+          console.log('  2. Open ' + chalk.cyan(templateConfig.appUrl + '?user=bob') + ' in another tab');
+          console.log('  3. Send a message and see it appear in real-time! 💬');
+          console.log('');
+
+          console.log(chalk.gray('  💡 Tip: Change ?user=alice to any name to create different users'));
+          console.log('');
+        }
       }
 
-      if (includeExamples) {
-        console.log('Default test users:');
-        console.log('  👤 User 1: ' + chalk.bold('alice') + ' / Alice Johnson');
-        console.log('  👤 User 2: ' + chalk.bold('bob') + ' / Bob Smith');
-        console.log('');
-        console.log('Try it now:');
-        console.log('  1. Open ' + chalk.cyan(templateConfig.appUrl + '?user=alice'));
-        console.log('  2. Open ' + chalk.cyan(templateConfig.appUrl + '?user=bob') + ' in another tab');
-        console.log('  3. Start chatting! 💬');
-        console.log('');
-      }
-
-      console.log('Learn more: ' + chalk.cyan('https://docs.chatsdk.dev'));
+      console.log(chalk.bold('Resources:\n'));
+      console.log('  📖 Documentation: ' + chalk.cyan('https://docs.chatsdk.dev'));
+      console.log('  💬 Discord:       ' + chalk.cyan('https://discord.gg/chatsdk'));
+      console.log('  🐛 Issues:        ' + chalk.cyan('https://github.com/chatsdk/chatsdk/issues'));
       console.log('');
+
+      console.log(chalk.gray('Happy coding! 🚀\n'));
     } catch (error) {
-      console.error(chalk.red('\n❌ Error creating project:'), error);
+      // Better error handling with helpful messages
+      console.error(chalk.red('\n❌ Error creating project\n'));
+
+      if (error instanceof Error) {
+        console.error(chalk.red('Error: ' + error.message));
+        console.error('');
+
+        // Provide helpful hints based on error type
+        if (error.message.includes('EACCES') || error.message.includes('permission denied')) {
+          console.error(chalk.yellow('💡 Tip: This looks like a permissions error. Try:'));
+          console.error(chalk.gray('   - Running in a different directory'));
+          console.error(chalk.gray('   - Checking folder permissions'));
+          console.error('');
+        } else if (error.message.includes('ENOSPC')) {
+          console.error(chalk.yellow('💡 Tip: You may be out of disk space. Try:'));
+          console.error(chalk.gray('   - Freeing up some disk space'));
+          console.error(chalk.gray('   - Running: docker system prune'));
+          console.error('');
+        } else if (error.message.includes('npm install') || error.message.includes('dependencies')) {
+          console.error(chalk.yellow('💡 Tip: Dependency installation failed. Try:'));
+          console.error(chalk.gray('   - Check your internet connection'));
+          console.error(chalk.gray('   - Run: npx create-chatsdk-app my-app --skip-install'));
+          console.error(chalk.gray('   - Then manually run: npm install'));
+          console.error('');
+        } else if (error.message.includes('Docker') || error.message.includes('docker')) {
+          console.error(chalk.yellow('💡 Tip: Docker is not running. Try:'));
+          console.error(chalk.gray('   - Start Docker Desktop'));
+          console.error(chalk.gray('   - Or skip Docker: --skip-docker'));
+          console.error('');
+        }
+
+        console.error(chalk.gray('For more help, visit: https://docs.chatsdk.dev/troubleshooting'));
+        console.error('');
+      } else {
+        console.error(error);
+      }
+
       process.exit(1);
     }
   });
