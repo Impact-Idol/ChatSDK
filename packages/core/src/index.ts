@@ -38,3 +38,7 @@ export type { CircuitBreakerConfig } from './lib/circuit-breaker';
 
 // Request Deduplication (Week 3)
 export { RequestDeduplicator, DuplicateRequestError, Debouncer } from './lib/deduplication';
+
+// Network Quality Monitor (Week 4)
+export { NetworkQualityMonitor, NetworkQuality } from './network/quality-monitor';
+export type { NetworkMetrics, NetworkQualityMonitorConfig } from './network/quality-monitor';
