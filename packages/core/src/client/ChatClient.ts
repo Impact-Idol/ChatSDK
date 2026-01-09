@@ -93,6 +93,8 @@ import {
 import { retryAsync } from '../lib/retry';
 import { CircuitBreaker } from '../lib/circuit-breaker';
 import { RequestDeduplicator } from '../lib/deduplication';
+import { OfflineQueue } from '../offline/OfflineQueue';
+import { IndexedDBStorage } from '../storage/IndexedDBStorage';
 
 export interface ChatClientConfig {
   apiKey: string;
@@ -132,6 +134,7 @@ export class ChatClient {
   private apiCircuitBreaker: CircuitBreaker; // Circuit breaker for API requests
   private wsCircuitBreaker: CircuitBreaker;  // Circuit breaker for WebSocket
   private deduplicator: RequestDeduplicator; // Request deduplication
+  public offlineQueue: OfflineQueue | null = null; // Offline queue with auto-retry (Week 3)
 
   constructor(options: ChatClientOptions) {
     // Filter out undefined values from options to avoid overwriting defaults
@@ -159,6 +162,17 @@ export class ChatClient {
 
     // Initialize request deduplicator
     this.deduplicator = new RequestDeduplicator(5000); // 5s deduplication window
+
+    // Initialize offline queue if enabled (Week 3 integration)
+    if (this.config.enableOfflineSupport) {
+      const storage = new IndexedDBStorage('chatsdk');
+      this.offlineQueue = new OfflineQueue({
+        client: this,
+        eventBus: this.eventBus,
+        storage: storage,
+        debug: this.config.debug,
+      });
+    }
 
     // Debug log initialization
     this.log('init', 'ChatClient initialized', {
@@ -322,6 +336,16 @@ export class ChatClient {
         userId: user.id,
         userName: user.name,
       });
+
+      // Process pending messages if offline queue is enabled (Week 3 integration)
+      if (this.offlineQueue) {
+        this.log('connection', 'Processing pending messages from offline queue');
+        this.offlineQueue.processPending().catch((error) => {
+          this.log('error', 'Failed to process pending messages', {
+            error: (error as Error).message,
+          });
+        });
+      }
 
       return this.currentUser;
     } catch (error) {
