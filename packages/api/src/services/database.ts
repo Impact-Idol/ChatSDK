@@ -4,21 +4,18 @@
  */
 
 import { Pool, PoolClient } from 'pg';
+import { config as appConfig } from '../config/defaults.js';
 
 // Database pool singleton
 let pool: Pool | null = null;
 
-// Configuration from environment
+// Configuration using smart defaults
 const config = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5434', 10),  // 5434 to match docker-compose.yml port mapping
-  user: process.env.DB_USER || 'chatsdk',
-  password: process.env.DB_PASSWORD || 'chatsdk_dev',
-  database: process.env.DB_NAME || 'chatsdk',
-  max: 20,
+  connectionString: appConfig.database.url,
+  max: appConfig.database.poolMax,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
-  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+  ssl: appConfig.database.ssl ? { rejectUnauthorized: false } : false,
 };
 
 /**
