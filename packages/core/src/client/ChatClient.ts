@@ -90,6 +90,7 @@ import {
   type SendMessage,
   type UpdateMessage,
 } from '../schemas';
+import { retryAsync } from '../lib/retry';
 
 export interface ChatClientConfig {
   apiKey: string;
@@ -690,7 +691,6 @@ export class ChatClient {
   ): Promise<T> {
     const url = `${this.config.apiUrl}${endpoint}`;
     const method = options?.method ?? 'GET';
-    const startTime = Date.now();
 
     this.log('api', `🔄 ${method} ${endpoint}`, {
       hasToken: !!this.token,
@@ -703,40 +703,46 @@ export class ChatClient {
       ...options?.headers,
     };
 
-    try {
-      const response = await fetch(url, {
-        ...options,
-        headers,
-      });
+    // Wrap fetch call in retry logic
+    return retryAsync(async () => {
+      const startTime = Date.now();
 
-      const duration = Date.now() - startTime;
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers,
+        });
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: { message: 'Request failed' } }));
-        const errorMessage = error.error?.message ?? error.message ?? `HTTP ${response.status}`;
-        const errorHint = error.error?.hint;
-
-        this.logApiCall(method, endpoint, duration, response.status, errorMessage);
-
-        // Include hint in error if available
-        const fullError = new Error(errorMessage);
-        if (errorHint) {
-          (fullError as any).hint = errorHint;
-        }
-        throw fullError;
-      }
-
-      this.logApiCall(method, endpoint, duration, response.status);
-
-      return response.json();
-    } catch (error) {
-      if (!(error instanceof Error) || !('hint' in error)) {
-        // Network error or other non-HTTP error
         const duration = Date.now() - startTime;
-        this.logApiCall(method, endpoint, duration, 'error', (error as Error).message);
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: { message: 'Request failed' } }));
+          const errorMessage = error.error?.message ?? error.message ?? `HTTP ${response.status}`;
+          const errorHint = error.error?.hint;
+
+          this.logApiCall(method, endpoint, duration, response.status, errorMessage);
+
+          // Include hint and status in error for retry logic
+          const fullError: any = new Error(errorMessage);
+          if (errorHint) {
+            fullError.hint = errorHint;
+          }
+          fullError.status = response.status; // Required for retry decision
+          throw fullError;
+        }
+
+        this.logApiCall(method, endpoint, duration, response.status);
+
+        return response.json();
+      } catch (error) {
+        if (!(error instanceof Error) || !('hint' in error)) {
+          // Network error or other non-HTTP error
+          const duration = Date.now() - startTime;
+          this.logApiCall(method, endpoint, duration, 'error', (error as Error).message);
+        }
+        throw error;
       }
-      throw error;
-    }
+    });
   }
 
   // ============================================================================

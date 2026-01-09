@@ -27,3 +27,7 @@ export type { OfflineQueueOptions, OfflineStorage, LocalMessage } from './offlin
 
 // Storage
 export { IndexedDBStorage } from './storage/IndexedDBStorage';
+
+// Retry Logic (Week 3)
+export { retryAsync, shouldRetry, calculateBackoff, DEFAULT_RETRY_CONFIG } from './lib/retry';
+export type { RetryConfig } from './lib/retry';
