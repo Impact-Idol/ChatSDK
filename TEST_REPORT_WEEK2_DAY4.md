@@ -64,20 +64,16 @@ node dist/index.js minimal-test --template minimal --typescript --skip-install -
 
 ---
 
-### ⚠️ Test 3: Next.js Template with JavaScript
+### ❌ → ✅ Test 3: JavaScript Option (FIXED)
 
 **Command**:
 ```bash
 node dist/index.js js-test --template nextjs-app-router --javascript --skip-install --skip-docker
 ```
 
-**Result**: PARTIAL PASS ⚠️
+**Result**: FAIL → FIXED ❌ → ✅
 
 **Issue Found**: TypeScript type annotations NOT stripped from JavaScript files
-
-**Files Created**: 14 files (no tsconfig.json - correct)
-- app/layout.jsx, app/page.jsx ✅ (renamed from .tsx)
-- tailwind.config.js ✅ (renamed from .ts)
 
 **Problem**:
 ```javascript
@@ -86,32 +82,78 @@ const [client, setClient] = useState<any>(null);  // ❌ Should be: useState(nul
 const [messages, setMessages] = useState<any[]>([]);  // ❌ Should be: useState([])
 ```
 
-**Impact**: JavaScript files will fail to run with syntax errors
+**Impact**: JavaScript files would fail to run with syntax errors
 
-**Root Cause**: `convertToJavaScript()` function only renames files (.ts → .js, .tsx → .jsx) but doesn't strip type annotations from file contents
+**Root Cause**: `convertToJavaScript()` function only renamed files (.ts → .js, .tsx → .jsx) but didn't strip type annotations from file contents
 
-**Fix Required**: Update `convertToJavaScript()` to:
-1. Parse each .js/.jsx file
-2. Remove TypeScript type annotations (regex or babel/typescript parser)
-3. OR document that JavaScript option is not recommended
+**Solution Implemented**: Removed JavaScript option entirely for MVP (commit 7f861e6)
+- Removed --typescript and --javascript CLI flags
+- Removed interactive TypeScript/JavaScript prompt
+- Always use TypeScript (useTypeScript = true)
+- Will re-add JavaScript support in future with proper babel/typescript parser
+
+**Verification After Fix**:
+```bash
+# CLI now creates TypeScript-only projects without prompting
+node dist/index.js typescript-only --template nextjs-app-router
+# ✅ Creates .tsx, .ts files correctly
+# ✅ No broken JavaScript files
+# ✅ No confusing prompt
+```
 
 ---
 
-### 🔄 Test 4: Error Scenarios (Pending)
+### ⚠️ Test 4: Full Install with npm install
 
-#### Test 4a: Template doesn't exist
+**Command**:
+```bash
+node dist/index.js my-chat-app --template nextjs-app-router --skip-docker
+```
+
+**Result**: EXPECTED FAILURE (packages not published) ⚠️
+
+**Error**:
+```
+npm error 404 Not Found - GET https://registry.npmjs.org/@chatsdk%2fcore
+npm error 404 The requested resource '@chatsdk/core@latest' could not be found
+```
+
+**Root Cause**: `@chatsdk/core` package hasn't been published to npm registry yet
+
+**Impact**: Users cannot run full install until packages are published
+
+**Workaround for Testing**: Use `--skip-install` flag
+```bash
+npx create-chatsdk-app my-app --skip-install
+cd my-app
+# Manually install dependencies or wait for npm publish
+```
+
+**Fixes Implemented in This Test**:
+1. **Package Manager Detection Fix** (commit pending):
+   - BEFORE: Checked current directory for lock files (found pnpm-lock.yaml in monorepo)
+   - AFTER: Checks PROJECT directory for lock files, defaults to npm
+   - Result: New projects correctly use npm instead of pnpm
+
+**Status**: CLI code is correct, just needs package publishing
+
+---
+
+### 🔄 Test 5: Error Scenarios (Pending)
+
+#### Test 5a: Template doesn't exist
 **Status**: Not yet tested
 **Expected**: Clear error message with available templates
 
-#### Test 4b: Directory already exists
-**Status**: Partially tested (got readline error)
+#### Test 5b: Directory already exists
+**Status**: Partially tested (got readline error - needs investigation)
 **Expected**: Prompt user to overwrite with y/n
 
-#### Test 4c: Docker not running (with docker setup)
+#### Test 5c: Docker not running (with docker setup)
 **Status**: Not yet tested
 **Expected**: Graceful warning, continue without Docker
 
-#### Test 4d: Port already in use
+#### Test 5d: Port already in use
 **Status**: Not yet tested
 **Expected**: Clear error message with instructions
 
