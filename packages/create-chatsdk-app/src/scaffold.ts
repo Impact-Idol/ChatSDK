@@ -25,8 +25,14 @@ export async function scaffoldProject(options: ScaffoldOptions): Promise<void> {
   if (await fs.pathExists(templatePath)) {
     await fs.copy(templatePath, projectPath);
   } else {
-    // If template doesn't exist yet, create a minimal starter
-    await createMinimalTemplate(options);
+    // Template doesn't exist yet
+    throw new Error(
+      `Template "${template}" is not available yet.\n\n` +
+      `Available templates:\n` +
+      `  - nextjs-app-router (Next.js + App Router)\n` +
+      `  - minimal (SDK only)\n\n` +
+      `Coming soon: vite-react, react-native-expo, express-react`
+    );
   }
 
   // Remove TypeScript files if JavaScript selected

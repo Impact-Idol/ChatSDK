@@ -94,10 +94,11 @@ program
             message: 'Select a template:',
             choices: [
               { name: 'Next.js + App Router (Recommended)', value: 'nextjs-app-router' },
-              { name: 'Vite + React', value: 'vite-react' },
-              { name: 'React Native + Expo', value: 'react-native-expo' },
-              { name: 'Express + React', value: 'express-react' },
               { name: 'Minimal (SDK only)', value: 'minimal' },
+              // Coming soon:
+              // { name: 'Vite + React', value: 'vite-react' },
+              // { name: 'React Native + Expo', value: 'react-native-expo' },
+              // { name: 'Express + React', value: 'express-react' },
             ],
             default: 'nextjs-app-router',
           },

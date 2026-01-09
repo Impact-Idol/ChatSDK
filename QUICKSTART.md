@@ -125,21 +125,22 @@ const client = await ChatSDK.connect({
 
 ## Available Templates
 
-Try different templates:
+Currently available templates:
 
 ```bash
-# Vite + React (fast development)
-npx create-chatsdk-app my-app --template vite-react
+# Next.js + App Router (default, recommended)
+npx create-chatsdk-app my-app --template nextjs-app-router
 
-# React Native + Expo (mobile)
-npx create-chatsdk-app my-app --template react-native-expo
-
-# Express + React (backend/frontend split)
-npx create-chatsdk-app my-app --template express-react
-
-# Minimal (SDK only)
+# Minimal (SDK only, no UI)
 npx create-chatsdk-app my-app --template minimal
 ```
+
+**Coming Soon**:
+- Vite + React (fast development)
+- React Native + Expo (mobile)
+- Express + React (backend/frontend split)
+
+> Additional templates will be added incrementally based on community feedback.
 
 ---
 
