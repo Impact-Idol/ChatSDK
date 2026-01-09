@@ -31,3 +31,7 @@ export { IndexedDBStorage } from './storage/IndexedDBStorage';
 // Retry Logic (Week 3)
 export { retryAsync, shouldRetry, calculateBackoff, DEFAULT_RETRY_CONFIG } from './lib/retry';
 export type { RetryConfig } from './lib/retry';
+
+// Circuit Breaker (Week 3)
+export { CircuitBreaker, CircuitState, CircuitBreakerOpenError } from './lib/circuit-breaker';
+export type { CircuitBreakerConfig } from './lib/circuit-breaker';

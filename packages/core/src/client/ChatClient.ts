@@ -91,6 +91,7 @@ import {
   type UpdateMessage,
 } from '../schemas';
 import { retryAsync } from '../lib/retry';
+import { CircuitBreaker } from '../lib/circuit-breaker';
 
 export interface ChatClientConfig {
   apiKey: string;
@@ -127,6 +128,8 @@ export class ChatClient {
   private token: string | null = null;      // API token for REST calls
   private wsToken: string | null = null;    // WebSocket token for Centrifugo
   private appId: string | null = null;      // App ID extracted from wsToken
+  private apiCircuitBreaker: CircuitBreaker; // Circuit breaker for API requests
+  private wsCircuitBreaker: CircuitBreaker;  // Circuit breaker for WebSocket
 
   constructor(options: ChatClientOptions) {
     // Filter out undefined values from options to avoid overwriting defaults
@@ -136,6 +139,21 @@ export class ChatClient {
 
     this.config = { ...DEFAULT_CONFIG, ...filteredOptions } as ChatClientConfig;
     this.eventBus = new EventBus({ debug: this.config.debug });
+
+    // Initialize circuit breakers
+    this.apiCircuitBreaker = new CircuitBreaker('api', {
+      failureThreshold: 5,
+      successThreshold: 2,
+      timeout: 60000, // 1 minute
+      monitoringPeriod: 120000, // 2 minutes
+    });
+
+    this.wsCircuitBreaker = new CircuitBreaker('websocket', {
+      failureThreshold: 3,
+      successThreshold: 2,
+      timeout: 30000, // 30 seconds
+      monitoringPeriod: 60000, // 1 minute
+    });
 
     // Debug log initialization
     this.log('init', 'ChatClient initialized', {
@@ -703,45 +721,47 @@ export class ChatClient {
       ...options?.headers,
     };
 
-    // Wrap fetch call in retry logic
-    return retryAsync(async () => {
-      const startTime = Date.now();
+    // Wrap fetch call in circuit breaker and retry logic
+    return this.apiCircuitBreaker.execute(async () => {
+      return retryAsync(async () => {
+        const startTime = Date.now();
 
-      try {
-        const response = await fetch(url, {
-          ...options,
-          headers,
-        });
+        try {
+          const response = await fetch(url, {
+            ...options,
+            headers,
+          });
 
-        const duration = Date.now() - startTime;
-
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({ error: { message: 'Request failed' } }));
-          const errorMessage = error.error?.message ?? error.message ?? `HTTP ${response.status}`;
-          const errorHint = error.error?.hint;
-
-          this.logApiCall(method, endpoint, duration, response.status, errorMessage);
-
-          // Include hint and status in error for retry logic
-          const fullError: any = new Error(errorMessage);
-          if (errorHint) {
-            fullError.hint = errorHint;
-          }
-          fullError.status = response.status; // Required for retry decision
-          throw fullError;
-        }
-
-        this.logApiCall(method, endpoint, duration, response.status);
-
-        return response.json();
-      } catch (error) {
-        if (!(error instanceof Error) || !('hint' in error)) {
-          // Network error or other non-HTTP error
           const duration = Date.now() - startTime;
-          this.logApiCall(method, endpoint, duration, 'error', (error as Error).message);
+
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: { message: 'Request failed' } }));
+            const errorMessage = error.error?.message ?? error.message ?? `HTTP ${response.status}`;
+            const errorHint = error.error?.hint;
+
+            this.logApiCall(method, endpoint, duration, response.status, errorMessage);
+
+            // Include hint and status in error for retry logic
+            const fullError: any = new Error(errorMessage);
+            if (errorHint) {
+              fullError.hint = errorHint;
+            }
+            fullError.status = response.status; // Required for retry decision
+            throw fullError;
+          }
+
+          this.logApiCall(method, endpoint, duration, response.status);
+
+          return response.json();
+        } catch (error) {
+          if (!(error instanceof Error) || !('hint' in error)) {
+            // Network error or other non-HTTP error
+            const duration = Date.now() - startTime;
+            this.logApiCall(method, endpoint, duration, 'error', (error as Error).message);
+          }
+          throw error;
         }
-        throw error;
-      }
+      });
     });
   }
 
