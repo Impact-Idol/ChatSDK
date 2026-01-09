@@ -20,6 +20,12 @@ export async function scaffoldProject(options: ScaffoldOptions): Promise<void> {
   // Create project directory
   await fs.ensureDir(projectPath);
 
+  // Handle minimal template (programmatically created)
+  if (template === 'minimal') {
+    await createMinimalTemplate(options);
+    return; // Minimal template handles everything itself
+  }
+
   // Copy template files
   const templatePath = path.join(__dirname, '..', 'templates', template);
   if (await fs.pathExists(templatePath)) {
