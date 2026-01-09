@@ -1,193 +1,255 @@
 # ChatSDK 2.0 - 5-Minute Quickstart
 
-Get from zero to first message in 5 minutes. No complex configuration needed.
+Get from zero to your first chat message in 5 minutes. No complex configuration needed.
 
 ## Prerequisites
 
-- **Node.js 18+** installed
-- **Docker Desktop** running (for backend services)
+- **Node.js 18+** installed ([download](https://nodejs.org/))
+- **Docker Desktop** running ([download](https://www.docker.com/products/docker-desktop))
 
-## Step 1: Clone & Setup (1 minute)
+That's it! No other setup required.
 
-```bash
-# Clone repository
-git clone https://github.com/yourusername/ChatSDK.git
-cd ChatSDK
+---
 
-# Install dependencies
-npm install
-```
+## Step 1: Create Your Chat App (30 seconds)
 
-## Step 2: Start Services (1 minute)
+Run one command:
 
 ```bash
-# Start all backend services (PostgreSQL, Centrifugo, Redis, MinIO, Meilisearch)
-docker compose up -d
-
-# Wait for services to be healthy (~30 seconds)
-docker compose ps
+npx create-chatsdk-app my-chat-app
 ```
 
-You should see all services as "healthy":
-```
-NAME                  STATUS
-chatsdk-postgres      Up (healthy)
-chatsdk-centrifugo    Up (healthy)
-chatsdk-redis         Up (healthy)
-chatsdk-minio         Up (healthy)
-chatsdk-meilisearch   Up (healthy)
-```
+When prompted:
+- **Template**: Hit Enter (Next.js recommended)
+- **TypeScript or JavaScript**: Hit Enter (TypeScript recommended)
+- **Include examples**: Hit Enter (Yes)
 
-## Step 3: Start API Server (30 seconds)
+Wait ~1 minute for installation.
+
+---
+
+## Step 2: Start Your App (10 seconds)
 
 ```bash
-# Start the API server
-cd packages/api
+cd my-chat-app
 npm run dev
 ```
 
-You should see:
-```
-📋 ChatSDK Configuration Summary (Development Mode)
+Your app is now running at **http://localhost:3000**
 
-Database:      postgresql://chatsdk:chatsdk_dev@localhost:5432/chatsdk
-Centrifugo:    http://localhost:8001
-Redis:         redis://localhost:6379
-S3 Storage:    http://localhost:9000
-Meilisearch:   http://localhost:7700
-Server:        http://0.0.0.0:5500
+> **Note**: Docker services and the ChatSDK API server start automatically. You'll see a configuration summary showing all services running.
 
-💡 Using smart defaults for local development
+---
 
-✅ Database connected
-Latest migration: V003 - Add channel starring feature
-✅ Centrifugo connected
-✅ Novu initialized
-✅ Storage initialized
-✅ Search initialized
+## Step 3: Send Your First Message (30 seconds)
 
-🚀 ChatSDK API Server running
-   URL: http://localhost:5500
-   Health: http://localhost:5500/health
-   Environment: development
-```
+1. Open **http://localhost:3000?user=alice** in your browser
+2. Open **http://localhost:3000?user=bob** in another tab
+3. Type "Hello!" as Alice and press Enter
+4. See it appear instantly in Bob's tab! 💬
 
-## Step 4: Test Connection (1 minute)
+**🎉 Congratulations!** You just built a real-time chat app in under 5 minutes.
 
-### Test the simplified authentication endpoint:
+---
+
+## What Just Happened?
+
+The CLI tool:
+1. ✅ Created a Next.js app with ChatSDK integrated
+2. ✅ Started 6 Docker services (PostgreSQL, Centrifugo, Redis, MinIO, Meilisearch, Flyway)
+3. ✅ Started the ChatSDK API server (port 5500)
+4. ✅ Configured everything automatically (zero manual config!)
+
+You can verify services are running:
 
 ```bash
-curl -X POST http://localhost:5500/api/auth/connect \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-api-key" \
-  -d '{
-    "userId": "alice",
-    "displayName": "Alice Johnson",
-    "avatar": "https://i.pravatar.cc/150?u=alice"
-  }'
+docker compose ps
 ```
 
-Expected response:
-```json
-{
-  "user": {
-    "id": "alice",
-    "displayName": "Alice Johnson",
-    "avatar": "https://i.pravatar.cc/150?u=alice",
-    "metadata": {}
-  },
-  "token": "eyJhbGci...",
-  "refreshToken": "eyJhbGci...",
-  "expiresIn": 900,
-  "_internal": {
-    "wsToken": "eyJhbGci..."
-  }
-}
+All services should show "healthy" status.
+
+---
+
+## What's Next?
+
+### Option 1: Customize the UI
+
+Edit `components/chat/MessageList.tsx`:
+
+```tsx
+// Change message bubble colors
+<div className="bg-blue-500 text-white rounded-lg p-3">
+  {message.text}
+</div>
 ```
 
-## Step 5: Use the SDK (2 minutes)
+### Option 2: Add More Features
 
-Create a test file `test-chat.ts`:
+```tsx
+import { useChat } from '@chatsdk/react';
 
-```typescript
-import { ChatSDK } from '@chatsdk/core';
-
-async function main() {
-  // Connect to ChatSDK (1 line!)
-  const client = await ChatSDK.connectDevelopment({
-    userId: 'alice',
-    displayName: 'Alice Johnson',
-    debug: true,
-  });
-
-  console.log('✅ Connected to ChatSDK!');
-
-  // Get channels
-  const channels = await client.getChannels();
-  console.log(`Found ${channels.length} channels`);
-
-  // Create a channel
-  const channel = await client.createChannel({
-    type: 'messaging',
-    id: 'general',
-    name: 'General',
-  });
-  console.log('Created channel:', channel.name);
+function MyComponent() {
+  const chat = useChat();
 
   // Send a message
-  const message = await client.sendMessage({
-    channelId: channel.id,
-    text: 'Hello from ChatSDK 2.0! 🚀',
-  });
-  console.log('Sent message:', message.text);
+  await chat.sendMessage({ text: 'Hello!' });
 
-  // Listen for new messages
-  client.on('message.new', (msg) => {
-    console.log('New message:', msg.text);
-  });
+  // React to a message
+  await chat.addReaction({ messageId: '123', reaction: '👍' });
 
-  console.log('\n🎉 Success! You\'re now chatting with ChatSDK.');
+  // Upload a file
+  await chat.uploadFile({ file: myFile });
+
+  // Search messages
+  const results = await chat.searchMessages({ query: 'hello' });
 }
-
-main().catch(console.error);
 ```
 
-Run it:
-```bash
-npx tsx test-chat.ts
-```
+### Option 3: Connect Real Users
 
-Output:
-```
-✅ Connected to ChatSDK!
-Found 0 channels
-Created channel: General
-Sent message: Hello from ChatSDK 2.0! 🚀
+Replace demo authentication with your own:
 
-🎉 Success! You're now chatting with ChatSDK.
+```tsx
+// app/layout.tsx
+import { ChatSDK } from '@chatsdk/react';
+
+const client = await ChatSDK.connect({
+  apiKey: process.env.NEXT_PUBLIC_CHATSDK_API_KEY!,
+  userId: currentUser.id,        // From your auth system
+  displayName: currentUser.name,
+  avatar: currentUser.avatar,
+});
 ```
 
 ---
 
-## 🎊 Congratulations!
+## Available Templates
 
-You just:
-- ✅ Started 5 backend services with one command
-- ✅ Connected to ChatSDK with zero configuration
-- ✅ Sent your first message in under 5 minutes
+Try different templates:
 
-## What's Different in ChatSDK 2.0?
+```bash
+# Vite + React (fast development)
+npx create-chatsdk-app my-app --template vite-react
 
-### Before (1.x)
+# React Native + Expo (mobile)
+npx create-chatsdk-app my-app --template react-native-expo
+
+# Express + React (backend/frontend split)
+npx create-chatsdk-app my-app --template express-react
+
+# Minimal (SDK only)
+npx create-chatsdk-app my-app --template minimal
+```
+
+---
+
+## Troubleshooting
+
+### Docker Not Running
+
+**Error**: `Cannot connect to Docker daemon`
+
+**Fix**: Start Docker Desktop, then run:
+
+```bash
+docker compose up -d
+npm run dev
+```
+
+### Port Already in Use
+
+**Error**: `Port 3000 is already allocated`
+
+**Fix**: Stop the other process, or change the port:
+
+```json
+// package.json
+{
+  "scripts": {
+    "dev": "next dev -p 3001"
+  }
+}
+```
+
+### Database Connection Failed
+
+**Error**: `Connection refused to localhost:5432`
+
+**Fix**: Restart Docker services:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+### API Server Not Starting
+
+**Check API logs**:
+
+```bash
+docker logs chatsdk-api
+```
+
+**Restart API**:
+
+```bash
+docker compose restart api
+```
+
+---
+
+## Smart Defaults Explained
+
+In development mode, ChatSDK auto-configures everything:
+
+| Service | Default URL | Purpose |
+|---------|-------------|---------|
+| **App** | http://localhost:3000 | Your chat application |
+| **API** | http://localhost:5500 | ChatSDK REST API |
+| **WebSocket** | ws://localhost:8001 | Real-time messaging |
+| **Database** | postgresql://localhost:5432 | PostgreSQL |
+| **Redis** | redis://localhost:6379 | Pub/sub & caching |
+| **MinIO** | http://localhost:9000 | S3-compatible storage |
+| **Meilisearch** | http://localhost:7700 | Full-text search |
+
+All connection details are in `.env.local` - no manual configuration needed!
+
+---
+
+## Production Deployment
+
+Ready to deploy? See our production guide:
+
+**[Production Deployment →](./docs/PRODUCTION.md)**
+
+Key changes for production:
+1. Set 3 environment variables (DATABASE_URL, JWT_SECRET, CENTRIFUGO_TOKEN_SECRET)
+2. Use managed services (AWS RDS, Redis Cloud, S3)
+3. Enable SSL/TLS
+4. Set up monitoring
+
+That's it! ChatSDK auto-configures everything else.
+
+---
+
+## What Makes ChatSDK 2.0 Different?
+
+### Before (ChatSDK 1.x)
+
 ```typescript
-// 4 steps, manual token fetching
+// 4 steps, manual token fetching, complex setup
 const client = createChatClient({ apiKey: 'xxx' });
 const { token, wsToken } = await fetchTokenFromBackend();
 await client.connectUser(user, { token, wsToken });
 // Now you can use it
 ```
 
-### After (2.0)
+**Setup time**: ~2 hours
+**Required config**: 20+ env vars
+**Difficulty**: Intermediate
+
+### After (ChatSDK 2.0)
+
 ```typescript
 // 1 step, everything automatic
 const client = await ChatSDK.connect({
@@ -197,97 +259,58 @@ const client = await ChatSDK.connect({
 // That's it!
 ```
 
-## What's Next?
+**Setup time**: ~5 minutes ✅
+**Required config**: 0 env vars (dev), 3 env vars (prod) ✅
+**Difficulty**: Beginner ✅
 
-### Explore the Example App
+---
+
+## Example Use Cases
+
+### Team Messaging (Slack Clone)
 ```bash
-cd examples/react-chat
-npm run dev
-# Open http://localhost:3000
+npx create-chatsdk-app slack-clone
+# Workspaces, channels, threads, reactions
 ```
 
-### Read the Documentation
-- [API Reference](./docs/api-reference.md)
-- [SDK Strategy](./docs/sdk-strategy/README.md)
-- [Week 1 Implementation](./docs/sdk-strategy/implementation/week-01-DEMO.md)
-
-### Start Building
-- **Team messaging**: Build a Slack clone
-- **Customer support**: Add live chat to your website
-- **Marketplace**: Enable buyer-seller messaging
-- **Healthcare**: HIPAA-compliant patient-doctor chat
-
-## Smart Defaults in Action
-
-In development mode, you don't need ANY environment variables:
-
+### Customer Support Chat
 ```bash
-# No .env file needed!
-npm run dev
+npx create-chatsdk-app support-chat
+# Embeddable widget, agent dashboard
 ```
 
-ChatSDK auto-configures:
-- ✅ PostgreSQL connection
-- ✅ Centrifugo WebSocket
-- ✅ Redis pub/sub
-- ✅ MinIO S3 storage
-- ✅ Meilisearch
-- ✅ JWT secrets (dev-only)
-
-### Production (Only 3 Variables Required)
-
-Create `.env.production`:
-
+### Marketplace Messaging
 ```bash
-DATABASE_URL=postgresql://user:pass@host:5432/db
-JWT_SECRET=your-secret-here
-CENTRIFUGO_TOKEN_SECRET=your-centrifugo-secret
+npx create-chatsdk-app marketplace-chat
+# Buyer-seller conversations, in-chat payments
 ```
 
-That's it! Everything else auto-configures.
-
-## Troubleshooting
-
-### Docker services won't start
-
+### Telehealth (HIPAA Compliant)
 ```bash
-# Check Docker is running
-docker info
-
-# Reset Docker
-docker compose down -v
-docker compose up -d
+npx create-chatsdk-app telehealth
+# Doctor-patient chat, E2E encryption
 ```
 
-### Port already in use
+---
 
-```bash
-# Find what's using port 5500
-lsof -i :5500
+## Get Help
 
-# Kill it or change port
-PORT=5501 npm run dev
-```
+- 📖 **[Full Documentation](https://docs.chatsdk.dev)**
+- 💬 **[Discord Community](https://discord.gg/chatsdk)**
+- 🐛 **[GitHub Issues](https://github.com/chatsdk/chatsdk/issues)**
+- 📧 **[Email Support](mailto:support@chatsdk.dev)**
 
-### Database connection failed
+---
 
-```bash
-# Check PostgreSQL is healthy
-docker compose ps postgres
+## Next Steps
 
-# View logs
-docker compose logs postgres
-```
-
-## Need Help?
-
-- 📖 [Documentation](./docs)
-- 💬 [Discord Community](https://discord.gg/chatsdk)
-- 🐛 [GitHub Issues](https://github.com/chatsdk/chatsdk/issues)
-- 📧 [Email Support](mailto:support@chatsdk.dev)
+1. **[API Reference](./docs/API.md)** - Complete SDK documentation
+2. **[UI Components](./docs/COMPONENTS.md)** - Pre-built chat UI
+3. **[Advanced Features](./docs/ADVANCED.md)** - Threads, reactions, files
+4. **[Production Guide](./docs/PRODUCTION.md)** - Deploy to production
 
 ---
 
 **Built with ❤️ by the ChatSDK Team**
 
-**Ready to ship ChatSDK 2.0? Let's go! 🚀**
+**Ready to build something amazing? Let's chat! 🚀**
