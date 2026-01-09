@@ -15,8 +15,6 @@ import { getTemplateConfig, type Template } from './templates.js';
 
 interface CliOptions {
   template?: Template;
-  typescript?: boolean;
-  javascript?: boolean;
   examples?: boolean;
   skipInstall?: boolean;
   skipDocker?: boolean;
@@ -26,9 +24,7 @@ program
   .name('create-chatsdk-app')
   .description('Create a new ChatSDK application')
   .argument('[project-name]', 'Name of your project')
-  .option('-t, --template <template>', 'Template to use (nextjs-app-router, vite-react, react-native-expo, express-react, minimal)')
-  .option('--typescript', 'Use TypeScript (default)')
-  .option('--javascript', 'Use JavaScript')
+  .option('-t, --template <template>', 'Template to use (nextjs-app-router, minimal)')
   .option('--no-examples', 'Skip example components')
   .option('--skip-install', 'Skip npm install')
   .option('--skip-docker', 'Skip Docker setup')
@@ -106,25 +102,11 @@ program
         template = selectedTemplate;
       }
 
-      // Step 3: TypeScript or JavaScript
-      let useTypeScript = options.typescript !== false; // Default to TypeScript
-      if (options.typescript === undefined && !options.javascript) {
-        const { lang } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'lang',
-            message: 'TypeScript or JavaScript?',
-            choices: [
-              { name: 'TypeScript (Recommended)', value: 'typescript' },
-              { name: 'JavaScript', value: 'javascript' },
-            ],
-            default: 'typescript',
-          },
-        ]);
-        useTypeScript = lang === 'typescript';
-      } else if (options.javascript) {
-        useTypeScript = false;
-      }
+      // Step 3: TypeScript only (JavaScript support coming later)
+      const useTypeScript = true;
+
+      // Note: JavaScript option temporarily disabled due to type annotation stripping complexity
+      // Will be re-enabled in a future release with proper babel/typescript parser integration
 
       // Step 4: Include examples
       let includeExamples = options.examples !== false; // Default to true
