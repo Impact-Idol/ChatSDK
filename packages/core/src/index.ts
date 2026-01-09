@@ -46,3 +46,7 @@ export type { NetworkMetrics, NetworkQualityMonitorConfig } from './network/qual
 // Token Manager (Week 4)
 export { TokenManager } from './auth/token-manager';
 export type { Tokens, TokenManagerConfig } from './auth/token-manager';
+
+// Connection Manager (Week 4)
+export { ConnectionManager, ConnectionState } from './realtime/connection-manager';
+export type { ConnectionManagerConfig } from './realtime/connection-manager';

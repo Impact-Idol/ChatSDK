@@ -16,9 +16,9 @@ import React, {
 import {
   ChatClient,
   createChatClient,
+  ConnectionState,
   type ChatClientOptions,
   type User,
-  type ConnectionState,
 } from '@chatsdk/core';
 
 interface ChatContextValue {
@@ -68,25 +68,25 @@ export function ChatProvider({
   );
 
   const [user, setUser] = useState<User | null>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
 
   // Set up connection state listeners
   useEffect(() => {
     const unsubConnecting = client.on('connection.connecting', () => {
-      setConnectionState('connecting');
+      setConnectionState(ConnectionState.CONNECTING);
     });
 
     const unsubConnected = client.on('connection.connected', () => {
-      setConnectionState('connected');
+      setConnectionState(ConnectionState.CONNECTED);
     });
 
     const unsubDisconnected = client.on('connection.disconnected', () => {
-      setConnectionState('disconnected');
+      setConnectionState(ConnectionState.DISCONNECTED);
       setUser(null);
     });
 
     const unsubReconnecting = client.on('connection.reconnecting', () => {
-      setConnectionState('reconnecting');
+      setConnectionState(ConnectionState.RECONNECTING);
     });
 
     return () => {
@@ -116,8 +116,8 @@ export function ChatProvider({
       client,
       user,
       connectionState,
-      isConnected: connectionState === 'connected',
-      isConnecting: connectionState === 'connecting' || connectionState === 'reconnecting',
+      isConnected: connectionState === ConnectionState.CONNECTED,
+      isConnecting: connectionState === ConnectionState.CONNECTING || connectionState === ConnectionState.RECONNECTING,
       connectUser,
       disconnect,
     }),
