@@ -42,3 +42,7 @@ export { RequestDeduplicator, DuplicateRequestError, Debouncer } from './lib/ded
 // Network Quality Monitor (Week 4)
 export { NetworkQualityMonitor, NetworkQuality } from './network/quality-monitor';
 export type { NetworkMetrics, NetworkQualityMonitorConfig } from './network/quality-monitor';
+
+// Token Manager (Week 4)
+export { TokenManager } from './auth/token-manager';
+export type { Tokens, TokenManagerConfig } from './auth/token-manager';
