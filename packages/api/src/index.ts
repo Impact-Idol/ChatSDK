@@ -47,6 +47,7 @@ import { initStorage } from './services/storage';
 import { initSearch } from './services/search';
 import { inngest, allFunctions } from './inngest';
 import { serve as inngestServe } from 'inngest/hono';
+import { config, validateProductionConfig, printConfigSummary } from './config/defaults';
 
 // Create Hono app
 const app = new Hono();
@@ -284,13 +285,19 @@ app.notFound((c) => {
 });
 
 // Start server
-const port = parseInt(process.env.PORT || '5500', 10);
+const port = config.server.port;
 
 async function main() {
   try {
+    // Validate production configuration
+    validateProductionConfig();
+
+    // Print development configuration summary
+    printConfigSummary();
+
     // Initialize database connection
     await initDB();
-    console.log('Database connected');
+    console.log('✅ Database connected');
 
     // Log latest migration version (Flyway)
     try {
@@ -312,19 +319,19 @@ async function main() {
 
     // Initialize Centrifugo client
     await initCentrifugo();
-    console.log('Centrifugo connected');
+    console.log('✅ Centrifugo connected');
 
     // Initialize Novu client (optional - for push notifications)
     await initNovu();
-    console.log('Novu initialized');
+    console.log('✅ Novu initialized');
 
     // Initialize MinIO storage
     await initStorage();
-    console.log('Storage initialized');
+    console.log('✅ Storage initialized');
 
     // Initialize Meilisearch
     await initSearch();
-    console.log('Search initialized');
+    console.log('✅ Search initialized');
 
     // Start HTTP server
     honoServe({
@@ -332,8 +339,10 @@ async function main() {
       port,
     });
 
-    console.log(`API server running on http://localhost:${port}`);
-    console.log(`Health check: http://localhost:${port}/health`);
+    console.log(`\n🚀 ChatSDK API Server running`);
+    console.log(`   URL: http://localhost:${port}`);
+    console.log(`   Health: http://localhost:${port}/health`);
+    console.log(`   Environment: ${config.env}\n`);
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);

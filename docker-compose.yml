@@ -1,0 +1,130 @@
+# ChatSDK 2.0 - Quick Start Docker Compose
+# Single command to start all services: docker compose up -d
+#
+# Services included:
+# - PostgreSQL (database)
+# - Centrifugo (WebSocket real-time)
+# - Redis (pub/sub & caching)
+# - MinIO (S3-compatible storage)
+# - Meilisearch (full-text search)
+# - Flyway (automatic migrations)
+#
+# Access:
+# - API: http://localhost:5500
+# - WebSocket: ws://localhost:8001
+# - MinIO Console: http://localhost:9001 (chatsdk / chatsdk_dev_123)
+
+services:
+  # PostgreSQL - Primary Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: chatsdk-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: chatsdk
+      POSTGRES_PASSWORD: chatsdk_dev
+      POSTGRES_DB: chatsdk
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatsdk"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Flyway - Database Migrations (runs once)
+  flyway:
+    image: flyway/flyway:10-alpine
+    container_name: chatsdk-flyway
+    command: -connectRetries=60 -baselineOnMigrate=true migrate
+    volumes:
+      - ./docker/migrations:/flyway/sql
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/chatsdk
+      FLYWAY_USER: chatsdk
+      FLYWAY_PASSWORD: chatsdk_dev
+      FLYWAY_BASELINE_VERSION: 1
+      FLYWAY_BASELINE_DESCRIPTION: "Initial schema"
+      FLYWAY_SCHEMAS: public
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Centrifugo - Real-time WebSocket Server
+  centrifugo:
+    image: centrifugo/centrifugo:v5
+    container_name: chatsdk-centrifugo
+    ports:
+      - "8001:8000"  # WebSocket/HTTP
+    volumes:
+      - ./docker/centrifugo.json:/centrifugo/config.json
+    command: centrifugo -c config.json
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Pub/Sub & Caching
+  redis:
+    image: redis:7-alpine
+    container_name: chatsdk-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MinIO - S3-compatible Storage
+  minio:
+    image: minio/minio:latest
+    container_name: chatsdk-minio
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    environment:
+      MINIO_ROOT_USER: chatsdk
+      MINIO_ROOT_PASSWORD: chatsdk_dev_123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Meilisearch - Full-text Search
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: chatsdk-meilisearch
+    ports:
+      - "7700:7700"
+    environment:
+      MEILI_MASTER_KEY: chatsdk_dev_key
+      MEILI_ENV: development
+    volumes:
+      - meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  meilisearch_data:
+
+networks:
+  default:
+    name: chatsdk-network
