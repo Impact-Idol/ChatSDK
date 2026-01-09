@@ -16,6 +16,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { authMiddleware } from './middleware/auth';
+import { authRoutes } from './routes/auth';
 import { channelRoutes } from './routes/channels';
 import { messageRoutes } from './routes/messages';
 import { userRoutes } from './routes/users';
@@ -123,7 +124,8 @@ app.use('*', async (c, next) => {
 app.route('/', metricsRoutes);
 
 // Public routes
-app.route('/tokens', tokenRoutes);
+app.route('/api/auth', authRoutes); // ChatSDK 2.0 simplified authentication
+app.route('/tokens', tokenRoutes); // Legacy token endpoint (backward compatibility)
 
 // Admin routes (uses own authentication middleware)
 app.route('/admin', adminRoutes);

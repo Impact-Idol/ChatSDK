@@ -9,7 +9,11 @@ export * from './types';
 // EventBus
 export { EventBus, getEventBus, resetEventBus } from './callbacks/EventBus';
 
-// ChatClient
+// ChatSDK 2.0 - Simplified API (Recommended)
+export { ChatSDK } from './ChatSDK';
+export type { ChatSDKConnectConfig } from './ChatSDK';
+
+// ChatClient (Lower-level API, backward compatibility)
 export { ChatClient, createChatClient } from './client/ChatClient';
 export type { ChatClientConfig } from './client/ChatClient';
 
