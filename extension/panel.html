@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ChatSDK DevTools</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      font-size: 13px;
+      background: #ffffff;
+      color: #333;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      border-bottom: 1px solid #e0e0e0;
+      background: #f5f5f5;
+      align-items: center;
+    }
+
+    .toolbar button {
+      padding: 6px 12px;
+      border: 1px solid #ccc;
+      background: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .toolbar button:hover {
+      background: #f0f0f0;
+    }
+
+    .toolbar button:active {
+      background: #e0e0e0;
+    }
+
+    .toolbar label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+    }
+
+    .tabs {
+      display: flex;
+      border-bottom: 2px solid #e0e0e0;
+      background: #fafafa;
+    }
+
+    .tab {
+      padding: 10px 16px;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .tab:hover {
+      background: #f0f0f0;
+    }
+
+    .tab.active {
+      border-bottom-color: #1976d2;
+      color: #1976d2;
+      background: white;
+    }
+
+    .content {
+      padding: 16px;
+      overflow-y: auto;
+      height: calc(100vh - 100px);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* Logs */
+    .log-entry {
+      padding: 8px;
+      border-bottom: 1px solid #f0f0f0;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .log-entry.debug {
+      color: #666;
+    }
+
+    .log-entry.info {
+      color: #1976d2;
+    }
+
+    .log-entry.warn {
+      color: #f57c00;
+      background: #fff3e0;
+    }
+
+    .log-entry.error {
+      color: #d32f2f;
+      background: #ffebee;
+      font-weight: bold;
+    }
+
+    .log-timestamp {
+      color: #999;
+      font-size: 11px;
+    }
+
+    .log-metadata {
+      margin-top: 4px;
+      margin-left: 20px;
+      color: #666;
+      font-size: 11px;
+      background: #f5f5f5;
+      padding: 4px 8px;
+      border-radius: 3px;
+    }
+
+    /* Messages */
+    .message-item {
+      padding: 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      background: white;
+    }
+
+    .message-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .message-user {
+      font-weight: 600;
+      color: #333;
+    }
+
+    .message-time {
+      color: #666;
+      font-size: 11px;
+    }
+
+    .message-text {
+      color: #444;
+      margin-bottom: 8px;
+    }
+
+    .message-json {
+      font-family: 'Monaco', monospace;
+      font-size: 11px;
+      background: #f5f5f5;
+      padding: 8px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+
+    /* State tree */
+    .state-tree {
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      background: #f5f5f5;
+      padding: 16px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+
+    /* Performance */
+    .perf-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .perf-table th {
+      background: #f5f5f5;
+      padding: 8px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #e0e0e0;
+    }
+
+    .perf-table td {
+      padding: 8px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .perf-table tr:hover {
+      background: #fafafa;
+    }
+
+    /* Network */
+    .network-entry {
+      padding: 8px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 12px;
+    }
+
+    .network-method {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+
+    .network-method.get {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
+
+    .network-method.post {
+      background: #e8f5e9;
+      color: #388e3c;
+    }
+
+    .network-status {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+
+    .network-status.success {
+      background: #e8f5e9;
+      color: #388e3c;
+    }
+
+    .network-status.error {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #999;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    details {
+      margin-top: 8px;
+      cursor: pointer;
+    }
+
+    summary {
+      color: #1976d2;
+      font-weight: 500;
+      padding: 4px 0;
+    }
+
+    summary:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button id="refresh" title="Refresh current tab">🔄 Refresh</button>
+    <button id="clear" title="Clear logs">🗑️ Clear</button>
+    <button id="export" title="Export logs as JSON">💾 Export</button>
+    <label>
+      <input type="checkbox" id="autoscroll" checked>
+      Auto-scroll
+    </label>
+    <div style="flex: 1"></div>
+    <span id="status" style="font-size: 11px; color: #666;"></span>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="logs">📝 Logs</div>
+    <div class="tab" data-tab="messages">💬 Messages</div>
+    <div class="tab" data-tab="network">🌐 Network</div>
+    <div class="tab" data-tab="state">🔧 State</div>
+    <div class="tab" data-tab="performance">📊 Performance</div>
+  </div>
+
+  <div class="content">
+    <div id="tab-logs" class="tab-content active">
+      <div id="logs-list"></div>
+    </div>
+
+    <div id="tab-messages" class="tab-content">
+      <div id="messages-list"></div>
+    </div>
+
+    <div id="tab-network" class="tab-content">
+      <div id="network-list"></div>
+    </div>
+
+    <div id="tab-state" class="tab-content">
+      <pre id="state-tree" class="state-tree"></pre>
+    </div>
+
+    <div id="tab-performance" class="tab-content">
+      <table id="performance-table" class="perf-table">
+        <thead>
+          <tr>
+            <th>Operation</th>
+            <th>Count</th>
+            <th>Min</th>
+            <th>Max</th>
+            <th>Avg</th>
+            <th>P50</th>
+            <th>P95</th>
+            <th>P99</th>
+          </tr>
+        </thead>
+        <tbody id="performance-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -50,3 +50,27 @@ export type { Tokens, TokenManagerConfig } from './auth/token-manager';
 // Connection Manager (Week 4)
 export { ConnectionManager, ConnectionState } from './realtime/connection-manager';
 export type { ConnectionManagerConfig } from './realtime/connection-manager';
+
+// Logger (Week 6)
+export { logger, LogLevel } from './lib/logger';
+export type { LogContext, LogEntry } from './lib/logger';
+
+// Enhanced Errors (Week 6)
+export {
+  ChatSDKError,
+  AuthenticationError,
+  NetworkError,
+  PermissionError,
+  RateLimitError,
+  ValidationError,
+  ConnectionError,
+  TimeoutError,
+  ConfigurationError,
+  createError,
+  assert,
+  withErrorHandling,
+} from './lib/errors';
+
+// Performance Profiler (Week 6)
+export { profiler, Profile } from './lib/profiler';
+export type { PerformanceStats, PerformanceMark } from './lib/profiler';

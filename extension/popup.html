@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ChatSDK DevTools</title>
+  <style>
+    body {
+      width: 300px;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin: 0 0 12px 0;
+      color: #1a73e8;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .logo {
+      font-size: 24px;
+    }
+
+    p {
+      margin: 0 0 16px 0;
+      color: #5f6368;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .status {
+      background: #e8f0fe;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .status-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .status-label {
+      color: #5f6368;
+    }
+
+    .status-value {
+      font-weight: 500;
+      color: #1a73e8;
+    }
+
+    .status-value.active {
+      color: #0d652d;
+    }
+
+    .status-value.inactive {
+      color: #d93025;
+    }
+
+    .instructions {
+      background: #f1f3f4;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .instructions h2 {
+      font-size: 14px;
+      margin: 0 0 8px 0;
+      color: #202124;
+    }
+
+    .instructions ol {
+      margin: 0;
+      padding-left: 20px;
+      font-size: 12px;
+      color: #5f6368;
+      line-height: 1.6;
+    }
+
+    .instructions li {
+      margin-bottom: 4px;
+    }
+
+    .links {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .links a {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #fff;
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      text-decoration: none;
+      color: #1a73e8;
+      font-size: 13px;
+      transition: background-color 0.2s;
+    }
+
+    .links a:hover {
+      background: #f8f9fa;
+    }
+
+    .icon {
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="logo">💬</span>
+    ChatSDK DevTools
+  </h1>
+
+  <p>Real-time debugging and inspection for ChatSDK applications</p>
+
+  <div class="status" id="status">
+    <div class="status-item">
+      <span class="status-label">Extension:</span>
+      <span class="status-value active">Active</span>
+    </div>
+    <div class="status-item">
+      <span class="status-label">Debug Mode:</span>
+      <span class="status-value" id="debug-status">Checking...</span>
+    </div>
+  </div>
+
+  <div class="instructions">
+    <h2>Quick Start</h2>
+    <ol>
+      <li>Open DevTools (F12 or Cmd+Option+I)</li>
+      <li>Click the "ChatSDK" tab</li>
+      <li>Add <code>?chatsdk_debug=true</code> to URL for debug mode</li>
+      <li>Inspect logs, messages, state, and performance</li>
+    </ol>
+  </div>
+
+  <div class="links">
+    <a href="https://docs.chatsdk.dev" target="_blank">
+      <span class="icon">📖</span>
+      Documentation
+    </a>
+    <a href="https://github.com/chatsdk/chatsdk" target="_blank">
+      <span class="icon">🔧</span>
+      GitHub Repository
+    </a>
+    <a href="https://github.com/chatsdk/chatsdk/issues" target="_blank">
+      <span class="icon">🐛</span>
+      Report Issue
+    </a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
