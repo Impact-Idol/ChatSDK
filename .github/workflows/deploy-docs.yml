@@ -1,0 +1,47 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - '.github/workflows/deploy-docs.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Build documentation
+        run: |
+          # Simple static site from markdown
+          # You can replace this with Docusaurus, VitePress, etc.
+          echo "Documentation will be built here"
+          mkdir -p _site
+          cp -r docs/* _site/
+          cp README.md _site/index.md
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_site'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
