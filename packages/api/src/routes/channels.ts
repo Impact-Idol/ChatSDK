@@ -205,14 +205,14 @@ channelRoutes.get('/', requireUser, async (c) => {
 
   const result = await db.query(query, params);
 
-  // For messaging/DM channels, fetch members to include in response
+  // For messaging/DM and group channels, fetch members to include in response
   const channels = result.rows.map(formatChannel);
   const messagingChannelIds = result.rows
-    .filter((row) => row.type === 'messaging')
+    .filter((row) => row.type === 'messaging' || row.type === 'group')
     .map((row) => row.id);
 
   if (messagingChannelIds.length > 0) {
-    // Batch fetch members for all messaging channels
+    // Batch fetch members for all messaging and group channels
     const membersResult = await db.query(
       `SELECT cm.channel_id, cm.user_id, cm.role, u.name, u.image_url, u.custom_data->>'email' as email
        FROM channel_member cm
@@ -237,9 +237,9 @@ channelRoutes.get('/', requireUser, async (c) => {
       });
     }
 
-    // Attach members to messaging channels
+    // Attach members to messaging and group channels
     for (const channel of channels) {
-      if (channel.type === 'messaging' && membersByChannel[channel.id]) {
+      if ((channel.type === 'messaging' || channel.type === 'group') && membersByChannel[channel.id]) {
         (channel as any).members = membersByChannel[channel.id];
       }
     }
