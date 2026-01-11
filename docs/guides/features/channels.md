@@ -105,34 +105,34 @@ ChatSDK supports 3 channel types:
 
 | Type | Description | Use Case |
 |------|-------------|----------|
-| **public** | Anyone in workspace can join | #general, #random |
-| **private** | Invite-only | #management, #hr |
-| **dm** | Direct message (1-on-1) | User to user chat |
+| **messaging** | Direct message (1-on-1) | User to user chat |
+| **group** | Small private group | #project-team, #customer-support |
+| **team** | Team/public channel | #general, #engineering |
 
 ### Create Channel
 
 ```typescript
-// Public channel
+// Direct message (1-on-1)
+const dm = await sdk.createChannel({
+  type: 'messaging',
+  memberIds: ['other-user-789'], // Just the other person's ID
+});
+
+// Group channel
+const projectTeam = await sdk.createChannel({
+  type: 'group',
+  name: 'Project Team',
+  memberIds: ['user-123', 'user-456', 'user-789'],
+  description: 'Private project discussion',
+});
+
+// Team channel
 const general = await sdk.createChannel({
   workspaceId: 'ws-abc123',
   name: 'general',
-  type: 'public',
+  type: 'team',
   description: 'General discussion',
-  topic: 'Welcome to Acme Inc! 👋',
-});
-
-// Private channel
-const management = await sdk.createChannel({
-  workspaceId: 'ws-abc123',
-  name: 'management',
-  type: 'private',
-  description: 'Management team only',
   memberIds: ['user-123', 'user-456'], // Initial members
-});
-
-// Direct message
-const dm = await sdk.createDirectMessage({
-  userId: 'other-user-789',
 });
 ```
 

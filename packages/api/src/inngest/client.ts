@@ -17,7 +17,7 @@ export type ChatEvents = {
       content: string;
       mentions: string[];
       channelName: string;
-      channelType: 'direct' | 'group' | 'public';
+      channelType: 'messaging' | 'group' | 'public';
       memberIds: string[];
     };
   };

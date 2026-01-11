@@ -40,7 +40,7 @@ export const UpdateUserSchema = z.object({
 
 export const ChannelSchema = z.object({
   id: z.string().uuid(),
-  type: z.enum(['direct', 'group', 'team']),
+  type: z.enum(['messaging', 'group', 'team']),
   name: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
   image: z.string().url().optional().nullable(),
@@ -55,7 +55,7 @@ export const ChannelSchema = z.object({
 });
 
 export const CreateChannelSchema = z.object({
-  type: z.enum(['direct', 'group', 'team']),
+  type: z.enum(['messaging', 'group', 'team']),
   memberIds: z.array(z.string()).min(1).max(100),
   name: z.string().min(1).max(255).optional(),
   description: z.string().max(1000).optional(),

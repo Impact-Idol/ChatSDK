@@ -116,7 +116,7 @@ export const handleNewMessage = inngest.createFunction(
       await step.run('notify-members', async () => {
         // For direct messages, always notify
         // For groups/public, respect notification settings
-        if (data.channelType === 'direct') {
+        if (data.channelType === 'messaging') {
           // Novu (mobile push)
           await notifyNewMessage({
             recipientId: nonMentionedRecipients[0],

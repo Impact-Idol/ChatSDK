@@ -49,7 +49,7 @@ export const DirectMessage: Story = {
   args: {
     channel: {
       id: 'dm-1',
-      type: 'direct',
+      type: 'messaging',
       memberCount: 2,
     },
     members: defaultMembers.slice(0, 2),

@@ -7,7 +7,7 @@
 import { z } from 'zod';
 
 const createChannelSchema = z.object({
-  type: z.enum(['direct', 'group', 'team']),
+  type: z.enum(['messaging', 'group', 'team']),
   name: z.string().min(1).max(255).optional(),
   image: z.string().url().optional(),
   memberIds: z.array(z.string()).optional(),

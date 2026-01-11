@@ -20,7 +20,7 @@ const createTemplateSchema = z.object({
   config: z.record(z.unknown()).default({}),
   channels: z.array(z.object({
     name: z.string(),
-    type: z.enum(['team', 'group', 'direct']),
+    type: z.enum(['team', 'group', 'messaging']),
     readOnly: z.boolean().optional(),
   })),
   roles: z.array(z.object({
@@ -306,7 +306,7 @@ templatesRoutes.patch(
     description: z.string().optional(),
     channels: z.array(z.object({
       name: z.string(),
-      type: z.enum(['team', 'group', 'direct']),
+      type: z.enum(['team', 'group', 'messaging']),
       readOnly: z.boolean().optional(),
     })).optional(),
     settings: z.record(z.unknown()).optional(),

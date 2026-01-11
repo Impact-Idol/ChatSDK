@@ -33,7 +33,7 @@ export class ChannelImporter {
       let chatsdkType: string;
       switch (channel.type) {
         case 'messaging':
-          chatsdkType = 'direct';
+          chatsdkType = 'messaging';
           break;
         case 'team':
           chatsdkType = 'team';
