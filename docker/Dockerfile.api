@@ -16,8 +16,6 @@ RUN npm ci --workspace=@chatsdk/core --workspace=@chatsdk/api
 # Copy source code
 COPY packages/core ./packages/core
 COPY packages/api ./packages/api
-COPY tsconfig.json ./
-COPY tsconfig.base.json ./
 
 # Build TypeScript to JavaScript
 RUN npm run build --workspace=@chatsdk/core

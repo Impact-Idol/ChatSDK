@@ -153,7 +153,7 @@ class Logger {
 
     if (entry.metadata) {
       parts.push(`\n  Data:`);
-      parts.push(entry.metadata);
+      parts.push(JSON.stringify(entry.metadata, null, 2));
     }
 
     parts.push(`\n  Time: ${timestamp}`);
