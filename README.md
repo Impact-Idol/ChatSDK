@@ -5,6 +5,7 @@
 5-minute setup. 99.9% message delivery. Beautiful documentation. Open source.
 
 [![npm version](https://badge.fury.io/js/%40chatsdk%2Fcore.svg)](https://www.npmjs.com/package/@chatsdk/core)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/piper5ul/ChatSDK/pkgs/container/chatsdk%2Fapi)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)](https://www.typescriptlang.org/)
 [![Test Coverage](https://img.shields.io/badge/coverage-84%25-green)](./tests)
@@ -46,6 +47,21 @@ npm install @chatsdk/core @chatsdk/react
 ```
 
 **Note:** Packages not yet published to npm. See [Development Setup](#development-setup) below.
+
+### Option 3: Docker (Production Ready)
+
+```bash
+# Pull the official Docker image
+docker pull ghcr.io/piper5ul/chatsdk/api:latest
+
+# Run the complete stack
+cd docker
+docker compose -f docker-compose.prod.yml up -d
+```
+
+**Multi-platform support:** `linux/amd64`, `linux/arm64` (Apple Silicon, AWS Graviton)
+
+See [Docker README](./docker/README.md) for complete setup instructions.
 
 ---
 

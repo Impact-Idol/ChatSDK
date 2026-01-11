@@ -3,10 +3,13 @@ version: '3.8'
 services:
   # API Server (production mode)
   api:
-    build:
-      context: ../
-      dockerfile: docker/Dockerfile.api
-      target: production
+    # Use published image (recommended)
+    image: ghcr.io/piper5ul/chatsdk/api:latest
+    # Or build from source (for custom modifications):
+    # build:
+    #   context: ../
+    #   dockerfile: docker/Dockerfile.api
+    #   target: production
     ports:
       - "${API_PORT:-5500}:5500"
     environment:

@@ -16,6 +16,30 @@ Local development infrastructure for ChatSDK.
 
 ## Quick Start
 
+### Option 1: Use Published Images (Recommended)
+
+ChatSDK publishes official Docker images to GitHub Container Registry:
+
+```bash
+# Pull the latest API image
+docker pull ghcr.io/piper5ul/chatsdk/api:latest
+
+# Or pull a specific version
+docker pull ghcr.io/piper5ul/chatsdk/api:2.0.0
+
+# Run with Docker Compose (uses published images)
+docker compose -f docker-compose.prod.yml up -d
+```
+
+**Available Images:**
+- `ghcr.io/piper5ul/chatsdk/api:latest` - ChatSDK API Server (latest)
+- `ghcr.io/piper5ul/chatsdk/api:2.0.0` - Specific version
+- `ghcr.io/piper5ul/chatsdk/api:main` - Main branch (development)
+
+**Platforms Supported:** `linux/amd64`, `linux/arm64` (Apple Silicon, AWS Graviton)
+
+### Option 2: Build from Source (Development)
+
 ```bash
 # Start all services (except AI)
 docker compose up -d
