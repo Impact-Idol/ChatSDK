@@ -1,3 +1,8 @@
+---
+slug: /
+sidebar_position: 1
+---
+
 # ChatSDK Documentation
 
 A modern, real-time chat SDK for building messaging features into your applications.
