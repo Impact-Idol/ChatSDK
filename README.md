@@ -326,7 +326,7 @@ ChatSDK/
 │   └── sdk-strategy/      # Implementation plans
 ├── examples/              # 10 example applications
 │   ├── react-chat/        # Basic React chat
-│   ├── react-chat-huly/   # Full-featured React (Huly UI)
+│   ├── react-chat-huly/   # Full-featured React demo
 │   ├── nextjs-chat/       # Next.js integration
 │   ├── react-native-chat/ # React Native app
 │   ├── react-native-demo/ # Advanced mobile features

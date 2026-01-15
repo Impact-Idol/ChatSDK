@@ -74,3 +74,6 @@ docs/IMPLEMENTATION_SUMMARY.md
 docs/SDK_EXTENSION_PLAN.md
 docs/enterprise-readiness-plan.md
 docs/huly-chat-extraction-plan.md
+
+# Exclude Claude instructions
+CLAUDE.md

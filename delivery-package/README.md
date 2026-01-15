@@ -26,7 +26,7 @@
 
 - **SDK Packages**: Core, React, React Native SDKs (built & ready)
 - **Docker Configs**: Production deployment files
-- **Example App**: Full-featured React chat (react-chat-huly)
+- **Example App**: Full-featured React chat demo
 - **Documentation**: Complete installation, deployment, and API guides
 
 ## 🚀 Quick Start (5 Minutes)

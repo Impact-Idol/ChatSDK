@@ -8,7 +8,7 @@ After running `./cleanup-project.sh`, your project will look like this:
 ChatSDK/
 ├── .archive/                    # Development artifacts (gitignored)
 │   ├── development-notes/      # Status tracking, planning docs
-│   ├── reference-code/         # Huly, Raven, Zulip (1.5GB)
+│   ├── reference-code/         # Reference implementations
 │   └── old-builds/             # Old tar.gz packages
 │
 ├── packages/                    # Core SDK packages
@@ -26,14 +26,13 @@ ChatSDK/
 │   └── start.sh               # Interactive setup wizard
 │
 ├── examples/                    # Example applications
-│   ├── react-chat-huly/        # Full-featured React app
+│   ├── react-chat-huly/        # Full-featured React demo
 │   └── integrations/           # NextAuth, Auth0 examples
 │
 ├── docker/                      # Development Docker configs
 ├── docs/                        # Development documentation
 ├── tests/                       # Test suites
 │
-├── CLAUDE.md                    # Instructions for Claude
 ├── RELEASE_NOTES.md            # Client-facing release notes
 ├── CRITICAL_FIXES.md           # Technical fix documentation
 ├── create-delivery-package.sh  # Package build script
