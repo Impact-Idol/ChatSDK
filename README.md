@@ -73,7 +73,7 @@ See [Docker README](./docker/README.md) for complete setup instructions.
 - **[CHANGELOG](./CHANGELOG.md)** - Complete v2.0 feature list
 - **[Migration Guide](./MIGRATION.md)** - Upgrade from v1.5 to v2.0
 - **[Week 7 Summary](./WEEK_7_SUMMARY.md)** - Testing & polish completion
-- **All 25+ Guides**: See [docs/guides/](./docs/guides/)
+- **All 80+ Guides**: See [docs/guides/](./docs/guides/)
 
 **Coming Soon:**
 - 📖 Live documentation site: docs.chatsdk.dev
