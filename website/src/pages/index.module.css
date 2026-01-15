@@ -5,22 +5,183 @@
   overflow: hidden;
 }
 
+.heroDescription {
+  font-size: 1.2rem;
+  opacity: 0.9;
+  margin-bottom: 2rem;
+}
+
 .buttons {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 1rem;
+  flex-wrap: wrap;
 }
 
+.badges {
+  margin-top: 2rem;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.badges img {
+  height: 24px;
+}
+
+/* Features Section */
 .features {
   display: flex;
   align-items: center;
-  padding: 2rem 0;
+  padding: 4rem 0;
   width: 100%;
+  background: var(--ifm-background-surface-color);
 }
 
+.featureCard {
+  margin-bottom: 2rem;
+}
+
+.featureContent {
+  padding: 1.5rem;
+  border-radius: 12px;
+  background: var(--ifm-card-background-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  height: 100%;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.featureContent:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.featureIcon {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+}
+
+.featureContent h3 {
+  margin-bottom: 0.5rem;
+}
+
+.featureContent p {
+  color: var(--ifm-color-emphasis-700);
+  margin: 0;
+}
+
+/* Code Example Section */
+.codeSection {
+  padding: 4rem 0;
+  background: var(--ifm-background-color);
+}
+
+.codeSection h2 {
+  margin-bottom: 1rem;
+}
+
+.codeSection p {
+  color: var(--ifm-color-emphasis-700);
+  margin-bottom: 1.5rem;
+}
+
+.featureList {
+  margin-bottom: 2rem;
+  padding-left: 1.5rem;
+}
+
+.featureList li {
+  margin-bottom: 0.5rem;
+  color: var(--ifm-color-emphasis-800);
+}
+
+/* Comparison Section */
+.comparisonSection {
+  padding: 4rem 0;
+  background: var(--ifm-background-surface-color);
+}
+
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.comparisonTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 auto;
+  max-width: 900px;
+}
+
+.comparisonTable th,
+.comparisonTable td {
+  padding: 1rem;
+  text-align: center;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.comparisonTable th {
+  background: var(--ifm-color-emphasis-100);
+  font-weight: 600;
+}
+
+.comparisonTable th:nth-child(2) {
+  background: var(--ifm-color-primary);
+  color: white;
+}
+
+.comparisonTable td:first-child {
+  text-align: left;
+  font-weight: 500;
+}
+
+.highlight {
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+/* CTA Section */
+.ctaSection {
+  padding: 4rem 0;
+  background: linear-gradient(135deg, var(--ifm-color-primary-darker) 0%, var(--ifm-color-primary) 100%);
+  color: white;
+}
+
+.ctaSection h2 {
+  color: white;
+  margin-bottom: 0.5rem;
+}
+
+.ctaSection p {
+  opacity: 0.9;
+  margin-bottom: 2rem;
+}
+
+.ctaButtons {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+/* Responsive */
 @media screen and (max-width: 996px) {
   .heroBanner {
     padding: 2rem;
+  }
+
+  .heroDescription {
+    font-size: 1rem;
+  }
+
+  .codeSection .row {
+    flex-direction: column-reverse;
+  }
+
+  .codeSection .col--5,
+  .codeSection .col--7 {
+    max-width: 100%;
+    margin-bottom: 2rem;
   }
 }
