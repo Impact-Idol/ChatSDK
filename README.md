@@ -67,11 +67,11 @@ See [Docker README](./docker/README.md) for complete setup instructions.
 
 ## 📚 Documentation
 
+- **[Documentation Site](https://impact-idol.github.io/ChatSDK/)** - Complete guides and API docs
 - **[Getting Started Guide](./docs/guides/getting-started.md)** - 5-minute quickstart
 - **[CHANGELOG](./CHANGELOG.md)** - Complete v2.0 feature list
 - **[Migration Guide](./MIGRATION.md)** - Upgrade from v1.5 to v2.0
 - **[Docker Guide](./DOCKER.md)** - Docker deployment
-- **[All Guides](./docs/guides/)** - Feature guides, advanced topics
 
 ---
 
@@ -383,7 +383,7 @@ MIT License - See [LICENSE](./LICENSE) file for details
 
 ## 💬 Support
 
-- 📖 **Documentation:** [/docs/guides/](/docs/guides/)
+- 📖 **Documentation:** [impact-idol.github.io/ChatSDK](https://impact-idol.github.io/ChatSDK/)
 - 🐛 **Bug Reports:** [GitHub Issues](https://github.com/Impact-Idol/ChatSDK/issues)
 - 💡 **Feature Requests:** [GitHub Discussions](https://github.com/Impact-Idol/ChatSDK/discussions)
 
@@ -434,7 +434,7 @@ If you find ChatSDK useful, please:
 ## 🔗 Links
 
 - **GitHub:** https://github.com/Impact-Idol/ChatSDK
-- **Documentation:** [/docs/guides/](/docs/guides/)
+- **Documentation:** https://impact-idol.github.io/ChatSDK/
 - **Issues:** [GitHub Issues](https://github.com/Impact-Idol/ChatSDK/issues)
 
 ---
