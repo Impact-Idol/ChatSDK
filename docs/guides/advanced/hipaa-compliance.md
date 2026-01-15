@@ -1,205 +1,304 @@
-# HIPAA Compliance
+# HIPAA & Enterprise Deployment
 
-Deploy ChatSDK in a HIPAA-compliant manner for healthcare applications (telehealth, patient chat, etc.).
+Deploy ChatSDK in regulated environments including healthcare (HIPAA), finance, and enterprise.
 
 ## Overview
 
-HIPAA (Health Insurance Portability and Accountability Act) requires specific security controls for Protected Health Information (PHI).
+ChatSDK provides a solid foundation for compliance. HIPAA compliance is achieved through **your deployment configuration**, not SDK code changes.
 
-**ChatSDK HIPAA Features:**
-- ✅ End-to-end encryption
-- ✅ Audit logging
-- ✅ Access controls
-- ✅ Data retention policies
-- ✅ BAA (Business Associate Agreement) support
+### What ChatSDK Provides
 
-## Enable HIPAA Mode
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Multi-tenant isolation | Built-in | Data scoped by `app_id` |
+| JWT authentication | Built-in | Role-based access control |
+| TLS encryption in transit | Built-in | HTTPS/WSS required |
+| Structured audit logging | Built-in | Pino logger with JSON output |
+| Message persistence | Built-in | PostgreSQL with full history |
+| Real-time sync | Built-in | Centrifugo WebSocket server |
+
+### What You Configure
+
+| Requirement | Your Responsibility |
+|-------------|---------------------|
+| Encryption at rest | Enable on your database (RDS, Cloud SQL) |
+| BAA with cloud provider | Sign with AWS/GCP/Azure |
+| Backup & disaster recovery | Configure in your infrastructure |
+| Data retention policies | Implement via scheduled jobs |
+| Access logging to SIEM | Export Pino logs to your SIEM |
+| Network security | VPC, firewalls, IP allowlisting |
+
+## Deployment Architecture
+
+### Recommended HIPAA Stack
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Your VPC / Private Network            │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│  ┌──────────────┐    ┌──────────────┐    ┌───────────┐  │
+│  │   Load       │    │   ChatSDK    │    │ Centrifugo│  │
+│  │   Balancer   │───▶│   API        │───▶│ WebSocket │  │
+│  │   (HTTPS)    │    │   Servers    │    │ Server    │  │
+│  └──────────────┘    └──────────────┘    └───────────┘  │
+│                             │                            │
+│                             ▼                            │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │          PostgreSQL (Encryption at Rest)          │   │
+│  │          + Automated Backups + Point-in-Time      │   │
+│  └──────────────────────────────────────────────────┘   │
+│                                                          │
+│  ┌──────────────┐    ┌──────────────┐                   │
+│  │   Redis      │    │   S3/Blob    │                   │
+│  │   (TLS)      │    │   (Encrypted)│                   │
+│  └──────────────┘    └──────────────┘                   │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Cloud Provider Setup
+
+### AWS (Recommended)
+
+1. **Sign AWS BAA** via AWS Artifact console
+
+2. **Enable RDS encryption:**
+```bash
+aws rds create-db-instance \
+  --db-instance-identifier chatsdk-hipaa \
+  --storage-encrypted \
+  --kms-key-id alias/aws/rds \
+  --engine postgres \
+  --engine-version 15 \
+  --db-instance-class db.r6g.large
+```
+
+3. **Enable automated backups:**
+```bash
+aws rds modify-db-instance \
+  --db-instance-identifier chatsdk-hipaa \
+  --backup-retention-period 35 \
+  --preferred-backup-window "03:00-04:00"
+```
+
+4. **Enable CloudTrail logging:**
+```bash
+aws cloudtrail create-trail \
+  --name chatsdk-audit \
+  --s3-bucket-name your-audit-logs \
+  --is-multi-region-trail \
+  --enable-log-file-validation
+```
+
+### Google Cloud
+
+1. **Sign Google Cloud BAA** via Cloud Console
+
+2. **Enable Cloud SQL encryption** (default on)
+
+3. **Configure automated backups:**
+```bash
+gcloud sql instances patch chatsdk-hipaa \
+  --backup-start-time 03:00 \
+  --enable-bin-log \
+  --retained-backups-count 35
+```
+
+### Azure
+
+1. **Sign Azure BAA** via Trust Center
+
+2. **Enable Azure Database encryption** (default on)
+
+3. **Configure geo-redundant backups** in portal
+
+## Security Configuration
+
+### Environment Variables
+
+```bash
+# Required for HIPAA
+NODE_ENV=production
+LOG_LEVEL=info
+
+# Database with SSL
+DATABASE_URL=postgres://user:pass@host:5432/db?sslmode=require
+
+# Force HTTPS
+FORCE_HTTPS=true
+SECURE_COOKIES=true
+
+# Session security
+SESSION_TIMEOUT_MINUTES=15
+REQUIRE_MFA=true  # If implementing MFA
+```
+
+### Audit Logging
+
+ChatSDK uses Pino for structured logging. Export to your SIEM:
 
 ```typescript
-const sdk = await ChatSDK.connect({
-  apiUrl: '...',
-  userId: '...',
-  
-  hipaa: {
-    enabled: true,
-    encryption: 'e2ee', // End-to-end encryption
-    auditLog: true,
-    dataRetention: 7 * 365, // 7 years (HIPAA requirement)
+// All API calls are logged with:
+{
+  "level": "info",
+  "time": 1704067200000,
+  "msg": "API request",
+  "req": {
+    "method": "POST",
+    "url": "/api/messages",
+    "userId": "user-123",
+    "ip": "10.0.1.50"
   },
-});
+  "res": {
+    "statusCode": 200
+  },
+  "responseTime": 45
+}
 ```
 
-## End-to-End Encryption
-
-```typescript
-// Messages are encrypted on client, decrypted on client
-// Server never sees plaintext
-
-await sdk.sendMessage({
-  channelId: 'patient-dr-smith',
-  text: 'My symptoms include...', // Encrypted before sending
-  encrypted: true,
-});
+**Export to AWS CloudWatch:**
+```bash
+# Install CloudWatch agent, configure to ship logs
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -s \
+  -c file:/opt/cloudwatch-config.json
 ```
 
-## Audit Logging
-
-All PHI access is logged:
-
-```typescript
-// Automatically logged:
-// - Who accessed what message
-// - When it was accessed
-// - From what IP address
-// - What action was taken (read, edit, delete)
-
-const auditLogs = await sdk.getAuditLogs({
-  userId: 'user-123',
-  dateFrom: '2024-01-01',
-  dateTo: '2024-01-31',
-});
+**Export to Splunk/Datadog:**
+```bash
+# Use Pino transports
+npm install pino-datadog
+node app.js | pino-datadog --key YOUR_API_KEY
 ```
 
-## Access Controls
+### Network Security
 
-```typescript
-// Role-based access for healthcare teams
-await sdk.assignRole({
-  userId: 'dr-smith',
-  role: 'provider', // Custom healthcare role
-  permissions: [
-    'messages.read_phi',
-    'messages.write_phi',
-    'patients.view',
-  ],
-});
-
-// Patient can only see their own data
-await sdk.assignRole({
-  userId: 'patient-123',
-  role: 'patient',
-  permissions: [
-    'messages.read_own',
-    'messages.write_own',
-  ],
-});
+```bash
+# Kubernetes NetworkPolicy example
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chatsdk-api
+spec:
+  podSelector:
+    matchLabels:
+      app: chatsdk-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ingress-nginx
+      ports:
+        - port: 5501
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
 ```
 
 ## Data Retention
 
-```typescript
-// Auto-delete messages after retention period
-await sdk.configureRetention({
-  channelId: 'patient-channel',
-  retentionDays: 2555, // 7 years
-  archiveBeforeDelete: true, // Archive to compliant storage
-});
-```
+Implement retention policies for HIPAA (typically 6-7 years):
 
-## BAA Requirements
+```sql
+-- Create retention policy function
+CREATE OR REPLACE FUNCTION enforce_retention()
+RETURNS void AS $$
+BEGIN
+  -- Archive messages older than retention period
+  INSERT INTO archived_messages
+  SELECT * FROM messages
+  WHERE created_at < NOW() - INTERVAL '7 years';
 
-Before using ChatSDK for PHI:
+  -- Delete from active table
+  DELETE FROM messages
+  WHERE created_at < NOW() - INTERVAL '7 years';
 
-1. **Sign BAA** - Contact sales@chatsdk.dev
-2. **Enable encryption** - Set `hipaa.encryption: 'e2ee'`
-3. **Configure audit logging** - Set `hipaa.auditLog: true`
-4. **Set data retention** - Configure appropriate retention period
-5. **Implement access controls** - Use role-based permissions
-6. **Enable secure transport** - HTTPS/WSS only
+  -- Log the operation
+  INSERT INTO audit_log (action, details, created_at)
+  VALUES ('retention_cleanup',
+          json_build_object('deleted_before', NOW() - INTERVAL '7 years'),
+          NOW());
+END;
+$$ LANGUAGE plpgsql;
 
-## Infrastructure
-
-### Hosting
-
-Use HIPAA-compliant hosting:
-- AWS (with BAA)
-- Google Cloud (with BAA)
-- Azure (with BAA)
-- Self-hosted with proper security controls
-
-### Database Encryption
-
-```bash
-# PostgreSQL: Enable encryption at rest
-ALTER DATABASE chatsdk_hipaa SET encryption = on;
-
-# AWS RDS: Enable encryption
-aws rds modify-db-instance \
-  --db-instance-identifier chatsdk-hipaa \
-  --storage-encrypted \
-  --kms-key-id arn:aws:kms:...
-```
-
-### Backup Encryption
-
-```bash
-# Encrypted backups
-pg_dump chatsdk_hipaa \
-  | gpg --encrypt --recipient backup@yourdomain.com \
-  | aws s3 cp - s3://hipaa-backups/backup-$(date +%Y%m%d).sql.gpg
+-- Schedule with pg_cron
+SELECT cron.schedule('retention-cleanup', '0 2 * * 0', 'SELECT enforce_retention()');
 ```
 
 ## Compliance Checklist
 
-Technical Requirements:
-- [ ] End-to-end encryption enabled
-- [ ] Audit logging enabled
-- [ ] Access controls implemented
-- [ ] Data retention configured
-- [ ] Database encryption at rest
-- [ ] Transport encryption (HTTPS/WSS)
-- [ ] Encrypted backups
-- [ ] MFA for admin access
-- [ ] IP whitelisting (if applicable)
-- [ ] Secure password requirements
+### Technical Controls
 
-Administrative Requirements:
-- [ ] BAA signed with ChatSDK
-- [ ] BAA signed with hosting provider
-- [ ] Security policies documented
-- [ ] Incident response plan
-- [ ] Employee training on HIPAA
-- [ ] Risk assessment completed
-- [ ] Breach notification procedures
-- [ ] Regular security audits
+- [ ] **Encryption in transit** - TLS 1.2+ for all connections
+- [ ] **Encryption at rest** - Database and blob storage encrypted
+- [ ] **Access controls** - JWT auth with role-based permissions
+- [ ] **Audit logging** - All access logged and exported to SIEM
+- [ ] **Automated backups** - Daily backups with 35+ day retention
+- [ ] **Disaster recovery** - Cross-region replication configured
+- [ ] **Network isolation** - VPC with security groups/firewall rules
+- [ ] **Vulnerability scanning** - Regular scans of infrastructure
 
----
+### Administrative Controls
 
-## Example: Telehealth Chat
+- [ ] **BAA signed** - With cloud provider (AWS/GCP/Azure)
+- [ ] **Security policies** - Documented and reviewed annually
+- [ ] **Incident response** - Plan documented and tested
+- [ ] **Access reviews** - Quarterly review of user access
+- [ ] **Training** - Staff trained on HIPAA requirements
+- [ ] **Risk assessment** - Annual security risk assessment
 
-```typescript
-// Patient-Provider secure chat
-const sdk = await ChatSDK.connect({
-  apiUrl: 'https://hipaa-compliant-api.com',
-  userId: 'dr-smith',
-  
-  hipaa: {
-    enabled: true,
-    encryption: 'e2ee',
-    auditLog: true,
-  },
-});
+### Physical Controls (Cloud Provider)
 
-// Create patient channel
-const channel = await sdk.createChannel({
-  name: 'Patient: John Doe',
-  type: 'private',
-  members: ['dr-smith', 'patient-john-doe'],
-  hipaa: true, // Marks as PHI channel
-});
+- [ ] **Data center security** - Covered by cloud provider BAA
+- [ ] **Media disposal** - Covered by cloud provider BAA
 
-// Send message
-await sdk.sendMessage({
-  channelId: channel.id,
-  text: 'Your lab results show...',
-  encrypted: true,
-});
-```
+## Self-Hosted Considerations
 
----
+If self-hosting instead of cloud:
+
+1. **Physical security** - Secure data center access
+2. **Hardware encryption** - Use TPM or self-encrypting drives
+3. **Network security** - Firewall, IDS/IPS, VPN
+4. **Backup offsite** - Encrypted backups to separate location
+5. **Document everything** - You're responsible for all controls
+
+## Cost Estimate
+
+| Component | Monthly Cost |
+|-----------|-------------|
+| AWS RDS (db.r6g.large, encrypted) | $200-400 |
+| EC2 instances (2x m6i.large) | $150-300 |
+| Application Load Balancer | $20-50 |
+| S3 (encrypted, with versioning) | $20-100 |
+| CloudWatch Logs | $50-100 |
+| CloudTrail | $2-10 |
+| **Total** | **$450-1,000/mo** |
+
+*Costs vary by region and usage. Enterprise support adds ~20%.*
 
 ## Next Steps
 
-- **[Security →](./security.md)** - Additional security best practices
-- **[Deployment →](./deployment.md)** - Production deployment
-- **Contact Sales** - BAA and HIPAA setup: sales@chatsdk.dev
+1. **[Deployment Guide](./deployment.md)** - Production deployment walkthrough
+2. **[Security Best Practices](./security.md)** - Additional hardening
+3. **[Performance Tuning](./performance.md)** - Scale for enterprise load
+
+## Enterprise Support
+
+Need help with HIPAA deployment?
+
+- **GitHub Discussions** - Community support
+- **GitHub Issues** - Bug reports and feature requests
+
+---
+
+*ChatSDK is open source software. Compliance is your responsibility based on your deployment configuration and operational practices.*
