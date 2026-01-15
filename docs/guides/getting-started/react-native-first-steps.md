@@ -7,7 +7,7 @@ Build your first mobile chat app with React Native, Expo, and ChatSDK 2.0 in 20 
 A native iOS and Android chat app with:
 - ✅ Real-time messaging with WebSocket
 - ✅ Offline message queueing (messages send when back online)
-- ✅ Automatic reconnection <2s
+- ✅ Automatic reconnection &lt;2s
 - ✅ Push notifications (when backgrounded)
 - ✅ Image/file uploads from camera or gallery
 - ✅ Typing indicators and read receipts
@@ -610,7 +610,7 @@ See: [Expo EAS Build docs](https://docs.expo.dev/build/introduction/)
 
 You now have:
 - ✅ **Native mobile chat** - iOS and Android from one codebase
-- ✅ **Real-time messaging** - WebSocket with auto-reconnect <2s
+- ✅ **Real-time messaging** - WebSocket with auto-reconnect &lt;2s
 - ✅ **Offline queueing** - Messages send when back online
 - ✅ **Image uploads** - Camera or gallery integration
 - ✅ **Push notifications** - Background message alerts

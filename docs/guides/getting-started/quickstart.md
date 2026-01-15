@@ -115,7 +115,7 @@ export default SimpleChat;
 
 You just:
 - ✅ Installed ChatSDK with automatic offline queue, retry logic, and connection recovery
-- ✅ Connected to real-time WebSocket with <2s reconnection
+- ✅ Connected to real-time WebSocket with &lt;2s reconnection
 - ✅ Sent your first message with automatic delivery tracking
 - ✅ Set up real-time message listeners
 
@@ -124,7 +124,7 @@ You just:
 ChatSDK 2.0 is designed for mobile chat apps. You automatically get:
 
 - **Offline Queue** - Messages send automatically when connection returns
-- **Fast Reconnection** - <2 seconds vs 10+ seconds in v1
+- **Fast Reconnection** - &lt;2 seconds vs 10+ seconds in v1
 - **Auto Token Refresh** - No expired token errors
 - **Network Quality Monitoring** - Adapts to poor connections
 - **Retry Logic** - Smart exponential backoff

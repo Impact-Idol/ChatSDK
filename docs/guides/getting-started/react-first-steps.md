@@ -11,7 +11,7 @@ A functional chat application with:
 - ✅ Typing indicators
 - ✅ Read receipts
 - ✅ File uploads
-- ✅ Auto-reconnection <2s
+- ✅ Auto-reconnection &lt;2s
 
 **Final Result:** A production-ready chat interface similar to Slack, WhatsApp, or iMessage.
 
@@ -616,7 +616,7 @@ Open **http://localhost:5173** (Vite) or **http://localhost:3000** (CRA)
 You now have:
 - ✅ **Real-time messaging** - Messages appear instantly via WebSocket
 - ✅ **Offline queueing** - Messages send when connection returns
-- ✅ **Auto-reconnection** - <2s reconnection on network drop
+- ✅ **Auto-reconnection** - &lt;2s reconnection on network drop
 - ✅ **Connection status** - Visual indicator of connection state
 - ✅ **Message status** - Sending → Sent → Delivered → Read
 - ✅ **Auto-scroll** - Message list scrolls to latest message

@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-Common issues and solutions for ChatSDK 2.0. Find answers in <5 minutes.
+Common issues and solutions for ChatSDK 2.0. Find answers in &lt;5 minutes.
 
 ---
 
@@ -500,7 +500,7 @@ console.log('Token expires in:', expiration.expiresIn, 'seconds');
 
 ### 4. Support
 - **Email:** support@chatsdk.dev
-- **Response time:** <24 hours
+- **Response time:** &lt;24 hours
 
 ---
 
@@ -538,7 +538,7 @@ If you're still experiencing issues:
 
 1. **Enable debug mode** and check browser console
 2. **Search GitHub issues** for similar problems
-3. **Ask in Discord** - community usually responds <1 hour
+3. **Ask in Discord** - community usually responds &lt;1 hour
 4. **Create GitHub issue** with:
    - Error message (full stack trace)
    - ChatSDK version
