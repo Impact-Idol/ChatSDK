@@ -67,18 +67,11 @@ See [Docker README](./docker/README.md) for complete setup instructions.
 
 ## 📚 Documentation
 
-**⚠️ STATUS: Documentation written but not yet deployed**
-
-- **[Getting Started Guide](./docs/guides/01-getting-started.md)** - 5-minute quickstart
+- **[Getting Started Guide](./docs/guides/getting-started.md)** - 5-minute quickstart
 - **[CHANGELOG](./CHANGELOG.md)** - Complete v2.0 feature list
 - **[Migration Guide](./MIGRATION.md)** - Upgrade from v1.5 to v2.0
-- **[Week 7 Summary](./WEEK_7_SUMMARY.md)** - Testing & polish completion
-- **All 80+ Guides**: See [docs/guides/](./docs/guides/)
-
-**Coming Soon:**
-- 📖 Live documentation site: docs.chatsdk.dev
-- 🎥 10 video tutorials (40 minutes)
-- 📊 Interactive examples
+- **[Docker Guide](./DOCKER.md)** - Docker deployment
+- **[All Guides](./docs/guides/)** - Feature guides, advanced topics
 
 ---
 
@@ -226,8 +219,6 @@ ChatSDK 2.0 includes:
 
 **Performance Score: A+ (96/100)**
 
-See [Performance Audit Report](./tests/performance/week7-performance-audit.md)
-
 ---
 
 ## 🆚 Comparison
@@ -319,11 +310,10 @@ ChatSDK/
 │   └── ios-sdk/           # iOS SDK (Swift)
 ├── extension/             # Chrome DevTools extension
 ├── docker/                # Docker infrastructure & migrations
-├── docs/                  # Documentation (80+ guides)
+├── docs/                  # Documentation
 │   ├── guides/            # User guides by category
 │   ├── api/               # API reference
-│   ├── hipaa-compliance/  # HIPAA compliance docs
-│   └── sdk-strategy/      # Implementation plans
+│   └── hipaa-compliance/  # HIPAA compliance docs
 ├── examples/              # 10 example applications
 │   ├── react-chat/        # Basic React chat
 │   ├── react-chat-huly/   # Full-featured React demo
@@ -359,9 +349,7 @@ Components Tested:
 ✅ Integration Tests (40+ tests)
 ```
 
-**Status:** All P1 bugs fixed (see [Bug Report](./tests/week7-bug-report.md))
-
-See [Week 7 Summary](./WEEK_7_SUMMARY.md) for complete testing report.
+**Status:** All P1 bugs fixed.
 
 ---
 
@@ -369,9 +357,7 @@ See [Week 7 Summary](./WEEK_7_SUMMARY.md) for complete testing report.
 
 ✅ **All P1 bugs have been fixed!**
 
-Previously identified logger bugs (error storage, module context, metadata cloning) were fixed on January 15, 2026.
-
-See [Bug Report](./tests/week7-bug-report.md) for details.
+Previously identified logger bugs (error storage, module context, metadata cloning) have been resolved.
 
 ---
 
@@ -415,8 +401,6 @@ See [Bug Report](./tests/week7-bug-report.md) for details.
 - [ ] Discord announcement
 - [ ] Email existing users
 - [ ] Reddit posts (r/webdev, r/reactjs, r/javascript)
-
-See [Week 8 Launch Plan](./docs/sdk-strategy/implementation/week-08-launch.md)
 
 ---
 
