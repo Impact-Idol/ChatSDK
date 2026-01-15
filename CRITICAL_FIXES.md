@@ -8,14 +8,14 @@
 
 ## 📦 How to Get the Fixed Version
 
-**Repository:** `https://github.com/piper5ul/ChatSDK.git`
+**Repository:** `https://github.com/Impact-Idol/ChatSDK.git`
 **Branch:** `main`
 
 ### First Time Setup:
 
 ```bash
 # Clone the repository
-git clone https://github.com/piper5ul/ChatSDK.git
+git clone https://github.com/Impact-Idol/ChatSDK.git
 cd ChatSDK/delivery-package/
 
 # Run interactive setup wizard

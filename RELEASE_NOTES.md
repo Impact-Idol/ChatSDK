@@ -1,7 +1,7 @@
 # ChatSDK Release Notes - v1.0.2
 
 **Release Date:** January 4, 2026
-**Repository:** https://github.com/piper5ul/ChatSDK.git
+**Repository:** https://github.com/Impact-Idol/ChatSDK.git
 **Branch:** main
 
 ---
@@ -170,7 +170,7 @@ Available at `examples/integrations/nextauth-integration.ts`
 
 ```bash
 # Clone repository
-git clone https://github.com/piper5ul/ChatSDK.git
+git clone https://github.com/Impact-Idol/ChatSDK.git
 cd ChatSDK/delivery-package/
 
 # Run setup wizard

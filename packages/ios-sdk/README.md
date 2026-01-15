@@ -16,7 +16,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/piper5ul/ChatSDK.git", from: "ios-1.0.0")
+    .package(url: "https://github.com/Impact-Idol/ChatSDK.git", from: "ios-1.0.0")
 ]
 ```
 
@@ -661,6 +661,6 @@ MIT
 
 ## Support
 
-- [GitHub Issues](https://github.com/piper5ul/ChatSDK/issues)
+- [GitHub Issues](https://github.com/Impact-Idol/ChatSDK/issues)
 - [Documentation](https://chatsdk.dev/docs/ios)
 - [Discord Community](https://discord.gg/chatsdk)

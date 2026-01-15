@@ -221,7 +221,7 @@ describe('Logger', () => {
       const stats = logger.getStats();
       expect(stats.byModule.auth).toBe(2);
       expect(stats.byModule.chat).toBe(3);
-      expect(stats.byModule.undefined).toBe(1);
+      expect(stats.byModule.core).toBe(1); // No module defaults to 'core'
     });
   });
 

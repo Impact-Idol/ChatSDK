@@ -420,7 +420,7 @@ Yes! This is open-source. Clone the repo and modify:
 ### Build from Source
 
 ```bash
-git clone https://github.com/piper5ul/ChatSDK.git
+git clone https://github.com/Impact-Idol/ChatSDK.git
 cd ChatSDK/packages/migration-cli
 npm install
 npm run build
@@ -444,7 +444,7 @@ DEBUG=chatsdk:* chatsdk-migrate import-stream ...
 
 ## Support
 
-- **GitHub Issues**: https://github.com/piper5ul/ChatSDK/issues
+- **GitHub Issues**: https://github.com/Impact-Idol/ChatSDK/issues
 - **Documentation**: https://chatsdk.dev/docs/migration
 - **Discord**: https://discord.gg/chatsdk
 

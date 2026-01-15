@@ -2,12 +2,12 @@
 
 This guide helps you publish and configure the ChatSDK Docker image for public access.
 
-If the Docker image `ghcr.io/piper5ul/chatsdk/api` exists but clients can't pull it, follow these steps to make it public:
+If the Docker image `ghcr.io/impact-idol/chatsdk/api` exists but clients can't pull it, follow these steps to make it public:
 
 ## Steps to Make Package Public
 
 1. **Navigate to the package**:
-   - Go to: https://github.com/piper5ul?tab=packages
+   - Go to: https://github.com/orgs/Impact-Idol/packages
    - Click on the `chatsdk/api` package
 
 2. **Change visibility**:
@@ -19,7 +19,7 @@ If the Docker image `ghcr.io/piper5ul/chatsdk/api` exists but clients can't pull
 
 3. **Verify public access**:
    ```bash
-   docker pull ghcr.io/piper5ul/chatsdk/api:latest
+   docker pull ghcr.io/impact-idol/chatsdk/api:latest
    ```
    This should now work without authentication!
 
@@ -27,7 +27,7 @@ If the Docker image `ghcr.io/piper5ul/chatsdk/api` exists but clients can't pull
 
 If you don't see the package at all:
 
-1. Check the workflow run: https://github.com/piper5ul/ChatSDK/actions/workflows/docker-publish.yml
+1. Check the workflow run: https://github.com/Impact-Idol/ChatSDK/actions/workflows/docker-publish.yml
 2. Look for any errors in the build logs
 3. The most recent commit that should have triggered it: `c87f428 fix: Complete Docker build fixes - tested and verified`
 
@@ -35,7 +35,7 @@ If you don't see the package at all:
 
 If the workflow hasn't run yet:
 
-1. Go to: https://github.com/piper5ul/ChatSDK/actions/workflows/docker-publish.yml
+1. Go to: https://github.com/Impact-Idol/ChatSDK/actions/workflows/docker-publish.yml
 2. Click **"Run workflow"** button
 3. Select branch: `main`
 4. Click **"Run workflow"**
@@ -48,13 +48,13 @@ Once public, your client can verify:
 
 ```bash
 # Pull the image
-docker pull ghcr.io/piper5ul/chatsdk/api:latest
+docker pull ghcr.io/impact-idol/chatsdk/api:latest
 
 # Verify it works
-docker run --rm ghcr.io/piper5ul/chatsdk/api:latest node --version
+docker run --rm ghcr.io/impact-idol/chatsdk/api:latest node --version
 
 # Check image details
-docker inspect ghcr.io/piper5ul/chatsdk/api:latest | grep -A5 "Architecture"
+docker inspect ghcr.io/impact-idol/chatsdk/api:latest | grep -A5 "Architecture"
 ```
 
 ## For Your Client
@@ -63,7 +63,7 @@ Once the image is public, send them:
 
 **Image Details:**
 - **Registry**: GitHub Container Registry (GHCR)
-- **Image name**: `ghcr.io/piper5ul/chatsdk/api`
+- **Image name**: `ghcr.io/impact-idol/chatsdk/api`
 - **Available tags**:
   - `latest` - Always points to the most recent build from main branch
   - `main` - Latest development build
@@ -71,7 +71,7 @@ Once the image is public, send them:
 
 **Pull command:**
 ```bash
-docker pull ghcr.io/piper5ul/chatsdk/api:latest
+docker pull ghcr.io/impact-idol/chatsdk/api:latest
 ```
 
 **No authentication required** - Image is publicly accessible

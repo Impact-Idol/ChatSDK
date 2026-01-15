@@ -12,7 +12,7 @@ This guide will help you get ChatSDK running in under 5 minutes.
 
 ```bash
 # Clone the repository
-git clone https://github.com/piper5ul/ChatSDK.git
+git clone https://github.com/Impact-Idol/ChatSDK.git
 cd ChatSDK
 
 # Start all services

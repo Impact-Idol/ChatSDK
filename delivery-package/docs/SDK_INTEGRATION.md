@@ -601,4 +601,4 @@ CHAT_API_KEY=your-api-key-here
 - [API Reference](./API_REFERENCE.md)
 - [Authentication Guide](./AUTHENTICATION.md)
 - [Troubleshooting](./TROUBLESHOOTING.md)
-- [GitHub Issues](https://github.com/piper5ul/ChatSDK/issues)
+- [GitHub Issues](https://github.com/Impact-Idol/ChatSDK/issues)

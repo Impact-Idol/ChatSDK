@@ -7,7 +7,7 @@ Official Docker images for ChatSDK, published to GitHub Container Registry (GHCR
 ## 📦 Available Images
 
 ### API Server
-- **Image:** `ghcr.io/piper5ul/chatsdk/api`
+- **Image:** `ghcr.io/impact-idol/chatsdk/api`
 - **Tags:**
   - `latest` - Latest stable release from main branch
   - `2.0.0` - Specific version (e.g., v2.0.0, v2.1.0)
@@ -16,7 +16,7 @@ Official Docker images for ChatSDK, published to GitHub Container Registry (GHCR
 
 **Pull the image:**
 ```bash
-docker pull ghcr.io/piper5ul/chatsdk/api:latest
+docker pull ghcr.io/impact-idol/chatsdk/api:latest
 ```
 
 ---
@@ -27,7 +27,7 @@ docker pull ghcr.io/piper5ul/chatsdk/api:latest
 
 ```bash
 # 1. Pull the image
-docker pull ghcr.io/piper5ul/chatsdk/api:latest
+docker pull ghcr.io/impact-idol/chatsdk/api:latest
 
 # 2. Run with Docker Compose
 cd docker
@@ -94,7 +94,7 @@ docker run -d \
   -e S3_ACCESS_KEY=your-key \
   -e S3_SECRET_KEY=your-secret \
   -e S3_BUCKET=chatsdk \
-  ghcr.io/piper5ul/chatsdk/api:latest
+  ghcr.io/impact-idol/chatsdk/api:latest
 ```
 
 ---
@@ -105,7 +105,7 @@ docker run -d \
 
 ```bash
 # Clone the repository
-git clone https://github.com/piper5ul/ChatSDK.git
+git clone https://github.com/Impact-Idol/ChatSDK.git
 cd ChatSDK
 
 # Make your changes, then build
@@ -139,7 +139,7 @@ Images are automatically built and pushed when:
 ### Manual Update Workflow
 
 GitHub Actions workflow can also be triggered manually:
-1. Go to: https://github.com/piper5ul/ChatSDK/actions/workflows/docker-publish.yml
+1. Go to: https://github.com/Impact-Idol/ChatSDK/actions/workflows/docker-publish.yml
 2. Click "Run workflow"
 3. Select branch and run
 
@@ -156,10 +156,10 @@ Docker automatically pulls the correct image for your platform.
 **Example on Apple Silicon:**
 ```bash
 # Automatically pulls arm64 image
-docker pull ghcr.io/piper5ul/chatsdk/api:latest
+docker pull ghcr.io/impact-idol/chatsdk/api:latest
 
 # Verify platform
-docker inspect ghcr.io/piper5ul/chatsdk/api:latest | grep Architecture
+docker inspect ghcr.io/impact-idol/chatsdk/api:latest | grep Architecture
 # Output: "Architecture": "arm64"
 ```
 
@@ -176,7 +176,7 @@ If you prefer Docker Hub:
 docker login
 
 # Tag for Docker Hub
-docker tag ghcr.io/piper5ul/chatsdk/api:latest chatsdk/api:latest
+docker tag ghcr.io/impact-idol/chatsdk/api:latest chatsdk/api:latest
 
 # Push
 docker push chatsdk/api:latest
@@ -191,7 +191,7 @@ aws ecr get-login-password --region us-east-1 | \
   123456789012.dkr.ecr.us-east-1.amazonaws.com
 
 # Tag for ECR
-docker tag ghcr.io/piper5ul/chatsdk/api:latest \
+docker tag ghcr.io/impact-idol/chatsdk/api:latest \
   123456789012.dkr.ecr.us-east-1.amazonaws.com/chatsdk/api:latest
 
 # Push
@@ -207,7 +207,7 @@ docker push 123456789012.dkr.ecr.us-east-1.amazonaws.com/chatsdk/api:latest
 ```bash
 # Run container
 docker run -d --name chatsdk-test -p 5500:5500 \
-  ghcr.io/piper5ul/chatsdk/api:latest
+  ghcr.io/impact-idol/chatsdk/api:latest
 
 # Wait for startup
 sleep 10
@@ -244,20 +244,20 @@ docker logs --tail 100 chatsdk-test
 
 ```bash
 # Inspect image
-docker inspect ghcr.io/piper5ul/chatsdk/api:latest
+docker inspect ghcr.io/impact-idol/chatsdk/api:latest
 
 # View labels
-docker inspect ghcr.io/piper5ul/chatsdk/api:latest | jq '.[0].Config.Labels'
+docker inspect ghcr.io/impact-idol/chatsdk/api:latest | jq '.[0].Config.Labels'
 
 # View size
-docker images ghcr.io/piper5ul/chatsdk/api:latest
+docker images ghcr.io/impact-idol/chatsdk/api:latest
 ```
 
 ### Image Layers
 
 ```bash
 # View image history
-docker history ghcr.io/piper5ul/chatsdk/api:latest
+docker history ghcr.io/impact-idol/chatsdk/api:latest
 ```
 
 ---
@@ -272,7 +272,7 @@ docker history ghcr.io/piper5ul/chatsdk/api:latest
 ```bash
 # Public images don't require authentication, but if you see this:
 # 1. Check image name is correct
-# 2. Verify image exists at: https://github.com/piper5ul/ChatSDK/pkgs/container/chatsdk%2Fapi
+# 2. Verify image exists at: https://github.com/Impact-Idol/ChatSDK/pkgs/container/chatsdk%2Fapi
 
 # For private images, login first:
 echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
@@ -304,7 +304,7 @@ docker run -d \
   --cpus="1.0" \
   --memory="512m" \
   -p 5500:5500 \
-  ghcr.io/piper5ul/chatsdk/api:latest
+  ghcr.io/impact-idol/chatsdk/api:latest
 
 # Or in docker-compose.yml:
 # deploy:
@@ -340,8 +340,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## 📞 Support
 
-- **Issues:** https://github.com/piper5ul/ChatSDK/issues
-- **Discussions:** https://github.com/piper5ul/ChatSDK/discussions
+- **Issues:** https://github.com/Impact-Idol/ChatSDK/issues
+- **Discussions:** https://github.com/Impact-Idol/ChatSDK/discussions
 - **Documentation:** [docs.chatsdk.dev](https://docs.chatsdk.dev) (coming soon)
 
 ---

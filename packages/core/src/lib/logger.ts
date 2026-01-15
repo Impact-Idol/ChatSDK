@@ -47,10 +47,14 @@ export interface LogEntry {
   timestamp: number;
   level: string;
   message: string;
-  module: string;
+  module?: string;
   action?: string;
   metadata?: Record<string, any>;
-  error?: Error;
+  error?: {
+    name: string;
+    message: string;
+    stack?: string;
+  };
 }
 
 class Logger {
@@ -108,10 +112,21 @@ class Logger {
       timestamp: Date.now(),
       level: LogLevel[level],
       message,
-      module: context?.module || 'core',
+      // Bug #2 fix: Only use default if module key is not present at all
+      module: context && 'module' in context ? context.module : 'core',
       action: context?.action,
-      metadata: context?.metadata,
-      error: context?.error,
+      // Bug #3 fix: Deep clone metadata to prevent mutation issues
+      metadata: context?.metadata
+        ? JSON.parse(JSON.stringify(context.metadata))
+        : undefined,
+      // Bug #1 fix: Always store error object, even if message is empty
+      error: context?.error
+        ? {
+            name: context.error.name,
+            message: context.error.message || '(no message)',
+            stack: context.error.stack,
+          }
+        : undefined,
     };
 
     // Store in memory (circular buffer)
@@ -142,7 +157,7 @@ class Logger {
       ERROR: 'color: red; font-weight: bold',
     }[entry.level];
 
-    const prefix = `${emoji} [ChatSDK:${entry.module}]`;
+    const prefix = `${emoji} [ChatSDK:${entry.module ?? 'unknown'}]`;
     const timestamp = new Date(entry.timestamp).toISOString();
 
     const parts = [`%c${prefix} ${entry.message}`, style];
@@ -194,7 +209,6 @@ class Logger {
    */
   clearLogs(): void {
     this.logs = [];
-    this.info('Logs cleared', { module: 'logger', action: 'clearLogs' });
   }
 
   /**
@@ -217,7 +231,8 @@ class Logger {
 
     this.logs.forEach((log) => {
       byLevel[log.level] = (byLevel[log.level] || 0) + 1;
-      byModule[log.module] = (byModule[log.module] || 0) + 1;
+      const moduleKey = log.module ?? 'unknown';
+      byModule[moduleKey] = (byModule[moduleKey] || 0) + 1;
     });
 
     return {
