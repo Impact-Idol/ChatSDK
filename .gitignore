@@ -66,3 +66,11 @@ docs/specs/
 docs/production/
 docs/hipaa-compliance/
 docs/enterprise/
+
+# Exclude internal planning documents
+docs/BACKEND_INTEGRATION_PLAN.md
+docs/HULY-UI-EXTRACTION-PLAN.md
+docs/IMPLEMENTATION_SUMMARY.md
+docs/SDK_EXTENSION_PLAN.md
+docs/enterprise-readiness-plan.md
+docs/huly-chat-extraction-plan.md
