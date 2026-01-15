@@ -50,7 +50,7 @@ You should see:
 ```
 📋 ChatSDK Configuration Summary (Development Mode)
 
-Database:      postgresql://chatsdk:chatsdk_dev@localhost:5432/chatsdk
+Database:      postgresql://chatsdk:YOUR_PASSWORD@localhost:5432/chatsdk
 Centrifugo:    http://localhost:8001
 Redis:         redis://localhost:6379
 S3 Storage:    http://localhost:9000

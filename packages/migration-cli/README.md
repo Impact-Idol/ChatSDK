@@ -349,7 +349,7 @@ export DB_HOST=localhost
 export DB_PORT=5432
 export DB_NAME=chatsdk
 export DB_USER=chatsdk
-export DB_PASSWORD=chatsdk_dev
+export DB_PASSWORD=YOUR_PASSWORD
 export DB_SSL=false
 
 chatsdk-migrate import-stream \

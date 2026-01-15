@@ -101,7 +101,7 @@ The API automatically displays this on startup:
 ```
 📋 ChatSDK Configuration Summary (Development Mode)
 
-Database:      postgresql://chatsdk:chatsdk_dev@postgres:5432/chatsdk
+Database:      postgresql://chatsdk:YOUR_PASSWORD@postgres:5432/chatsdk
 Centrifugo:    http://centrifugo:8000
 Redis:         redis://redis:6379
 S3 Storage:    http://minio:9000

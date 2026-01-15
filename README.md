@@ -5,7 +5,7 @@
 5-minute setup. 99.9% message delivery. Beautiful documentation. Open source.
 
 [![npm version](https://badge.fury.io/js/%40chatsdk%2Fcore.svg)](https://www.npmjs.com/package/@chatsdk/core)
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/piper5ul/ChatSDK/pkgs/container/chatsdk%2Fapi)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/Impact-Idol/ChatSDK/pkgs/container/chatsdk%2Fapi)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)](https://www.typescriptlang.org/)
 [![Test Coverage](https://img.shields.io/badge/coverage-84%25-green)](./tests)
@@ -29,7 +29,7 @@
 ### Option 1: Using CLI (Recommended)
 
 ```bash
-# Create a new chat app (Coming soon - Week 8)
+# Create a new chat app
 npx create-chatsdk-app my-chat-app
 
 # Choose template: Next.js, Vite, React Native, or Minimal
@@ -262,7 +262,7 @@ See [Performance Audit Report](./tests/performance/week7-performance-audit.md)
 
 ```bash
 # Clone repository
-git clone https://github.com/chatsdk/chatsdk.git
+git clone https://github.com/Impact-Idol/ChatSDK.git
 cd chatsdk
 
 # Install dependencies
@@ -306,36 +306,35 @@ npm run dev
 ## 📖 Project Structure
 
 ```
-chatsdk/
+ChatSDK/
 ├── packages/
 │   ├── core/              # Core SDK (@chatsdk/core)
-│   │   ├── src/
-│   │   │   ├── lib/       # Logger, errors, profiler
-│   │   │   ├── auth/      # Token manager
-│   │   │   ├── realtime/  # Connection manager
-│   │   │   ├── network/   # Quality monitor
-│   │   │   └── offline/   # Offline queue
-│   │   └── package.json
-│   ├── react/             # React SDK (@chatsdk/react)
-│   ├── react-native/      # React Native SDK
-│   └── api/               # Backend API
+│   ├── react/             # React hooks & components (@chatsdk/react)
+│   ├── react-native/      # React Native SDK (@chatsdk/react-native)
+│   ├── react-query/       # React Query integration
+│   ├── nextjs/            # Next.js utilities
+│   ├── api/               # Backend API server
+│   ├── create-chatsdk-app/# CLI scaffolding tool
+│   ├── migration-cli/     # Stream Chat migration tool
+│   └── ios-sdk/           # iOS SDK (Swift)
 ├── extension/             # Chrome DevTools extension
-├── docs/                  # Documentation
-│   ├── guides/            # 25+ user guides
-│   ├── api-reference/     # TypeDoc API docs
+├── docker/                # Docker infrastructure & migrations
+├── docs/                  # Documentation (80+ guides)
+│   ├── guides/            # User guides by category
+│   ├── api/               # API reference
+│   ├── hipaa-compliance/  # HIPAA compliance docs
 │   └── sdk-strategy/      # Implementation plans
-├── tests/                 # Test suite
-│   ├── integration/       # Integration tests
-│   ├── performance/       # Performance benchmarks
-│   └── week7-bug-report.md
-├── beta-testing/          # Beta program materials
-├── examples/              # Example applications
-│   ├── nextjs/
-│   ├── react-vite/
-│   └── react-native/
+├── examples/              # 10 example applications
+│   ├── react-chat/        # Basic React chat
+│   ├── react-chat-huly/   # Full-featured React (Huly UI)
+│   ├── nextjs-chat/       # Next.js integration
+│   ├── react-native-chat/ # React Native app
+│   ├── react-native-demo/ # Advanced mobile features
+│   ├── admin-dashboard/   # Admin panel
+│   └── integrations/      # Auth integrations (NextAuth, Auth0)
+├── tests/                 # Test suite (265+ test cases)
 ├── CHANGELOG.md           # v2.0 changelog
 ├── MIGRATION.md           # v1.5 → v2.0 guide
-├── WEEK_7_SUMMARY.md      # Week 7 completion
 └── README.md              # This file
 ```
 
@@ -404,9 +403,8 @@ See complete [Bug Report](./tests/week7-bug-report.md)
 **Ready for Launch After:**
 1. Fix 3 P1 bugs (~2 hours)
 2. Publish npm packages
-3. Build and deploy CLI tool
-4. Deploy documentation site
-5. Create example apps
+3. Deploy documentation site
+4. Push to GitHub
 
 ---
 
@@ -417,7 +415,7 @@ See complete [Bug Report](./tests/week7-bug-report.md)
 - [ ] Run tests (verify 100% pass rate)
 - [ ] Build packages (`npm run build`)
 - [ ] Publish to npm (`npm publish`)
-- [ ] Build `create-chatsdk-app` CLI
+- [x] Build `create-chatsdk-app` CLI ✅
 - [ ] Deploy documentation site
 - [ ] Deploy example apps
 - [ ] Create demo video
@@ -468,8 +466,8 @@ MIT License - See [LICENSE](./LICENSE) file for details
 - 📧 Email: support@chatsdk.dev
 
 ### Development Issues
-- 🐛 GitHub Issues: [Report a bug](https://github.com/chatsdk/chatsdk/issues)
-- 💡 Feature Requests: [Suggest a feature](https://github.com/chatsdk/chatsdk/discussions)
+- 🐛 GitHub Issues: [Report a bug](https://github.com/Impact-Idol/ChatSDK/issues)
+- 💡 Feature Requests: [Suggest a feature](https://github.com/Impact-Idol/ChatSDK/discussions)
 
 ---
 
@@ -477,7 +475,7 @@ MIT License - See [LICENSE](./LICENSE) file for details
 
 ### Core Team
 - **Engineering:** Weeks 1-7 implementation
-- **Documentation:** 25+ guides, 240+ examples
+- **Documentation:** 80+ guides, 240+ examples
 - **Testing:** 265+ tests, bug fixes
 - **Design:** DevTools extension UI
 
@@ -539,7 +537,7 @@ If you find ChatSDK useful, please:
 
 ## 🔗 Links
 
-- **GitHub:** https://github.com/chatsdk/chatsdk
+- **GitHub:** https://github.com/Impact-Idol/ChatSDK
 - **NPM:** https://www.npmjs.com/package/@chatsdk/core (not yet published)
 - **Documentation:** https://docs.chatsdk.dev (not yet deployed)
 - **Discord:** https://discord.gg/chatsdk (not yet created)
@@ -547,6 +545,6 @@ If you find ChatSDK useful, please:
 
 ---
 
-**Last Updated:** January 9, 2026
+**Last Updated:** January 14, 2026
 **Version:** 2.0.0 (pre-release)
 **Status:** Week 7 Complete - Ready for Week 8 Launch

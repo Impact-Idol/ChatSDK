@@ -14,9 +14,9 @@
 
 import { Centrifuge } from 'centrifuge';
 
-const API_URL = 'http://localhost:5501';
-const CENTRIFUGO_URL = 'ws://localhost:8001/connection/websocket';
-const API_KEY = '57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570';
+const API_URL = process.env.API_URL || 'http://localhost:5501';
+const CENTRIFUGO_URL = process.env.CENTRIFUGO_URL || 'ws://localhost:8001/connection/websocket';
+const API_KEY = process.env.API_KEY || '';
 const APP_ID = '00000000-0000-0000-0000-000000000001';
 const USER_1 = 'user-1'; // Alice
 const USER_2 = 'user-2'; // Bob

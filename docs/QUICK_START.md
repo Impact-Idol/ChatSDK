@@ -37,7 +37,7 @@ curl http://localhost:5501/health
 For development/testing, use the pre-configured key:
 
 ```
-API_KEY: 57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570
+API_KEY: your-api-key-here
 ```
 
 First, set it in the database:
@@ -47,7 +47,7 @@ docker exec -it chatsdk-postgres psql -U chatsdk -d chatsdk
 
 -- Set the standard dev API key
 UPDATE app
-SET api_key = '57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570'
+SET api_key = 'your-api-key-here'
 WHERE id = '00000000-0000-0000-0000-000000000001';
 ```
 
@@ -73,7 +73,7 @@ The `/tokens` endpoint generates JWT tokens for user authentication:
 
 ```bash
 curl -X POST http://localhost:5501/tokens \
-  -H "X-API-Key: 57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570" \
+  -H "X-API-Key: your-api-key-here" \
   -H "Content-Type: application/json" \
   -d '{
     "userId": "user-1",
@@ -106,7 +106,7 @@ curl -X POST http://localhost:5501/tokens \
 
 ```bash
 curl -X POST http://localhost:5501/api/channels \
-  -H "X-API-Key: 57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570" \
+  -H "X-API-Key: your-api-key-here" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -120,7 +120,7 @@ curl -X POST http://localhost:5501/api/channels \
 
 ```bash
 curl -X POST http://localhost:5501/api/channels/CHANNEL_ID/messages \
-  -H "X-API-Key: 57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570" \
+  -H "X-API-Key: your-api-key-here" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -147,7 +147,7 @@ Create a `.env` file for your frontend application:
 ```env
 # Required
 VITE_API_URL=http://localhost:5501
-VITE_API_KEY=57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570
+VITE_API_KEY=your-api-key-here
 VITE_WS_URL=ws://localhost:8001/connection/websocket
 
 # Optional

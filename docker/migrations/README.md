@@ -114,7 +114,7 @@ docker compose logs flyway
 
 ```bash
 # Connect to database
-psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk
 
 # Check migration history
 SELECT version, description, installed_on, success
@@ -275,7 +275,7 @@ npm run db:connect      # Connect to database via psql
 docker compose run --rm flyway info
 
 # Using psql
-psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk \
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk \
   -c "SELECT version, description, installed_on, success FROM flyway_schema_history ORDER BY installed_rank;"
 
 # Example output:
@@ -310,7 +310,7 @@ docker compose run --rm flyway info
 docker compose logs flyway
 
 # 2. Check failed migration in database
-psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk \
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk \
   -c "SELECT * FROM flyway_schema_history WHERE success = false;"
 
 # 3. Fix the SQL error in the migration file
@@ -372,7 +372,7 @@ docker compose up -d
 docker compose run --rm flyway repair
 
 # 2. Manually mark migration as applied (DANGEROUS)
-psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk
 INSERT INTO flyway_schema_history (version, description, type, script, installed_by, installed_on, execution_time, success)
 VALUES (4, 'skipped migration', 'SQL', 'V004__skipped.sql', 'manual', NOW(), 0, true);
 \q
@@ -496,7 +496,7 @@ docker compose up -d
 docker compose down
 
 # 2. Restore from backup
-psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk < backup.sql
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk < backup.sql
 
 # 3. Repair Flyway state
 docker compose up -d postgres
@@ -513,10 +513,10 @@ docker compose up -d
 docker compose down
 
 # 2. Restore backup
-psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk < backup-20260106.sql
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk < backup-20260106.sql
 
 # 3. Verify flyway_schema_history table
-psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk \
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk \
   -c "SELECT version FROM flyway_schema_history ORDER BY version;"
 
 # 4. Restart services

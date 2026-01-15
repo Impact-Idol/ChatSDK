@@ -35,7 +35,7 @@ Connection terminated unexpectedly
 
 4. **Verify connection manually:**
    ```bash
-   psql postgresql://chatsdk:chatsdk_dev@localhost:5432/chatsdk
+   psql postgresql://chatsdk:YOUR_PASSWORD@localhost:5432/chatsdk
    ```
 
 5. **Reset database (if corrupted):**
@@ -264,12 +264,12 @@ Upload progress stuck at 0%
    ```bash
    # .env.local
    S3_ACCESS_KEY_ID=chatsdk
-   S3_SECRET_ACCESS_KEY=chatsdk_dev_123
+   S3_SECRET_ACCESS_KEY=YOUR_MINIO_PASSWORD
    ```
 
 4. **Create bucket manually:**
    - Open http://localhost:9001
-   - Login: `chatsdk` / `chatsdk_dev_123`
+   - Login: `chatsdk` / `YOUR_MINIO_PASSWORD`
    - Create bucket: `chatsdk-uploads`
 
 5. **Increase max file size (self-hosted):**

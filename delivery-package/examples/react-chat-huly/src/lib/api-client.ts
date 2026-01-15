@@ -6,7 +6,7 @@
 import { getStoredTokens } from './auth';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5501';
-const API_KEY = import.meta.env.VITE_API_KEY || '57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 /**
  * API Error Response

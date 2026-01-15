@@ -3,8 +3,8 @@
  * Tests the complete flow: create workspace → invite users → accept invite
  */
 
-const API_URL = 'http://localhost:5501';
-const API_KEY = '57b53ba6e530cd1cf5041a931fc89136e75af3ab735bd8fb1090c0f42f6e7570';
+const API_URL = process.env.API_URL || 'http://localhost:5501';
+const API_KEY = process.env.API_KEY || '';
 
 console.log('🧪 Testing Workspace Invite System...\n');
 

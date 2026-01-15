@@ -64,7 +64,7 @@ docker compose down -v
 
 ```bash
 # PostgreSQL
-psql postgres://chatsdk:chatsdk_dev@localhost:5432/chatsdk
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5432/chatsdk
 
 # Centrifugo Admin
 http://localhost:8000 (admin/admin)
@@ -76,7 +76,7 @@ http://localhost:7700
 http://localhost:8288
 
 # MinIO Console
-http://localhost:9001 (chatsdk/chatsdk_dev_123)
+http://localhost:9001 (chatsdk/YOUR_MINIO_PASSWORD)
 ```
 
 ## Database Schema
@@ -220,7 +220,7 @@ docker compose up -d
 
 **Check migration history:**
 ```bash
-psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk \
+psql postgres://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk \
   -c "SELECT version, description, installed_on, success FROM flyway_schema_history ORDER BY installed_rank;"
 ```
 

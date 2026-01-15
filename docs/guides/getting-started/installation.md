@@ -77,7 +77,7 @@ This starts 6 essential services:
 | **PostgreSQL** | 5432 | Primary database | - |
 | **Centrifugo** | 8001 | Real-time WebSocket | http://localhost:8001 |
 | **Redis** | 6379 | Pub/sub & caching | - |
-| **MinIO** | 9000 (API)<br/>9001 (Console) | S3-compatible file storage | http://localhost:9001<br/>User: `chatsdk`<br/>Pass: `chatsdk_dev_123` |
+| **MinIO** | 9000 (API)<br/>9001 (Console) | S3-compatible file storage | http://localhost:9001<br/>User: `chatsdk`<br/>Pass: `YOUR_MINIO_PASSWORD` |
 | **Meilisearch** | 7700 | Full-text search | http://localhost:7700 |
 | **Flyway** | - | Database migrations (auto-runs once) | - |
 
@@ -125,7 +125,7 @@ ChatSDK uses smart defaults for development - **zero configuration needed!**
 ### Development Mode (Default)
 
 No `.env` file needed! ChatSDK automatically uses:
-- Database: `postgresql://chatsdk:chatsdk_dev@localhost:5432/chatsdk`
+- Database: `postgresql://chatsdk:YOUR_PASSWORD@localhost:5432/chatsdk`
 - WebSocket: `ws://localhost:8001`
 - Redis: `redis://localhost:6379`
 - MinIO: `http://localhost:9000`
@@ -147,7 +147,7 @@ NODE_ENV=development
 PORT=5500
 
 # Override database (optional)
-DATABASE_URL=postgresql://chatsdk:chatsdk_dev@localhost:5432/chatsdk
+DATABASE_URL=postgresql://chatsdk:YOUR_PASSWORD@localhost:5432/chatsdk
 
 # Override WebSocket URL (optional)
 CENTRIFUGO_URL=http://localhost:8001
@@ -382,7 +382,7 @@ docker compose up -d
 2. Check credentials in `.env.local` match `docker-compose.yml`:
    ```
    S3_ACCESS_KEY_ID=chatsdk
-   S3_SECRET_ACCESS_KEY=chatsdk_dev_123
+   S3_SECRET_ACCESS_KEY=YOUR_MINIO_PASSWORD
    ```
 3. Create bucket manually via console: http://localhost:9001
 

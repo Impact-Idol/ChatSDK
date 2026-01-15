@@ -72,17 +72,17 @@ NEXT_PUBLIC_CHATSDK_WS_URL=ws://localhost:8001/connection/websocket
 # Development Mode
 NEXT_PUBLIC_CHATSDK_DEBUG=true
 
-# Docker Services (auto-configured)
-DATABASE_URL=postgresql://chatsdk:chatsdk_dev@localhost:5432/chatsdk
+# Docker Services (update these values)
+DATABASE_URL=postgresql://chatsdk:changeme@localhost:5432/chatsdk
 REDIS_URL=redis://localhost:6379
 CENTRIFUGO_URL=http://localhost:8001
-CENTRIFUGO_API_KEY=chatsdk-api-key-change-in-production
-CENTRIFUGO_TOKEN_SECRET=chatsdk-dev-secret-key-change-in-production
+CENTRIFUGO_API_KEY=your-centrifugo-api-key
+CENTRIFUGO_TOKEN_SECRET=your-centrifugo-token-secret
 S3_ENDPOINT=http://localhost:9000
 S3_ACCESS_KEY_ID=chatsdk
-S3_SECRET_ACCESS_KEY=chatsdk_dev_123
+S3_SECRET_ACCESS_KEY=changeme123
 MEILISEARCH_HOST=http://localhost:7700
-MEILISEARCH_API_KEY=chatsdk_dev_key
+MEILISEARCH_API_KEY=changeme_key
 `;
 
   await fs.writeFile(envPath, envContent);

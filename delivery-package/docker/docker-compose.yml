@@ -7,7 +7,7 @@ services:
       - "5434:5432"  # Use 5434 to avoid conflict with other services
     environment:
       POSTGRES_USER: chatsdk
-      POSTGRES_PASSWORD: chatsdk_dev
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
       POSTGRES_DB: chatsdk
       POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
@@ -57,7 +57,7 @@ services:
     ports:
       - "7701:7700"  # Changed from 7700
     environment:
-      MEILI_MASTER_KEY: chatsdk_dev_key
+      MEILI_MASTER_KEY: ${MEILISEARCH_KEY:-changeme_key}
       MEILI_ENV: development
     volumes:
       - meilisearch_data:/meili_data
@@ -102,7 +102,7 @@ services:
       - "9006:9001"   # Console (changed to 9006 to avoid conflict)
     environment:
       MINIO_ROOT_USER: chatsdk
-      MINIO_ROOT_PASSWORD: chatsdk_dev_123
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-changeme123}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
@@ -120,7 +120,7 @@ services:
       - "27018:27017"  # Changed from 27017 to avoid conflict
     environment:
       MONGO_INITDB_ROOT_USERNAME: chatsdk
-      MONGO_INITDB_ROOT_PASSWORD: chatsdk_dev
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-changeme}
     volumes:
       - mongodb_data:/data/db
     healthcheck:
@@ -145,7 +145,7 @@ services:
       NODE_ENV: local
       API_ROOT_URL: http://localhost:3001
       FRONT_BASE_URL: http://localhost:4201
-      MONGO_URL: mongodb://chatsdk:chatsdk_dev@mongodb:27017/novu?authSource=admin
+      MONGO_URL: mongodb://chatsdk:${MONGO_PASSWORD:-changeme}@mongodb:27017/novu?authSource=admin
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB_INDEX: 2
@@ -165,7 +165,7 @@ services:
       - novu.env
     environment:
       NODE_ENV: local
-      MONGO_URL: mongodb://chatsdk:chatsdk_dev@mongodb:27017/novu?authSource=admin
+      MONGO_URL: mongodb://chatsdk:${MONGO_PASSWORD:-changeme}@mongodb:27017/novu?authSource=admin
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB_INDEX: 2

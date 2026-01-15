@@ -13,7 +13,7 @@ services:
       - "5432:5432"
     environment:
       POSTGRES_USER: chatsdk
-      POSTGRES_PASSWORD: chatsdk_dev
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
       POSTGRES_DB: chatsdk
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -33,7 +33,7 @@ services:
     environment:
       FLYWAY_URL: jdbc:postgresql://postgres:5432/chatsdk
       FLYWAY_USER: chatsdk
-      FLYWAY_PASSWORD: chatsdk_dev
+      FLYWAY_PASSWORD: ${DB_PASSWORD:-changeme}
       FLYWAY_BASELINE_VERSION: 1
       FLYWAY_BASELINE_DESCRIPTION: "Initial schema"
       FLYWAY_SCHEMAS: public
@@ -82,7 +82,7 @@ services:
       - "9001:9001"   # Console
     environment:
       MINIO_ROOT_USER: chatsdk
-      MINIO_ROOT_PASSWORD: chatsdk_dev_123
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-changeme123}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
@@ -99,7 +99,7 @@ services:
     ports:
       - "7700:7700"
     environment:
-      MEILI_MASTER_KEY: chatsdk_dev_key
+      MEILI_MASTER_KEY: ${MEILISEARCH_KEY:-changeme_key}
       MEILI_ENV: development
     volumes:
       - meilisearch_data:/meili_data

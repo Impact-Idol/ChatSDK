@@ -20,7 +20,7 @@
     "db:validate": "cd docker && docker compose run --rm flyway validate",
     "db:repair": "cd docker && docker compose run --rm flyway repair",
     "db:baseline": "cd docker && docker compose run --rm flyway baseline -baselineVersion=1",
-    "db:connect": "psql postgres://chatsdk:chatsdk_dev@localhost:5434/chatsdk"
+    "db:connect": "psql postgres://${DB_USER:-chatsdk}:${DB_PASSWORD:-changeme}@localhost:5432/chatsdk"
   },
   "devDependencies": {
     "typescript": "^5.3.3"

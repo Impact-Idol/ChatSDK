@@ -10,7 +10,7 @@
 
 | Service | Container Name | Ports (Host:Container) | Status | URL/Access |
 |---------|---------------|----------------------|--------|------------|
-| **PostgreSQL** | chatsdk-enterprise-postgres | 5434:5432 | ✅ Healthy | `postgresql://chatsdk:chatsdk_dev@localhost:5434/chatsdk` |
+| **PostgreSQL** | chatsdk-enterprise-postgres | 5434:5432 | ✅ Healthy | `postgresql://chatsdk:YOUR_PASSWORD@localhost:5434/chatsdk` |
 | **Centrifugo** | chatsdk-enterprise-centrifugo | 8001:8000, 9003:9000 | ✅ Healthy | WebSocket: http://localhost:8001 |
 | **Redis** | chatsdk-enterprise-redis | 6380:6379 | ✅ Healthy | redis://localhost:6380 |
 | **MinIO** | chatsdk-enterprise-minio | 9004:9000, 9006:9001 | ✅ Healthy | API: http://localhost:9004<br/>Console: http://localhost:9006 |
@@ -81,7 +81,7 @@ docker exec -it chatsdk-enterprise-postgres psql -U chatsdk -d chatsdk
 ### Access MinIO Console
 ```bash
 open http://localhost:9006
-# Credentials: chatsdk / chatsdk_dev_123
+# Credentials: See your MINIO_USER / MINIO_PASSWORD env vars
 ```
 
 ---
