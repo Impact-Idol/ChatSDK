@@ -58,3 +58,11 @@ DerivedData/
 # Exclude research and reference assets
 assets/
 research/
+
+# Exclude internal documentation (planning, specs, compliance)
+docs/sdk-strategy/
+docs/research/
+docs/specs/
+docs/production/
+docs/hipaa-compliance/
+docs/enterprise/
