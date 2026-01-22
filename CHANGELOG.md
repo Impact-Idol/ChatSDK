@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+# [2.0.1] - 2026-01-22
+
+## 🔔 Push Notifications Enhancement
+
+Major improvements to the Novu notification service integration.
+
+### Multi-Tenant Support
+- **NEW:** `NOVU_TENANT_ID` environment variable for subscriber isolation
+- Prefixes subscriber IDs (e.g., `myapp-prod:user-123`) for multi-environment deployments
+- Backwards compatible - works without tenant ID configured
+
+### Configurable Workflow IDs
+- **NEW:** Custom workflow ID mapping via environment variables
+- Allows integration with existing Novu workflows
+- Variables: `NOVU_WORKFLOW_NEW_MESSAGE`, `NOVU_WORKFLOW_MENTION`, `NOVU_WORKFLOW_CHANNEL_INVITE`, `NOVU_WORKFLOW_REACTION`, `NOVU_WORKFLOW_THREAD_REPLY`
+
+### New API Functions
+- **NEW:** `getPreferences(userId)` - Get subscriber notification preferences from Novu
+- **NEW:** `deleteSubscriber(userId)` - Clean up subscriber on user deletion
+- **NEW:** `getNovuConfig()` - Debug helper to inspect current Novu configuration
+- **NEW:** `isNovuConfigured()` - Check if Novu is properly configured
+
+### User Lifecycle Integration
+- Automatic subscriber cleanup on user deletion (`DELETE /api/users/:userId`)
+- Bulk cleanup on batch user deletion (`POST /api/users/bulk-delete`)
+- Novu preferences included in device preferences endpoint
+
+### Improved Reliability
+- Graceful error handling for all Novu operations
+- "Already exists" errors handled silently for subscriber registration
+- All operations skip gracefully when Novu is not configured
+- Consistent `[ChatSDK Novu]` log prefix for debugging
+
+### Documentation
+- **NEW:** [Push Notifications Guide](./docs/guides/features/push-notifications.md)
+- Updated API Reference with Devices & Push Notifications section
+- Updated `.env.example` files with all Novu configuration options
+
+---
+
 # [2.0.0] - 2026-01-20
 
 **"Developer Edition" - The easiest messaging SDK on the planet** 🚀

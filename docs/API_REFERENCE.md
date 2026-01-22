@@ -518,6 +518,90 @@ Delete multiple users at once. Useful for cleaning up seed data.
 
 ---
 
+## Devices & Push Notifications
+
+ChatSDK uses [Novu](https://novu.co) for push notifications. See [Push Notifications Guide](./guides/features/push-notifications.md) for setup.
+
+### POST /api/devices
+
+Register a device for push notifications.
+
+**Request Body:**
+```json
+{
+  "platform": "ios",
+  "token": "device-push-token",
+  "provider": "apns",
+  "deviceId": "unique-device-id",
+  "appVersion": "1.0.0"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `platform` | string | Yes | `ios`, `android`, or `expo` |
+| `token` | string | Yes | Push token from device |
+| `provider` | string | Yes | `fcm`, `apns`, or `expo` |
+| `deviceId` | string | No | Unique device identifier |
+| `appVersion` | string | No | App version for targeting |
+
+**Response:** `201 Created`
+```json
+{
+  "id": "device-uuid",
+  "platform": "ios",
+  "provider": "apns",
+  "createdAt": "2024-01-01T00:00:00Z"
+}
+```
+
+### GET /api/devices/preferences
+
+Get notification preferences for the current user.
+
+**Response:**
+```json
+{
+  "preferences": {
+    "pushEnabled": true,
+    "newMessages": true,
+    "mentions": true,
+    "reactions": false,
+    "channelInvites": true,
+    "threadReplies": true,
+    "quietHoursEnabled": false,
+    "quietHoursStart": "22:00",
+    "quietHoursEnd": "07:00"
+  },
+  "novuPreferences": {
+    "channels": [...],
+    "workflows": [...]
+  }
+}
+```
+
+### PATCH /api/devices/preferences
+
+Update notification preferences.
+
+**Request Body:**
+```json
+{
+  "pushEnabled": true,
+  "mentions": true,
+  "reactions": false,
+  "quietHoursEnabled": true,
+  "quietHoursStart": "22:00",
+  "quietHoursEnd": "07:00"
+}
+```
+
+### DELETE /api/devices/:deviceId
+
+Unregister a device from push notifications.
+
+---
+
 ## Workspaces
 
 ### GET /api/workspaces

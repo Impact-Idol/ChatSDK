@@ -8,6 +8,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { db } from '../services/database';
 import { requireUser } from '../middleware/auth';
+import { deleteSubscriber } from '../services/novu';
 
 export const userRoutes = new Hono();
 
@@ -280,6 +281,9 @@ userRoutes.delete('/:userId', requireUser, async (c) => {
     [auth.appId, userId]
   );
 
+  // Clean up Novu subscriber (non-blocking)
+  deleteSubscriber(userId);
+
   return c.json({ success: true, deletedUserId: userId });
 });
 
@@ -304,9 +308,13 @@ userRoutes.post(
       [auth.appId, userIds]
     );
 
+    // Clean up Novu subscribers (non-blocking, fire-and-forget)
+    const deletedIds = result.rows.map((r) => r.id);
+    deletedIds.forEach((id) => deleteSubscriber(id));
+
     return c.json({
       success: true,
-      deleted: result.rows.map((r) => r.id),
+      deleted: deletedIds,
       count: result.rowCount,
     });
   }

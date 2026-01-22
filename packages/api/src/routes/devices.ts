@@ -8,7 +8,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { db } from '../services/database';
 import { requireUser } from '../middleware/auth';
-import { updatePushTokens, registerSubscriber } from '../services/novu';
+import { updatePushTokens, registerSubscriber, getPreferences, isNovuConfigured } from '../services/novu';
 
 export const deviceRoutes = new Hono();
 
@@ -155,6 +155,8 @@ deviceRoutes.patch(
 /**
  * Get notification preferences
  * GET /api/devices/preferences
+ *
+ * Returns local preferences and optionally Novu subscriber preferences
  */
 deviceRoutes.get('/preferences', requireUser, async (c) => {
   const auth = c.get('auth');
@@ -177,7 +179,14 @@ deviceRoutes.get('/preferences', requireUser, async (c) => {
     quietHoursEnd: '07:00',
   };
 
+  // Fetch Novu preferences if configured
+  let novuPreferences = null;
+  if (isNovuConfigured()) {
+    novuPreferences = await getPreferences(auth.userId!);
+  }
+
   return c.json({
     preferences: { ...defaultPrefs, ...(result.rows[0]?.prefs || {}) },
+    novuPreferences: novuPreferences?.result || null,
   });
 });
