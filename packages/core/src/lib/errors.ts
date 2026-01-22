@@ -93,13 +93,18 @@ export class AuthenticationError extends ChatSDKError {
  * Network errors (connection refused, timeout)
  */
 export class NetworkError extends ChatSDKError {
-  constructor(message: string, context?: Record<string, any>) {
+  constructor(message: string, suggestion?: string | Record<string, any>, context?: Record<string, any>) {
+    // Handle overloaded signatures: (message, context) or (message, suggestion, context)
+    const isContext = typeof suggestion === 'object';
+    const actualSuggestion = isContext ? undefined : suggestion;
+    const actualContext = isContext ? suggestion : context;
+
     super(
       message,
       'NETWORK_ERROR',
-      'Check your internet connection. The SDK will automatically retry.',
+      actualSuggestion || 'Check your network connection. The SDK will automatically retry.',
       'https://docs.chatsdk.dev/guides/troubleshooting#connection-issues',
-      context
+      actualContext as Record<string, any> | undefined
     );
     this.name = 'NetworkError';
   }
@@ -109,11 +114,20 @@ export class NetworkError extends ChatSDKError {
  * Permission errors (403, unauthorized actions)
  */
 export class PermissionError extends ChatSDKError {
-  constructor(action: string, resource: string, context?: Record<string, any>) {
+  constructor(messageOrAction: string, resource?: string, context?: Record<string, any>) {
+    // Support both single message or action/resource pattern
+    const hasResource = resource !== undefined;
+    const message = hasResource
+      ? `Permission denied: cannot ${messageOrAction} ${resource}`
+      : messageOrAction;
+    const suggestion = hasResource
+      ? `This user does not have permission to ${messageOrAction} this ${resource}. Check role assignments.`
+      : 'This user does not have permission to perform this action. Check role assignments.';
+
     super(
-      `Permission denied: cannot ${action} ${resource}`,
+      message,
       'PERMISSION_ERROR',
-      `This user does not have permission to ${action} this ${resource}. Check role assignments.`,
+      suggestion,
       'https://docs.chatsdk.dev/guides/advanced/permissions',
       context
     );
@@ -148,13 +162,27 @@ export class RateLimitError extends ChatSDKError {
 export class ValidationError extends ChatSDKError {
   fields?: Record<string, string>;
 
-  constructor(message: string, fields?: Record<string, string>, context?: Record<string, any>) {
+  constructor(
+    message: string,
+    suggestion?: string,
+    context?: Record<string, any>,
+    fields?: Record<string, string>
+  ) {
+    // Build suggestion with field errors
+    let fullSuggestion = suggestion || 'Check the input data and ensure all required fields are provided correctly.';
+    if (fields) {
+      const fieldErrors = Object.entries(fields)
+        .map(([key, value]) => `  ${key}: ${value}`)
+        .join('\n');
+      fullSuggestion += '\n\nField errors:\n' + fieldErrors;
+    }
+
     super(
       message,
       'VALIDATION_ERROR',
-      'Check the input data and ensure all required fields are provided correctly.',
+      fullSuggestion,
       'https://docs.chatsdk.dev/api',
-      { ...context, fields }
+      context
     );
     this.name = 'ValidationError';
     this.fields = fields;
@@ -181,15 +209,20 @@ export class ConnectionError extends ChatSDKError {
  * Timeout errors
  */
 export class TimeoutError extends ChatSDKError {
+  operation: string;
+  timeout: number;
+
   constructor(operation: string, timeout: number, context?: Record<string, any>) {
     super(
-      `Operation timed out: ${operation}`,
+      `Operation '${operation}' timed out after ${timeout}ms`,
       'TIMEOUT_ERROR',
-      `The operation took longer than ${timeout}ms. This might indicate a slow network or server issue.`,
+      `The operation took longer than ${timeout}ms. You may need to increase timeout or check network conditions.`,
       'https://docs.chatsdk.dev/guides/troubleshooting',
       context
     );
     this.name = 'TimeoutError';
+    this.operation = operation;
+    this.timeout = timeout;
   }
 }
 
@@ -202,7 +235,7 @@ export class ConfigurationError extends ChatSDKError {
       message,
       'CONFIG_ERROR',
       suggestion || 'Check your ChatSDK configuration and ensure all required options are provided.',
-      'https://docs.chatsdk.dev/guides/getting-started/installation',
+      'https://docs.chatsdk.dev/guides/configuration',
       context
     );
     this.name = 'ConfigurationError';
@@ -218,9 +251,20 @@ export function createError(error: any, context?: Record<string, any>): ChatSDKE
     return error;
   }
 
+  // Handle string errors
+  if (typeof error === 'string') {
+    return new ChatSDKError(
+      error,
+      'UNKNOWN_ERROR',
+      'This is an unexpected error. Please check the console for details and report if the issue persists.',
+      'https://github.com/chatsdk/chatsdk/issues/new',
+      context
+    );
+  }
+
   // Network errors (ECONNREFUSED, ETIMEDOUT, etc.)
   if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND') {
-    return new NetworkError(`Cannot connect to server: ${error.code}`, {
+    return new NetworkError(`Cannot connect to server: ${error.code}`, undefined, {
       ...context,
       errorCode: error.code,
     });
@@ -232,8 +276,9 @@ export function createError(error: any, context?: Record<string, any>): ChatSDKE
   if (status === 400) {
     return new ValidationError(
       error.message || 'Invalid request',
-      error.fields,
-      context
+      undefined,
+      context,
+      error.fields
     );
   }
 
@@ -298,13 +343,14 @@ export function createError(error: any, context?: Record<string, any>): ChatSDKE
     );
   }
 
-  // Generic error
+  // Generic error - extract message from Error instances
+  const message = error instanceof Error ? error.message : (error.message || 'Unknown error');
   return new ChatSDKError(
-    error.message || 'Unknown error occurred',
+    message,
     'UNKNOWN_ERROR',
     'This is an unexpected error. Please check the console for details and report if the issue persists.',
     'https://github.com/chatsdk/chatsdk/issues/new',
-    { ...context, originalError: error }
+    context
   );
 }
 
@@ -314,11 +360,16 @@ export function createError(error: any, context?: Record<string, any>): ChatSDKE
 export function assert(
   condition: boolean,
   message: string,
-  code: string,
-  suggestion: string
+  context?: Record<string, any>
 ): asserts condition {
   if (!condition) {
-    throw new ChatSDKError(message, code, suggestion);
+    throw new ChatSDKError(
+      message,
+      'ASSERTION_ERROR',
+      'An assertion failed. This is likely a programming error.',
+      undefined,
+      context
+    );
   }
 }
 

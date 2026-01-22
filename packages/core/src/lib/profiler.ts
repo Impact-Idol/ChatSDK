@@ -278,25 +278,49 @@ if (typeof window !== 'undefined') {
 
 /**
  * Decorator to automatically profile async methods
+ * Supports both legacy (experimentalDecorators) and TC39 Stage 3 decorators
  */
 export function Profile(label?: string) {
+  // Check if it's being called as a new-style decorator (TC39 Stage 3)
   return function (
     target: any,
-    propertyKey: string,
-    descriptor: PropertyDescriptor
-  ) {
-    const originalMethod = descriptor.value;
-    const profileLabel = label || `${target.constructor.name}.${propertyKey}`;
+    contextOrPropertyKey?: any,
+    descriptor?: PropertyDescriptor
+  ): any {
+    // New-style decorator (TC39 Stage 3): target is the method, contextOrPropertyKey is DecoratorContext
+    if (typeof target === 'function' && contextOrPropertyKey?.kind === 'method') {
+      const context = contextOrPropertyKey;
+      const originalMethod = target;
+      const profileLabel = label || String(context.name);
 
-    descriptor.value = async function (...args: any[]) {
-      const end = profiler.start(profileLabel);
-      try {
-        return await originalMethod.apply(this, args);
-      } finally {
-        end();
-      }
-    };
+      return async function (this: any, ...args: any[]) {
+        const end = profiler.start(profileLabel);
+        try {
+          return await originalMethod.apply(this, args);
+        } finally {
+          end();
+        }
+      };
+    }
 
-    return descriptor;
+    // Legacy decorator (experimentalDecorators): target is prototype, contextOrPropertyKey is string, descriptor is PropertyDescriptor
+    if (descriptor && typeof descriptor.value === 'function') {
+      const originalMethod = descriptor.value;
+      const propertyKey = contextOrPropertyKey as string;
+      const profileLabel = label || `${target.constructor.name}.${propertyKey}`;
+
+      descriptor.value = async function (...args: any[]) {
+        const end = profiler.start(profileLabel);
+        try {
+          return await originalMethod.apply(this, args);
+        } finally {
+          end();
+        }
+      };
+
+      return descriptor;
+    }
+
+    throw new Error('Profile decorator can only be applied to methods');
   };
 }

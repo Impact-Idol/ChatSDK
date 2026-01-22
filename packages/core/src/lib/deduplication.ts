@@ -176,7 +176,8 @@ export class DuplicateRequestError extends Error {
  */
 export class Debouncer {
   private timeouts = new Map<string, NodeJS.Timeout>();
-  private promises = new Map<string, Promise<any>>();
+  private resolvers = new Map<string, { resolve: (value: any) => void; reject: (error: any) => void }[]>();
+  private latestFn = new Map<string, () => Promise<any>>();
 
   /**
    * Debounce a function call
@@ -191,29 +192,43 @@ export class Debouncer {
       clearTimeout(existingTimeout);
     }
 
-    // Return existing promise if still pending
-    const existingPromise = this.promises.get(key);
-    if (existingPromise) {
-      return existingPromise as Promise<T>;
-    }
+    // Store the latest function
+    this.latestFn.set(key, fn);
 
-    // Create new promise that executes after delay
+    // Create a new promise for this caller
     const promise = new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(async () => {
-        try {
-          const result = await fn();
-          this.promises.delete(key);
-          resolve(result);
-        } catch (error) {
-          this.promises.delete(key);
-          reject(error);
-        }
-      }, delayMs);
-
-      this.timeouts.set(key, timeout);
+      // Add resolver to list
+      if (!this.resolvers.has(key)) {
+        this.resolvers.set(key, []);
+      }
+      this.resolvers.get(key)!.push({ resolve, reject });
     });
 
-    this.promises.set(key, promise);
+    // Set new timeout
+    const timeout = setTimeout(async () => {
+      const resolvers = this.resolvers.get(key) || [];
+      const latestFn = this.latestFn.get(key);
+
+      // Clean up
+      this.timeouts.delete(key);
+      this.resolvers.delete(key);
+      this.latestFn.delete(key);
+
+      try {
+        const result = await latestFn!();
+        // Resolve all waiting promises with the same result
+        for (const { resolve } of resolvers) {
+          resolve(result);
+        }
+      } catch (error) {
+        // Reject all waiting promises with the same error
+        for (const { reject } of resolvers) {
+          reject(error);
+        }
+      }
+    }, delayMs);
+
+    this.timeouts.set(key, timeout);
     return promise;
   }
 
@@ -225,6 +240,7 @@ export class Debouncer {
       clearTimeout(timeout);
     }
     this.timeouts.clear();
-    this.promises.clear();
+    this.resolvers.clear();
+    this.latestFn.clear();
   }
 }

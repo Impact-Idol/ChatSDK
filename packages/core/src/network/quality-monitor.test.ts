@@ -72,8 +72,8 @@ describe('NetworkQualityMonitor', () => {
 
       const monitor = new NetworkQualityMonitor({ pingInterval: 60000 });
 
-      // Wait for initial ping
-      await vi.runAllTimersAsync();
+      // Trigger manual ping instead of waiting for interval
+      await monitor.ping();
 
       const metrics = monitor.getMetrics();
       expect(metrics.latency).toBeGreaterThanOrEqual(0);
@@ -87,8 +87,8 @@ describe('NetworkQualityMonitor', () => {
 
       const monitor = new NetworkQualityMonitor({ pingInterval: 60000 });
 
-      // Wait for initial ping
-      await vi.runAllTimersAsync();
+      // Trigger manual ping instead of waiting for interval
+      await monitor.ping();
 
       const metrics = monitor.getMetrics();
       expect(metrics.packetLoss).toBeGreaterThan(0);
@@ -139,10 +139,11 @@ describe('NetworkQualityMonitor', () => {
     });
 
     it('classifies POOR quality (high latency)', async () => {
-      let callCount = 0;
+      // Use real timers for this test since we need actual delays for latency measurement
+      vi.useRealTimers();
+
       (global.fetch as any).mockImplementation(() => {
-        callCount++;
-        // Simulate 400ms delay
+        // Simulate 400ms delay using real timers
         return new Promise((resolve) => {
           setTimeout(() => {
             resolve({ ok: true, status: 200 });
@@ -160,6 +161,9 @@ describe('NetworkQualityMonitor', () => {
       expect(metrics.quality).toBe(NetworkQuality.POOR);
 
       monitor.destroy();
+
+      // Restore fake timers for other tests
+      vi.useFakeTimers();
     });
   });
 
