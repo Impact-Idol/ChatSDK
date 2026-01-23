@@ -39,6 +39,26 @@ export function useReadState(channelId: string | null): UseReadStateResult {
   const [unreadCount, setUnreadCount] = useState(0);
   const [readReceipts, setReadReceipts] = useState<ReadReceipt[]>([]);
 
+  // Fetch initial unread count when channelId changes
+  useEffect(() => {
+    if (!channelId) {
+      setUnreadCount(0);
+      return;
+    }
+
+    // Fetch channel to get initial unread count
+    client
+      .fetch<{ unreadCount?: number }>(`/api/channels/${channelId}`)
+      .then((channel) => {
+        if (channel.unreadCount !== undefined) {
+          setUnreadCount(channel.unreadCount);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to fetch initial unread count:', err);
+      });
+  }, [client, channelId]);
+
   // Subscribe to read receipt updates
   useEffect(() => {
     if (!channelId) {
@@ -108,6 +128,19 @@ export function useTotalUnreadCount(): number {
   const client = useChatClient();
   const [totalUnread, setTotalUnread] = useState(0);
 
+  // Fetch initial total unread count
+  useEffect(() => {
+    client
+      .fetch<{ count: number }>('/api/channels/unread-count')
+      .then((result) => {
+        setTotalUnread(result.count);
+      })
+      .catch((err) => {
+        console.warn('Failed to fetch total unread count:', err);
+      });
+  }, [client]);
+
+  // Subscribe to real-time updates
   useEffect(() => {
     const unsub = client.on('channel.total_unread_changed', ({ count }) => {
       setTotalUnread(count);

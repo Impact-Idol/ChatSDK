@@ -135,6 +135,126 @@ Get channel details.
 
 Delete a channel (owner only).
 
+### GET /api/channels/unread-count
+
+Get total unread message count across all channels for the authenticated user.
+
+**Response:**
+```json
+{
+  "count": 15
+}
+```
+
+### POST /api/channels/:channelId/read
+
+Mark a channel as read for the authenticated user.
+
+**Request Body (optional):**
+```json
+{
+  "messageId": "message-uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "lastReadSeq": 42
+}
+```
+
+**Side Effects:**
+- Sets `unreadCount` to 0 for this channel
+- Emits `read.updated` WebSocket event to channel members
+- Emits `channel.unread_changed` WebSocket event to user
+- Emits `channel.total_unread_changed` WebSocket event to user
+
+---
+
+## Read Receipts
+
+### POST /api/channels/:channelId/receipts
+
+Mark messages as read up to a specific message.
+
+**Request Body:**
+```json
+{
+  "messageId": "message-uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "lastReadMessageId": "message-uuid"
+}
+```
+
+### GET /api/channels/:channelId/receipts/messages/:messageId/receipts
+
+Get read receipts for a specific message.
+
+**Response:**
+```json
+{
+  "readBy": [
+    {
+      "userId": "user-123",
+      "name": "Alice Johnson",
+      "image": "https://...",
+      "readAt": "2024-01-15T12:00:00Z"
+    }
+  ],
+  "readCount": 5,
+  "totalMembers": 10
+}
+```
+
+### POST /api/channels/:channelId/receipts/query
+
+Batch query read receipts for multiple messages.
+
+**Request Body:**
+```json
+{
+  "messageIds": ["msg-1", "msg-2", "msg-3"]
+}
+```
+
+**Response:**
+```json
+{
+  "receipts": {
+    "msg-1": { "readCount": 5, "readers": [...] },
+    "msg-2": { "readCount": 3, "readers": [...] },
+    "msg-3": { "readCount": 0, "readers": [] }
+  }
+}
+```
+
+### GET /api/channels/:channelId/receipts/read-status
+
+Get read status for all channel members.
+
+**Response:**
+```json
+{
+  "members": [
+    {
+      "userId": "user-123",
+      "name": "Alice Johnson",
+      "image": "https://...",
+      "lastReadMessageId": "msg-456",
+      "lastReadSeq": 42
+    }
+  ]
+}
+```
+
 ---
 
 ## Messages
@@ -753,12 +873,28 @@ client.connect();
 ```
 
 **Event Types:**
+
+*Channel Events (published to `chat:{appId}:{channelId}`):*
 - `message.new` - New message
 - `message.updated` - Message edited
 - `message.deleted` - Message deleted
-- `reaction.new` - Reaction added
+- `reaction.added` - Reaction added
 - `reaction.removed` - Reaction removed
 - `typing.start` - User started typing
 - `typing.stop` - User stopped typing
-- `member.joined` - User joined channel
-- `member.left` - User left channel
+- `channel.member_joined` - User joined channel
+- `channel.member_left` - User left channel
+- `read.updated` - User read position updated
+- `read_receipt` - User read a specific message
+
+*User Events (published to `user:{appId}:{userId}`):*
+- `channel.unread_changed` - Unread count changed for a channel
+  ```json
+  { "type": "channel.unread_changed", "payload": { "channelId": "...", "count": 5 } }
+  ```
+- `channel.total_unread_changed` - Total unread count changed
+  ```json
+  { "type": "channel.total_unread_changed", "payload": { "count": 15 } }
+  ```
+- `presence.online` - User came online
+- `presence.offline` - User went offline

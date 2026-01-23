@@ -319,4 +319,24 @@ export const centrifugo = {
       payload: { channelId, userId },
     });
   },
+
+  /**
+   * Publish unread count change to a specific user
+   */
+  async publishUnreadCount(appId: string, userId: string, channelId: string, count: number): Promise<void> {
+    await getCentrifugo().publish(`user:${appId}:${userId}`, {
+      type: 'channel.unread_changed',
+      payload: { channelId, count },
+    });
+  },
+
+  /**
+   * Publish total unread count change to a specific user
+   */
+  async publishTotalUnreadCount(appId: string, userId: string, count: number): Promise<void> {
+    await getCentrifugo().publish(`user:${appId}:${userId}`, {
+      type: 'channel.total_unread_changed',
+      payload: { count },
+    });
+  },
 };

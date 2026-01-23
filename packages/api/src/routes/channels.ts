@@ -147,6 +147,24 @@ channelRoutes.post(
 );
 
 /**
+ * Get total unread count across all channels
+ * GET /api/channels/unread-count
+ */
+channelRoutes.get('/unread-count', requireUser, async (c) => {
+  const auth = c.get('auth');
+
+  const result = await db.query(
+    `SELECT COALESCE(SUM(unread_count), 0) as total FROM channel_member
+     WHERE app_id = $1 AND user_id = $2`,
+    [auth.appId, auth.userId]
+  );
+
+  return c.json({
+    count: parseInt(result.rows[0].total, 10),
+  });
+});
+
+/**
  * Query channels
  * GET /api/channels
  *
@@ -619,9 +637,19 @@ channelRoutes.post(
       [channelId, auth.appId, auth.userId, maxSeq]
     );
 
-    // Publish read receipt
+    // Get new total unread count for this user
+    const totalResult = await db.query(
+      `SELECT COALESCE(SUM(unread_count), 0) as total FROM channel_member
+       WHERE app_id = $1 AND user_id = $2`,
+      [auth.appId, auth.userId]
+    );
+    const totalUnread = parseInt(totalResult.rows[0].total, 10);
+
+    // Publish read receipt and unread count updates
     const { centrifugo } = await import('../services/centrifugo');
     await centrifugo.publishReadReceipt(auth.appId, channelId, auth.userId!, maxSeq);
+    await centrifugo.publishUnreadCount(auth.appId, auth.userId!, channelId, 0);
+    await centrifugo.publishTotalUnreadCount(auth.appId, auth.userId!, totalUnread);
 
     return c.json({ success: true, lastReadSeq: maxSeq });
   }

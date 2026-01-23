@@ -175,6 +175,35 @@ messageRoutes.post(
     // Publish to Centrifugo for real-time delivery
     await centrifugo.publishMessage(auth.appId, channelId, message);
 
+    // Emit unread count events to all members except sender
+    const memberUnreadCounts = await db.query(
+      `SELECT cm.user_id, cm.unread_count,
+              (SELECT COALESCE(SUM(unread_count), 0) FROM channel_member
+               WHERE app_id = $2 AND user_id = cm.user_id) as total_unread
+       FROM channel_member cm
+       WHERE cm.channel_id = $1 AND cm.app_id = $2 AND cm.user_id != $3`,
+      [channelId, auth.appId, auth.userId]
+    );
+
+    // Publish unread count changes to each member (don't await - fire and forget)
+    Promise.all(
+      memberUnreadCounts.rows.map(async (member) => {
+        await centrifugo.publishUnreadCount(
+          auth.appId,
+          member.user_id,
+          channelId,
+          member.unread_count
+        );
+        await centrifugo.publishTotalUnreadCount(
+          auth.appId,
+          member.user_id,
+          parseInt(member.total_unread, 10)
+        );
+      })
+    ).catch((err) => {
+      console.warn('Failed to publish unread count events:', err);
+    });
+
     // Get channel info and members for notifications
     const channelInfo = await db.query(
       `SELECT c.name, c.type, array_agg(cm.user_id) as member_ids
