@@ -504,7 +504,20 @@ export class ChatClient {
 
         this.log('subscription', 'Creating new subscription', { channel: channelName });
 
-        const subscription = this.centrifuge!.newSubscription(channelName);
+        // Check if centrifuge already has this subscription (can happen on reconnect or strict mode)
+        let subscription = this.centrifuge!.getSubscription(channelName);
+        if (subscription) {
+          this.log('subscription', 'Reusing existing centrifuge subscription', { channel: channelName });
+          // Ensure it's subscribed
+          if (subscription.state !== 'subscribed') {
+            subscription.subscribe();
+          }
+          this.subscriptions.set(channelName, subscription);
+          this.subscriptionStates.set(channelName, SubscriptionState.ACTIVE);
+          return;
+        }
+
+        subscription = this.centrifuge!.newSubscription(channelName);
 
         // Handle incoming messages
         subscription.on('publication', (ctx: PublicationContext) => {
