@@ -216,33 +216,15 @@ messageRoutes.post(
 
     const channel = channelInfo.rows[0];
 
-    // Extract @mentions from message text (support hyphens in user IDs)
-    const mentionRegex = /@([\w-]+)/g;
-    const mentions = [...body.text.matchAll(mentionRegex)].map((m) => m[1]);
-
-    // Insert mentions into database
-    if (mentions.length > 0) {
-      for (const mentionedUserId of mentions) {
-        try {
-          await db.query(
-            `INSERT INTO mention (message_id, app_id, mentioned_user_id, mentioner_user_id)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT DO NOTHING`,
-            [result.id, auth.appId, mentionedUserId, auth.userId]
-          );
-
-          // Set mentioned flag in user_message for the mentioned user
-          await db.query(
-            `UPDATE user_message
-             SET flags = flags | 2
-             WHERE message_id = $1 AND user_id = $2 AND app_id = $3`,
-            [result.id, mentionedUserId, auth.appId]
-          );
-        } catch (err) {
-          console.warn(`Failed to insert mention for user ${mentionedUserId}:`, err);
-        }
-      }
-    }
+    // Extract and store @mentions (resolves names to user IDs)
+    const { storeMentions } = await import('./mentions');
+    const mentions = await storeMentions(
+      result.id,
+      channelId,
+      auth.appId,
+      auth.userId!,
+      body.text
+    );
 
     // Trigger Inngest notification event (async - don't await)
     inngest.send({
