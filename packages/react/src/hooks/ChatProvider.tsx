@@ -27,7 +27,7 @@ interface ChatContextValue {
   connectionState: ConnectionState;
   isConnected: boolean;
   isConnecting: boolean;
-  connectUser: (user: { id: string; name?: string; image?: string }, token: string) => Promise<User>;
+  connectUser: (user: { id: string; name?: string; image?: string }, token: string | { token: string; wsToken: string }) => Promise<User>;
   disconnect: () => Promise<void>;
 }
 
@@ -98,7 +98,7 @@ export function ChatProvider({
   }, [client]);
 
   const connectUser = useCallback(
-    async (userData: { id: string; name?: string; image?: string }, token: string) => {
+    async (userData: { id: string; name?: string; image?: string }, token: string | { token: string; wsToken: string }) => {
       const connectedUser = await client.connectUser(userData, token);
       setUser(connectedUser);
       return connectedUser;
