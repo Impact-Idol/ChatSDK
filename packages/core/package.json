@@ -1,6 +1,6 @@
 {
   "name": "@chatsdk/core",
-  "version": "0.1.0",
+  "version": "2.0.6",
   "description": "Core chat client and sync engine",
   "type": "module",
   "main": "src/index.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@chatsdk/nextjs",
-  "version": "1.0.0",
+  "version": "2.0.6",
   "description": "Next.js Server Actions adapter for ChatSDK",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,6 +1,6 @@
 {
   "name": "@chatsdk/react",
-  "version": "0.1.0",
+  "version": "2.0.6",
   "description": "React components for ChatSDK",
   "main": "src/index.ts",
   "module": "src/index.ts",

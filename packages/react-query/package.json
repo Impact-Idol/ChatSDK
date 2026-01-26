@@ -1,6 +1,6 @@
 {
   "name": "@chatsdk/react-query",
-  "version": "0.1.0",
+  "version": "2.0.6",
   "description": "React Query hooks for ChatSDK - native TanStack Query integration",
   "main": "src/index.ts",
   "module": "src/index.ts",
