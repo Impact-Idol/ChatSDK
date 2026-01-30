@@ -1,6 +1,6 @@
 {
   "name": "@chatsdk/react-native",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "React Native components and hooks for ChatSDK - Mobile-first chat experience",
   "main": "dist/index.js",
   "module": "dist/index.esm.js",

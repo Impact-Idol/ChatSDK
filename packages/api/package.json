@@ -1,6 +1,6 @@
 {
   "name": "@chatsdk/api",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "ChatSDK API Server",
   "type": "module",
   "main": "dist/index.js",
