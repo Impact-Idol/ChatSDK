@@ -1,6 +1,6 @@
 {
   "name": "@chatsdk/migration-cli",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "CLI tool for migrating from Stream Chat to ChatSDK",
   "main": "./dist/index.js",
   "bin": {
