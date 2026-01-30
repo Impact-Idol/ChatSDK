@@ -75,6 +75,10 @@ function setupDbMocks() {
     if (sql.includes('SELECT id, name, image_url FROM app_user')) {
       return { rows: [{ id: REGULAR_USER_ID, name: 'Regular User', image_url: null }] };
     }
+    // Workspace existence check
+    if (sql.includes('SELECT 1 FROM workspace WHERE id')) {
+      return { rows: [{ '?column?': 1 }] };
+    }
     // Workspace member role check — user is NOT a member
     if (sql.includes('SELECT role FROM workspace_member')) {
       return { rows: [] };
@@ -171,6 +175,43 @@ describe('Workspace API Key Authorization', () => {
       expect(data.count).toBe(2);
     });
 
+    it('should return 404 when workspace does not exist', async () => {
+      const token = await generateToken(REGULAR_USER_ID, TEST_APP_ID);
+      const NON_EXISTENT_WS = '99999999-9999-9999-9999-999999999999';
+
+      mockQuery.mockImplementation((sql: string) => {
+        if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+          return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+        }
+        if (sql.includes('SELECT id, name, image_url FROM app_user')) {
+          return { rows: [{ id: REGULAR_USER_ID, name: 'Regular User', image_url: null }] };
+        }
+        // Workspace does NOT exist
+        if (sql.includes('SELECT 1 FROM workspace WHERE id')) {
+          return { rows: [] };
+        }
+        if (sql.includes('INSERT INTO workspace_member')) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes('UPDATE workspace')) {
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [] };
+      });
+
+      const res = await makeRequest(
+        `/api/workspaces/${NON_EXISTENT_WS}/members`,
+        'POST',
+        token,
+        { userIds: [REGULAR_USER_ID], role: 'member' },
+      );
+
+      const data = await res.json();
+
+      expect(res.status).toBe(404);
+      expect(data.error.message).toBe('Workspace not found');
+    });
+
     it('should return 401 when no API key is present', async () => {
       const token = await generateToken(REGULAR_USER_ID, TEST_APP_ID);
 
@@ -210,6 +251,39 @@ describe('Workspace API Key Authorization', () => {
       expect(data.success).toBe(true);
     });
 
+    it('should return 404 when removing member from non-existent workspace', async () => {
+      const token = await generateToken(REGULAR_USER_ID, TEST_APP_ID);
+      const NON_EXISTENT_WS = '99999999-9999-9999-9999-999999999999';
+
+      mockQuery.mockImplementation((sql: string) => {
+        if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+          return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+        }
+        if (sql.includes('SELECT id, name, image_url FROM app_user')) {
+          return { rows: [{ id: REGULAR_USER_ID, name: 'Regular User', image_url: null }] };
+        }
+        // Workspace does NOT exist
+        if (sql.includes('SELECT 1 FROM workspace WHERE id')) {
+          return { rows: [] };
+        }
+        if (sql.includes('SELECT role FROM workspace_member')) {
+          return { rows: [] };
+        }
+        return { rows: [] };
+      });
+
+      const res = await makeRequest(
+        `/api/workspaces/${NON_EXISTENT_WS}/members/${SECOND_USER_ID}`,
+        'DELETE',
+        token,
+      );
+
+      const data = await res.json();
+
+      expect(res.status).toBe(404);
+      expect(data.error.message).toBe('Workspace not found');
+    });
+
     it('should still prevent removing the last owner even with API key auth', async () => {
       const token = await generateToken(REGULAR_USER_ID, TEST_APP_ID);
 
@@ -219,6 +293,10 @@ describe('Workspace API Key Authorization', () => {
         }
         if (sql.includes('SELECT id, name, image_url FROM app_user')) {
           return { rows: [{ id: REGULAR_USER_ID, name: 'Regular User', image_url: null }] };
+        }
+        // Workspace existence check
+        if (sql.includes('SELECT 1 FROM workspace WHERE id')) {
+          return { rows: [{ '?column?': 1 }] };
         }
         // Target user is an owner
         if (sql.includes('SELECT role FROM workspace_member')) {
@@ -241,6 +319,72 @@ describe('Workspace API Key Authorization', () => {
 
       expect(res.status).toBe(400);
       expect(data.error.message).toBe('Cannot remove the last owner');
+    });
+  });
+
+  describe('Edge cases - Invalid credentials', () => {
+    it('should return 401 when API key is invalid', async () => {
+      const token = await generateToken(REGULAR_USER_ID, TEST_APP_ID);
+
+      mockQuery.mockImplementation((sql: string) => {
+        // API key not found in database
+        if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+          return { rows: [] };
+        }
+        return { rows: [] };
+      });
+
+      const res = await app.request(
+        `/api/workspaces/${TEST_WORKSPACE_ID}/members`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': 'invalid-key',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ userIds: [REGULAR_USER_ID], role: 'member' }),
+        },
+      );
+
+      expect(res.status).toBe(401);
+    });
+
+    it('should return 404 when API key belongs to a different app than the workspace', async () => {
+      const DIFFERENT_APP_ID = '00000000-0000-0000-0000-000000000099';
+      const token = await generateToken(REGULAR_USER_ID, DIFFERENT_APP_ID);
+
+      mockQuery.mockImplementation((sql: string) => {
+        if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+          return { rows: [{ id: DIFFERENT_APP_ID, name: 'Different App', settings: {} }] };
+        }
+        if (sql.includes('SELECT id, name, image_url FROM app_user')) {
+          return { rows: [{ id: REGULAR_USER_ID, name: 'Regular User', image_url: null }] };
+        }
+        // Workspace does not belong to this app
+        if (sql.includes('SELECT 1 FROM workspace WHERE id')) {
+          return { rows: [] };
+        }
+        if (sql.includes('INSERT INTO workspace_member')) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes('UPDATE workspace')) {
+          return { rows: [], rowCount: 0 };
+        }
+        return { rows: [] };
+      });
+
+      const res = await makeRequest(
+        `/api/workspaces/${TEST_WORKSPACE_ID}/members`,
+        'POST',
+        token,
+        { userIds: [REGULAR_USER_ID], role: 'member' },
+      );
+
+      const data = await res.json();
+
+      expect(res.status).toBe(404);
+      expect(data.error.message).toBe('Workspace not found');
     });
   });
 });

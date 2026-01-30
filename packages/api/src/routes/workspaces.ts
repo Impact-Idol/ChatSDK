@@ -343,6 +343,15 @@ workspaceRoutes.post(
       }
     }
 
+    // Verify workspace exists and belongs to this app
+    const wsCheck = await db.query(
+      `SELECT 1 FROM workspace WHERE id = $1 AND app_id = $2`,
+      [workspaceId, auth.appId]
+    );
+    if (wsCheck.rows.length === 0) {
+      return c.json({ error: { message: 'Workspace not found' } }, 404);
+    }
+
     // Add members
     const added = [];
     for (const userId of body.userIds) {
@@ -396,6 +405,15 @@ workspaceRoutes.delete('/:id/members/:userId', requireUser, async (c) => {
     if (!isSelf && !isAdmin) {
       return c.json({ error: { message: 'Permission denied' } }, 403);
     }
+  }
+
+  // Verify workspace exists and belongs to this app
+  const wsCheck = await db.query(
+    `SELECT 1 FROM workspace WHERE id = $1 AND app_id = $2`,
+    [workspaceId, auth.appId]
+  );
+  if (wsCheck.rows.length === 0) {
+    return c.json({ error: { message: 'Workspace not found' } }, 404);
   }
 
   // Don't allow removing the last owner (applies to all auth paths)
