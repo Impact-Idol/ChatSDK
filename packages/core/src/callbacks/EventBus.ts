@@ -91,9 +91,13 @@ export class EventBus {
   }
 
   /**
-   * Emit an event - queued to prevent re-entrancy issues
+   * Emit an event - queued to prevent re-entrancy issues.
+   * For void events, the data argument can be omitted.
    */
-  emit<K extends keyof EventMap>(event: K, data: EventMap[K]): void {
+  emit<K extends keyof EventMap>(
+    ...args: EventMap[K] extends void ? [event: K] | [event: K, data?: undefined] : [event: K, data: EventMap[K]]
+  ): void {
+    const [event, data] = args;
     this.queue.push({ event, data });
     this.processQueue();
   }

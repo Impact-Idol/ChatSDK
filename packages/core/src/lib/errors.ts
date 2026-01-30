@@ -16,6 +16,41 @@
  * ```
  */
 
+/**
+ * Error code constants for type-safe error classification.
+ *
+ * Use these in switch statements to handle errors by category:
+ * ```typescript
+ * import { ErrorCodes } from '@chatsdk/core';
+ *
+ * switch (error.code) {
+ *   case ErrorCodes.AUTH_ERROR:
+ *     // Handle authentication errors
+ *     break;
+ *   case ErrorCodes.RATE_LIMIT:
+ *     // Handle rate limiting
+ *     break;
+ * }
+ * ```
+ */
+export const ErrorCodes = {
+  AUTH_ERROR: 'AUTH_ERROR',
+  NETWORK_ERROR: 'NETWORK_ERROR',
+  PERMISSION_ERROR: 'PERMISSION_ERROR',
+  RATE_LIMIT: 'RATE_LIMIT',
+  VALIDATION_ERROR: 'VALIDATION_ERROR',
+  CONNECTION_ERROR: 'CONNECTION_ERROR',
+  TIMEOUT_ERROR: 'TIMEOUT_ERROR',
+  CONFIG_ERROR: 'CONFIG_ERROR',
+  UNKNOWN_ERROR: 'UNKNOWN_ERROR',
+  NOT_FOUND: 'NOT_FOUND',
+  SERVER_ERROR: 'SERVER_ERROR',
+  ASSERTION_ERROR: 'ASSERTION_ERROR',
+} as const;
+
+/** Union type of all error codes */
+export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes];
+
 export class ChatSDKError extends Error {
   code: string;
   suggestion: string;
@@ -80,7 +115,7 @@ export class AuthenticationError extends ChatSDKError {
   constructor(message: string, suggestion?: string, context?: Record<string, any>) {
     super(
       message,
-      'AUTH_ERROR',
+      ErrorCodes.AUTH_ERROR,
       suggestion || 'Check your API key and ensure the user exists.',
       'https://docs.chatsdk.dev/guides/getting-started/authentication',
       context
@@ -101,7 +136,7 @@ export class NetworkError extends ChatSDKError {
 
     super(
       message,
-      'NETWORK_ERROR',
+      ErrorCodes.NETWORK_ERROR,
       actualSuggestion || 'Check your network connection. The SDK will automatically retry.',
       'https://docs.chatsdk.dev/guides/troubleshooting#connection-issues',
       actualContext as Record<string, any> | undefined
@@ -126,7 +161,7 @@ export class PermissionError extends ChatSDKError {
 
     super(
       message,
-      'PERMISSION_ERROR',
+      ErrorCodes.PERMISSION_ERROR,
       suggestion,
       'https://docs.chatsdk.dev/guides/advanced/permissions',
       context
@@ -144,7 +179,7 @@ export class RateLimitError extends ChatSDKError {
   constructor(retryAfter?: number, context?: Record<string, any>) {
     super(
       'Rate limit exceeded',
-      'RATE_LIMIT',
+      ErrorCodes.RATE_LIMIT,
       retryAfter
         ? `Too many requests. Retry after ${retryAfter} seconds. The SDK will automatically retry.`
         : 'Too many requests. The SDK will automatically retry with exponential backoff.',
@@ -179,7 +214,7 @@ export class ValidationError extends ChatSDKError {
 
     super(
       message,
-      'VALIDATION_ERROR',
+      ErrorCodes.VALIDATION_ERROR,
       fullSuggestion,
       'https://docs.chatsdk.dev/api',
       context
@@ -196,7 +231,7 @@ export class ConnectionError extends ChatSDKError {
   constructor(message: string, context?: Record<string, any>) {
     super(
       message,
-      'CONNECTION_ERROR',
+      ErrorCodes.CONNECTION_ERROR,
       'WebSocket connection failed. The SDK will automatically reconnect. Check your WebSocket URL and network.',
       'https://docs.chatsdk.dev/guides/troubleshooting#websocket-connection-failed',
       context
@@ -215,7 +250,7 @@ export class TimeoutError extends ChatSDKError {
   constructor(operation: string, timeout: number, context?: Record<string, any>) {
     super(
       `Operation '${operation}' timed out after ${timeout}ms`,
-      'TIMEOUT_ERROR',
+      ErrorCodes.TIMEOUT_ERROR,
       `The operation took longer than ${timeout}ms. You may need to increase timeout or check network conditions.`,
       'https://docs.chatsdk.dev/guides/troubleshooting',
       context
@@ -233,7 +268,7 @@ export class ConfigurationError extends ChatSDKError {
   constructor(message: string, suggestion?: string, context?: Record<string, any>) {
     super(
       message,
-      'CONFIG_ERROR',
+      ErrorCodes.CONFIG_ERROR,
       suggestion || 'Check your ChatSDK configuration and ensure all required options are provided.',
       'https://docs.chatsdk.dev/guides/configuration',
       context
@@ -255,7 +290,7 @@ export function createError(error: any, context?: Record<string, any>): ChatSDKE
   if (typeof error === 'string') {
     return new ChatSDKError(
       error,
-      'UNKNOWN_ERROR',
+      ErrorCodes.UNKNOWN_ERROR,
       'This is an unexpected error. Please check the console for details and report if the issue persists.',
       'https://github.com/chatsdk/chatsdk/issues/new',
       context
@@ -301,7 +336,7 @@ export function createError(error: any, context?: Record<string, any>): ChatSDKE
   if (status === 404) {
     return new ChatSDKError(
       error.message || 'Resource not found',
-      'NOT_FOUND',
+      ErrorCodes.NOT_FOUND,
       'The requested resource does not exist. Check the ID and try again.',
       'https://docs.chatsdk.dev/api',
       context
@@ -319,7 +354,7 @@ export function createError(error: any, context?: Record<string, any>): ChatSDKE
   if (status >= 500) {
     return new ChatSDKError(
       error.message || 'Server error',
-      'SERVER_ERROR',
+      ErrorCodes.SERVER_ERROR,
       'The server encountered an error. The SDK will automatically retry.',
       'https://docs.chatsdk.dev/guides/troubleshooting',
       context
@@ -347,7 +382,7 @@ export function createError(error: any, context?: Record<string, any>): ChatSDKE
   const message = error instanceof Error ? error.message : (error.message || 'Unknown error');
   return new ChatSDKError(
     message,
-    'UNKNOWN_ERROR',
+    ErrorCodes.UNKNOWN_ERROR,
     'This is an unexpected error. Please check the console for details and report if the issue persists.',
     'https://github.com/chatsdk/chatsdk/issues/new',
     context
@@ -365,7 +400,7 @@ export function assert(
   if (!condition) {
     throw new ChatSDKError(
       message,
-      'ASSERTION_ERROR',
+      ErrorCodes.ASSERTION_ERROR,
       'An assertion failed. This is likely a programming error.',
       undefined,
       context

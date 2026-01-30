@@ -6,6 +6,9 @@
 // Types
 export * from './types';
 
+// Schema-inferred types used by consumers
+export type { CreateChannel } from './schemas';
+
 // EventBus
 export { EventBus, getEventBus, resetEventBus } from './callbacks/EventBus';
 
@@ -69,7 +72,9 @@ export {
   createError,
   assert,
   withErrorHandling,
+  ErrorCodes,
 } from './lib/errors';
+export type { ErrorCode } from './lib/errors';
 
 // Performance Profiler (Week 6)
 export { profiler, Profile } from './lib/profiler';
