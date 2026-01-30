@@ -30,6 +30,9 @@ export interface UseWorkspacesResult {
   createWorkspace: (data: CreateWorkspaceData) => Promise<Workspace>;
   updateWorkspace: (id: string, data: Partial<CreateWorkspaceData>) => Promise<Workspace>;
   deleteWorkspace: (id: string) => Promise<void>;
+  updateMemberRole: (workspaceId: string, userId: string, role: 'owner' | 'admin' | 'member') => Promise<{ success: boolean; role: string }>;
+  addMembers: (workspaceId: string, userIds: string[], role?: 'owner' | 'admin' | 'member') => Promise<{ added: string[]; count: number }>;
+  removeMember: (workspaceId: string, userId: string) => Promise<void>;
 }
 
 export interface CreateWorkspaceData {
@@ -256,6 +259,33 @@ export function useWorkspaces(): UseWorkspacesResult {
     }
   }, [isConnected]);
 
+  // Update a workspace member's role
+  const updateMemberRole = useCallback(
+    async (workspaceId: string, userId: string, role: 'owner' | 'admin' | 'member') => {
+      return client.updateWorkspaceMemberRole(workspaceId, userId, role);
+    },
+    [client]
+  );
+
+  // Add members to a workspace
+  const addMembers = useCallback(
+    async (workspaceId: string, userIds: string[], role: 'owner' | 'admin' | 'member' = 'member') => {
+      const result = await client.addWorkspaceMembers(workspaceId, userIds, role);
+      await fetchWorkspaces(); // Refresh to update memberCount
+      return result;
+    },
+    [client, fetchWorkspaces]
+  );
+
+  // Remove a member from a workspace
+  const removeMember = useCallback(
+    async (workspaceId: string, userId: string) => {
+      await client.removeWorkspaceMember(workspaceId, userId);
+      await fetchWorkspaces(); // Refresh to update memberCount
+    },
+    [client, fetchWorkspaces]
+  );
+
   return {
     workspaces,
     activeWorkspace,
@@ -266,5 +296,8 @@ export function useWorkspaces(): UseWorkspacesResult {
     createWorkspace,
     updateWorkspace,
     deleteWorkspace,
+    updateMemberRole,
+    addMembers,
+    removeMember,
   };
 }

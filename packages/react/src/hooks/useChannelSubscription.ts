@@ -5,9 +5,23 @@
  * For most use cases, useMessages() is preferred as it handles both loading and subscription.
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import type { MessageWithSeq, Reaction } from '@chatsdk/core';
 import { useChatClient } from './ChatProvider';
+
+/**
+ * Check if an error indicates the channel is already subscribed.
+ * This can happen in React strict mode (double-mount) or when multiple
+ * hooks subscribe to the same channel (e.g., useMessages + useChannelSubscription).
+ *
+ * Note: Matches Centrifuge client error messages ("subscription already exists").
+ * If the Centrifuge SDK changes its error wording, this check may need updating.
+ */
+export function isAlreadySubscribedError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes('already subscribed') || msg.includes('subscription already exists');
+}
 
 export interface ChannelEvent {
   type: 'message.new' | 'message.updated' | 'message.deleted' | 'reaction.added' | 'reaction.removed' | 'typing.start' | 'typing.stop';
@@ -105,16 +119,9 @@ export function useChannelSubscription(
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const {
-    onMessage,
-    onMessageUpdated,
-    onMessageDeleted,
-    onReactionAdded,
-    onReactionRemoved,
-    onTypingStart,
-    onTypingStop,
-    onEvent,
-  } = options;
+  // Store callbacks in refs to avoid re-subscribing when inline functions change
+  const callbacksRef = useRef(options);
+  callbacksRef.current = options;
 
   const subscribe = useCallback(async () => {
     if (!channelId) return;
@@ -124,8 +131,14 @@ export function useChannelSubscription(
       setIsSubscribed(true);
       setError(null);
     } catch (err) {
-      setError(err as Error);
-      setIsSubscribed(false);
+      if (isAlreadySubscribedError(err)) {
+        // Channel is already subscribed — treat as success
+        setIsSubscribed(true);
+        setError(null);
+      } else {
+        setError(err as Error);
+        setIsSubscribed(false);
+      }
     }
   }, [client, channelId]);
 
@@ -154,61 +167,67 @@ export function useChannelSubscription(
         }
       } catch (err) {
         if (isMounted) {
-          setError(err as Error);
-          setIsSubscribed(false);
+          if (isAlreadySubscribedError(err)) {
+            // Channel is already subscribed — treat as success
+            setIsSubscribed(true);
+            setError(null);
+          } else {
+            setError(err as Error);
+            setIsSubscribed(false);
+          }
         }
       }
     };
 
     init();
 
-    // Set up event listeners
+    // Set up event listeners (read from ref to avoid dependency on inline callbacks)
     const unsubNew = client.on('message.new', ({ channelId: cid, message }) => {
       if (cid === channelId) {
-        onMessage?.(message);
-        onEvent?.({ type: 'message.new', channelId: cid, data: message });
+        callbacksRef.current.onMessage?.(message);
+        callbacksRef.current.onEvent?.({ type: 'message.new', channelId: cid, data: message });
       }
     });
 
     const unsubUpdated = client.on('message.updated', ({ channelId: cid, message }) => {
       if (cid === channelId) {
-        onMessageUpdated?.(message);
-        onEvent?.({ type: 'message.updated', channelId: cid, data: message });
+        callbacksRef.current.onMessageUpdated?.(message);
+        callbacksRef.current.onEvent?.({ type: 'message.updated', channelId: cid, data: message });
       }
     });
 
     const unsubDeleted = client.on('message.deleted', ({ channelId: cid, messageId }) => {
       if (cid === channelId) {
-        onMessageDeleted?.(messageId);
-        onEvent?.({ type: 'message.deleted', channelId: cid, data: { messageId } });
+        callbacksRef.current.onMessageDeleted?.(messageId);
+        callbacksRef.current.onEvent?.({ type: 'message.deleted', channelId: cid, data: { messageId } });
       }
     });
 
     const unsubReactionAdded = client.on('reaction.added', ({ channelId: cid, messageId, reaction }) => {
       if (cid === channelId) {
-        onReactionAdded?.(messageId, reaction);
-        onEvent?.({ type: 'reaction.added', channelId: cid, data: { messageId, reaction } });
+        callbacksRef.current.onReactionAdded?.(messageId, reaction);
+        callbacksRef.current.onEvent?.({ type: 'reaction.added', channelId: cid, data: { messageId, reaction } });
       }
     });
 
     const unsubReactionRemoved = client.on('reaction.removed', ({ channelId: cid, messageId, reaction }) => {
       if (cid === channelId) {
-        onReactionRemoved?.(messageId, reaction);
-        onEvent?.({ type: 'reaction.removed', channelId: cid, data: { messageId, reaction } });
+        callbacksRef.current.onReactionRemoved?.(messageId, reaction);
+        callbacksRef.current.onEvent?.({ type: 'reaction.removed', channelId: cid, data: { messageId, reaction } });
       }
     });
 
     const unsubTypingStart = client.on('typing.start', ({ channelId: cid, user }) => {
       if (cid === channelId) {
-        onTypingStart?.(user.id, user.name);
-        onEvent?.({ type: 'typing.start', channelId: cid, data: { userId: user.id, userName: user.name } });
+        callbacksRef.current.onTypingStart?.(user.id, user.name);
+        callbacksRef.current.onEvent?.({ type: 'typing.start', channelId: cid, data: { userId: user.id, userName: user.name } });
       }
     });
 
     const unsubTypingStop = client.on('typing.stop', ({ channelId: cid, user }) => {
       if (cid === channelId) {
-        onTypingStop?.(user.id);
-        onEvent?.({ type: 'typing.stop', channelId: cid, data: { userId: user.id } });
+        callbacksRef.current.onTypingStop?.(user.id);
+        callbacksRef.current.onEvent?.({ type: 'typing.stop', channelId: cid, data: { userId: user.id } });
       }
     });
 
@@ -223,18 +242,7 @@ export function useChannelSubscription(
       unsubTypingStop();
       client.unsubscribeFromChannel(channelId);
     };
-  }, [
-    client,
-    channelId,
-    onMessage,
-    onMessageUpdated,
-    onMessageDeleted,
-    onReactionAdded,
-    onReactionRemoved,
-    onTypingStart,
-    onTypingStop,
-    onEvent,
-  ]);
+  }, [client, channelId]);
 
   return {
     isSubscribed,

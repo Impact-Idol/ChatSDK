@@ -27,6 +27,7 @@ interface ChatContextValue {
   connectionState: ConnectionState;
   isConnected: boolean;
   isConnecting: boolean;
+  reconnectIn: number | null;
   connectUser: (user: { id: string; name?: string; image?: string }, token: string | { token: string; wsToken: string }) => Promise<User>;
   disconnect: () => Promise<void>;
 }
@@ -69,6 +70,7 @@ export function ChatProvider({
 
   const [user, setUser] = useState<User | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
+  const [reconnectIn, setReconnectIn] = useState<number | null>(null);
 
   // Set up connection state listeners
   useEffect(() => {
@@ -78,15 +80,18 @@ export function ChatProvider({
 
     const unsubConnected = client.on('connection.connected', () => {
       setConnectionState(ConnectionState.CONNECTED);
+      setReconnectIn(null);
     });
 
     const unsubDisconnected = client.on('connection.disconnected', () => {
       setConnectionState(ConnectionState.DISCONNECTED);
+      setReconnectIn(null);
       setUser(null);
     });
 
-    const unsubReconnecting = client.on('connection.reconnecting', () => {
+    const unsubReconnecting = client.on('connection.reconnecting', (data) => {
       setConnectionState(ConnectionState.RECONNECTING);
+      setReconnectIn(data.reconnectIn ?? null);
     });
 
     return () => {
@@ -118,10 +123,11 @@ export function ChatProvider({
       connectionState,
       isConnected: connectionState === ConnectionState.CONNECTED,
       isConnecting: connectionState === ConnectionState.CONNECTING || connectionState === ConnectionState.RECONNECTING,
+      reconnectIn,
       connectUser,
       disconnect,
     }),
-    [client, user, connectionState, connectUser, disconnect]
+    [client, user, connectionState, reconnectIn, connectUser, disconnect]
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
@@ -156,9 +162,10 @@ export function useConnectionState(): {
   state: ConnectionState;
   isConnected: boolean;
   isConnecting: boolean;
+  reconnectIn: number | null;
 } {
-  const { connectionState, isConnected, isConnecting } = useChatContext();
-  return { state: connectionState, isConnected, isConnecting };
+  const { connectionState, isConnected, isConnecting, reconnectIn } = useChatContext();
+  return { state: connectionState, isConnected, isConnecting, reconnectIn };
 }
 
 /**

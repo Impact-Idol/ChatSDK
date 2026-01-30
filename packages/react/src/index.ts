@@ -42,6 +42,8 @@ export {
   usePolls,
   useWorkspaces,
   useChannelSubscription,
+  isAlreadySubscribedError,
+  useWorkspaceSubscription,
 } from './hooks';
 
 export type {
@@ -95,21 +97,51 @@ export type {
   ChannelEvent,
   UseChannelSubscriptionOptions,
   UseChannelSubscriptionResult,
+  WorkspaceEvent,
+  UseWorkspaceSubscriptionOptions,
 } from './hooks';
 
 // Re-export core types for convenience
+// Consumer-friendly aliases (ChatUser, ChatChannel, etc.)
 export type {
+  User as ChatUser,
   User as CoreUser,
+  Channel as ChatChannel,
   Channel as CoreChannel,
+  Message as ChatMessage,
   Message as CoreMessage,
-  MessageWithSeq,
-  Attachment,
+  Reaction as ChatReaction,
   Reaction as CoreReaction,
+  Attachment as ChatAttachment,
+  Attachment,
+  MessageWithSeq,
   ReactionGroup,
   ChannelMember,
   ConnectionState,
   ChatClientOptions,
+  ReadState,
+  TypingEvent as TypingState,
+  EventMap,
+  EventCallback,
+  ChatEvent,
+  ChatEventType,
 } from '@chatsdk/core';
+
+// Re-export error classes and ErrorCodes for direct access
+export {
+  ChatSDKError,
+  AuthenticationError,
+  NetworkError,
+  PermissionError,
+  RateLimitError,
+  ValidationError,
+  ConnectionError,
+  TimeoutError,
+  ConfigurationError,
+  ErrorCodes,
+  createError,
+} from '@chatsdk/core';
+export type { ErrorCode } from '@chatsdk/core';
 
 // Shared Components
 export { Avatar } from './components/shared/Avatar';

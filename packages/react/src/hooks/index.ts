@@ -148,7 +148,15 @@ export {
 // Channel Subscription
 export {
   useChannelSubscription,
+  isAlreadySubscribedError,
   type ChannelEvent,
   type UseChannelSubscriptionOptions,
   type UseChannelSubscriptionResult,
 } from './useChannelSubscription';
+
+// Workspace Subscription
+export {
+  useWorkspaceSubscription,
+  type WorkspaceEvent,
+  type UseWorkspaceSubscriptionOptions,
+} from './useWorkspaceSubscription';

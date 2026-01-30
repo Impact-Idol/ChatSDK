@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Channel } from '@chatsdk/core';
+import type { Channel, CreateChannel } from '@chatsdk/core';
 import { useChatClient, useChatContext } from './ChatProvider';
 
 export interface UseChannelsOptions {
@@ -21,6 +21,7 @@ export interface UseChannelsResult {
   refresh: () => Promise<void>;
   loadMore: () => Promise<void>;
   hasMore: boolean;
+  createChannel: (data: CreateChannel) => Promise<Channel>;
 }
 
 /**
@@ -122,7 +123,9 @@ export function useChannels(options: UseChannelsOptions = {}): UseChannelsResult
     if (!watch) return;
 
     const unsubCreated = client.on('channel.created', ({ channel }) => {
-      setChannels((prev) => [channel, ...prev]);
+      setChannels((prev) =>
+        prev.some((c) => c.id === channel.id) ? prev : [channel, ...prev]
+      );
     });
 
     const unsubUpdated = client.on('channel.updated', ({ channel }) => {
@@ -155,6 +158,15 @@ export function useChannels(options: UseChannelsOptions = {}): UseChannelsResult
   const refresh = useCallback(() => loadChannels(true), [loadChannels]);
   const loadMore = useCallback(() => loadChannels(false), [loadChannels]);
 
+  const createChannel = useCallback(
+    async (data: CreateChannel): Promise<Channel> => {
+      const channel = await client.createChannel(data);
+      setChannels((prev) => [channel, ...prev]);
+      return channel;
+    },
+    [client]
+  );
+
   return {
     channels,
     loading,
@@ -162,6 +174,7 @@ export function useChannels(options: UseChannelsOptions = {}): UseChannelsResult
     refresh,
     loadMore,
     hasMore,
+    createChannel,
   };
 }
 
