@@ -19,6 +19,7 @@ const createChannelSchema = z.object({
   image: z.string().url().optional(),
   memberIds: z.array(z.string()).default([]), // Allow empty for group channels
   workspaceId: z.string().uuid().optional(), // Associate channel with a workspace
+  idempotencyKey: z.string().max(255).optional(), // Prevent duplicate group channel creation on retry/race
   config: z.object({
     typingEvents: z.boolean().optional(),
     readEvents: z.boolean().optional(),
@@ -77,12 +78,14 @@ channelRoutes.post(
       return c.redirect(`/api/channels/${channelId}`, 303);
     }
 
-    // Create channel in transaction
+    // Create channel in transaction (uses ON CONFLICT for atomic idempotency)
     const result = await db.transaction(async (client) => {
-      // Insert channel
+      // Insert channel — ON CONFLICT handles concurrent requests with same idempotency_key
       const channelResult = await client.query(
-        `INSERT INTO channel (id, app_id, cid, type, name, image_url, config, created_by, member_count, workspace_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO channel (id, app_id, cid, type, name, image_url, config, created_by, member_count, workspace_id, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (app_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+         DO NOTHING
          RETURNING *`,
         [
           channelId,
@@ -95,8 +98,14 @@ channelRoutes.post(
           auth.userId,
           body.memberIds.length + 1, // +1 for creator
           body.workspaceId ?? null,
+          body.idempotencyKey ?? null,
         ]
       );
+
+      // ON CONFLICT DO NOTHING returns 0 rows — idempotency key already exists
+      if (channelResult.rows.length === 0) {
+        return null; // Signal that this is a duplicate
+      }
 
       // Add creator as owner
       await client.query(
@@ -133,6 +142,15 @@ channelRoutes.post(
 
       return channelResult.rows[0];
     });
+
+    // Idempotency key conflict — return existing channel (200)
+    if (result === null) {
+      const existing = await db.query(
+        'SELECT * FROM channel WHERE app_id = $1 AND idempotency_key = $2',
+        [auth.appId, body.idempotencyKey]
+      );
+      return c.json(formatChannel(existing.rows[0]), 200);
+    }
 
     // Broadcast channel created event
     try {
@@ -530,6 +548,73 @@ channelRoutes.post(
   }
 );
 
+/** Role hierarchy levels: higher number = higher privilege */
+const ROLE_LEVEL: Record<string, number> = { owner: 4, admin: 3, moderator: 2, member: 1 };
+
+const updateChannelMemberRoleSchema = z.object({
+  role: z.enum(['owner', 'admin', 'moderator', 'member']),
+});
+
+/**
+ * Update channel member role
+ * PATCH /api/channels/:channelId/members/:userId
+ *
+ * Note: Channel role updates always require per-user permission checks.
+ * Unlike workspace routes, API-key auth does NOT bypass role checks here.
+ */
+channelRoutes.patch(
+  '/:channelId/members/:userId',
+  requireUser,
+  zValidator('json', updateChannelMemberRoleSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const channelId = c.req.param('channelId');
+    const targetUserId = c.req.param('userId');
+    const body = c.req.valid('json');
+
+    // Check permission: caller must be owner, admin, or moderator
+    const memberResult = await db.query(
+      `SELECT role FROM channel_member
+       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+      [channelId, auth.appId, auth.userId]
+    );
+
+    if (memberResult.rows.length === 0) {
+      return c.json({ error: { message: 'Channel not found' } }, 404);
+    }
+
+    const callerRole = memberResult.rows[0].role;
+    if (!['owner', 'admin', 'moderator'].includes(callerRole)) {
+      return c.json({ error: { message: 'Permission denied' } }, 403);
+    }
+
+    // Role hierarchy enforcement: callers can only assign roles at or below their own level
+    if ((ROLE_LEVEL[body.role] ?? 0) > (ROLE_LEVEL[callerRole] ?? 0)) {
+      return c.json({ error: { message: 'Cannot assign a role higher than your own' } }, 403);
+    }
+
+    // Verify target member exists
+    const targetResult = await db.query(
+      `SELECT role FROM channel_member
+       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+      [channelId, auth.appId, targetUserId]
+    );
+
+    if (targetResult.rows.length === 0) {
+      return c.json({ error: { message: 'Member not found' } }, 404);
+    }
+
+    // Update role
+    await db.query(
+      `UPDATE channel_member SET role = $4
+       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+      [channelId, auth.appId, targetUserId, body.role]
+    );
+
+    return c.json({ success: true, role: body.role });
+  }
+);
+
 /**
  * Remove member from channel
  * DELETE /api/channels/:channelId/members/:userId
@@ -748,5 +833,6 @@ function formatChannel(row: any) {
     muted: row.muted,
     starred: row.starred,
     role: row.role,
+    idempotencyKey: row.idempotency_key ?? undefined,
   };
 }

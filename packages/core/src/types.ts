@@ -413,10 +413,13 @@ export interface PendingMessage {
 
 export interface EventMap {
   // Connection events
+  // Note: connection.connecting is emitted for initial connects only.
+  // Reconnects after disconnect emit connection.reconnecting instead.
   'connection.connecting': void;
   'connection.connected': void;
   'connection.disconnected': { reason: string };
-  'connection.reconnecting': { attempt: number };
+  // reconnectIn is approximate (ms) — Centrifuge may add jitter (0-1x of base interval)
+  'connection.reconnecting': { attempt: number; reconnectIn: number | null };
   'connection.error': { error: Error };
 
   // Sync events

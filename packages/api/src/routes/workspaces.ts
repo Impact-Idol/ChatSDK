@@ -381,6 +381,89 @@ workspaceRoutes.post(
   }
 );
 
+const updateMemberRoleSchema = z.object({
+  role: z.enum(['owner', 'admin', 'member']),
+});
+
+/**
+ * Update workspace member role
+ * PATCH /api/workspaces/:id/members/:userId
+ */
+workspaceRoutes.patch(
+  '/:id/members/:userId',
+  requireUser,
+  zValidator('json', updateMemberRoleSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const workspaceId = c.req.param('id');
+    const targetUserId = c.req.param('userId');
+    const body = c.req.valid('json');
+
+    if (isAppLevelAuth(c)) {
+      logger.info({
+        type: 'workspace_admin',
+        op: 'update_member_role',
+        app_id: auth.appId,
+        workspace_id: workspaceId,
+        target_user_id: targetUserId,
+        user_id: auth.userId,
+      }, 'API key authorized member role update');
+    } else {
+      const memberCheck = await db.query(
+        `SELECT role FROM workspace_member
+         WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+        [workspaceId, auth.appId, auth.userId]
+      );
+
+      if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
+        return c.json({ error: { message: 'Permission denied' } }, 403);
+      }
+    }
+
+    // Verify workspace exists
+    const wsCheck = await db.query(
+      `SELECT 1 FROM workspace WHERE id = $1 AND app_id = $2`,
+      [workspaceId, auth.appId]
+    );
+    if (wsCheck.rows.length === 0) {
+      return c.json({ error: { message: 'Workspace not found' } }, 404);
+    }
+
+    // Verify target member exists
+    const targetRole = await db.query(
+      `SELECT role FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+      [workspaceId, auth.appId, targetUserId]
+    );
+
+    if (targetRole.rows.length === 0) {
+      return c.json({ error: { message: 'Member not found' } }, 404);
+    }
+
+    // Prevent demoting the last owner
+    if (targetRole.rows[0].role === 'owner' && body.role !== 'owner') {
+      const ownerCount = await db.query(
+        `SELECT COUNT(*) as count FROM workspace_member
+         WHERE workspace_id = $1 AND role = 'owner'`,
+        [workspaceId]
+      );
+
+      if (parseInt(ownerCount.rows[0].count) <= 1) {
+        return c.json({ error: { message: 'Cannot demote the last owner' } }, 400);
+      }
+    }
+
+    // Update role
+    await db.query(
+      `UPDATE workspace_member SET role = $4
+       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+      [workspaceId, auth.appId, targetUserId, body.role]
+    );
+
+    return c.json({ success: true, role: body.role });
+  }
+);
+
 /**
  * Remove member from workspace
  * DELETE /api/workspaces/:id/members/:userId

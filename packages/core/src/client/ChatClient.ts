@@ -135,6 +135,7 @@ export class ChatClient {
   private wsCircuitBreaker: CircuitBreaker;  // Circuit breaker for WebSocket
   private deduplicator: RequestDeduplicator; // Request deduplication
   public offlineQueue: OfflineQueue | null = null; // Offline queue with auto-retry (Week 3)
+  private reconnectAttempt = 0; // Tracks reconnect attempts for reconnectIn calculation
 
   constructor(options: ChatClientOptions) {
     // Filter out undefined values from options to avoid overwriting defaults
@@ -392,7 +393,28 @@ export class ChatClient {
 
     this.centrifuge.on('connecting', (ctx) => {
       this.log('connection', 'WebSocket connecting...', { code: ctx.code, reason: ctx.reason });
-      this.setConnectionState('connecting');
+
+      // Centrifuge fires 'connecting' for both initial connect and reconnect.
+      // Detect reconnects: if we were previously connected/reconnecting, or Centrifuge
+      // signals code 1 (reconnect after disconnect), treat as reconnect.
+      const isReconnect = this.connectionState === 'connected'
+        || this.connectionState === 'reconnecting'
+        || ctx.code === 1;
+
+      if (isReconnect) {
+        this.reconnectAttempt++;
+        const intervals = this.config.reconnectIntervals ?? [1000, 2000, 4000, 8000, 16000];
+        const idx = Math.min(this.reconnectAttempt - 1, intervals.length - 1);
+        const reconnectIn = intervals[idx] ?? null;
+        this.setConnectionState('reconnecting');
+        this.eventBus.emit('connection.reconnecting', {
+          attempt: this.reconnectAttempt,
+          reconnectIn,
+        });
+      } else {
+        this.setConnectionState('connecting');
+        this.eventBus.emit('connection.connecting');
+      }
     });
 
     this.centrifuge.on('connected', (ctx) => {
@@ -400,6 +422,7 @@ export class ChatClient {
         client: ctx.client,
         transport: ctx.transport,
       });
+      this.reconnectAttempt = 0;
       this.setConnectionState('connected');
     });
 
@@ -736,6 +759,23 @@ export class ChatClient {
   }
 
   /**
+   * Get the approximate delay (ms) until the next reconnection attempt,
+   * or null if not currently reconnecting.
+   *
+   * Note: This is calculated from the `reconnectIntervals` config array.
+   * The actual Centrifuge reconnect may include additional jitter (0-1x of the
+   * base interval), so this value is an approximation, not a precise countdown.
+   */
+  get reconnectDelay(): number | null {
+    if (this.connectionState !== 'reconnecting' || this.reconnectAttempt === 0) {
+      return null;
+    }
+    const intervals = this.config.reconnectIntervals ?? [1000, 2000, 4000, 8000, 16000];
+    const idx = Math.min(this.reconnectAttempt - 1, intervals.length - 1);
+    return intervals[idx] ?? null;
+  }
+
+  /**
    * Get API base URL
    */
   get apiUrl(): string {
@@ -1030,6 +1070,93 @@ export class ChatClient {
     await this.fetch(`/api/channels/${channelId}/read`, {
       method: 'POST',
       body: JSON.stringify({ messageId }),
+    });
+  }
+
+  // ============================================================================
+  // Workspace Member Operations
+  // ============================================================================
+
+  /**
+   * Update a workspace member's role
+   */
+  async updateWorkspaceMemberRole(
+    workspaceId: string,
+    userId: string,
+    role: 'owner' | 'admin' | 'member'
+  ): Promise<{ success: boolean; role: string }> {
+    return this.fetch(`/api/workspaces/${workspaceId}/members/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  /**
+   * Add members to a workspace
+   */
+  async addWorkspaceMembers(
+    workspaceId: string,
+    userIds: string[],
+    role: 'owner' | 'admin' | 'member' = 'member'
+  ): Promise<{ added: string[]; count: number }> {
+    return this.fetch(`/api/workspaces/${workspaceId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userIds, role }),
+    });
+  }
+
+  /**
+   * Remove a member from a workspace
+   */
+  async removeWorkspaceMember(
+    workspaceId: string,
+    userId: string
+  ): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/members/${userId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ============================================================================
+  // Channel Member Operations
+  // ============================================================================
+
+  /**
+   * Update a channel member's role
+   */
+  async updateChannelMemberRole(
+    channelId: string,
+    userId: string,
+    role: 'owner' | 'admin' | 'moderator' | 'member'
+  ): Promise<{ success: boolean; role: string }> {
+    return this.fetch(`/api/channels/${channelId}/members/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  /**
+   * Add members to a channel
+   */
+  async addChannelMembers(
+    channelId: string,
+    userIds: string[]
+  ): Promise<{ success: boolean; addedCount: number }> {
+    return this.fetch(`/api/channels/${channelId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ userIds }),
+    });
+  }
+
+  /**
+   * Remove a member from a channel
+   */
+  async removeChannelMember(
+    channelId: string,
+    userId: string
+  ): Promise<void> {
+    await this.fetch(`/api/channels/${channelId}/members/${userId}`, {
+      method: 'DELETE',
     });
   }
 

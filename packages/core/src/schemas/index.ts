@@ -61,6 +61,7 @@ export const CreateChannelSchema = z.object({
   description: z.string().max(1000).optional(),
   image: z.string().url().optional(),
   workspaceId: z.string().uuid().optional(),
+  idempotencyKey: z.string().max(255).optional(),
 });
 
 export const UpdateChannelSchema = z.object({
