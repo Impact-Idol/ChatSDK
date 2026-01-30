@@ -4,10 +4,23 @@
  */
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { requireUser } from '../middleware/auth';
 import { db } from '../services/database';
+import { logger } from '../services/logger';
+
+/**
+ * Check if the request is a trusted server-side call via API key.
+ * The authMiddleware validates the API key before any route handler runs,
+ * so if we reach a handler, the API key is guaranteed valid.
+ * API-key-authenticated requests bypass per-user role checks for
+ * workspace management operations (add/remove members, update, delete).
+ */
+function isAppLevelAuth(c: Context): boolean {
+  return !!c.req.header('X-API-Key');
+}
 
 export const workspaceRoutes = new Hono();
 
@@ -187,15 +200,18 @@ workspaceRoutes.put(
     const workspaceId = c.req.param('id');
     const body = c.req.valid('json');
 
-    // Verify admin/owner permission
-    const memberCheck = await db.query(
-      `SELECT role FROM workspace_member
-       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-      [workspaceId, auth.appId, auth.userId]
-    );
+    if (isAppLevelAuth(c)) {
+      logger.info({ type: 'workspace_admin', op: 'update', app_id: auth.appId, workspace_id: workspaceId, user_id: auth.userId }, 'API key authorized workspace update');
+    } else {
+      const memberCheck = await db.query(
+        `SELECT role FROM workspace_member
+         WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+        [workspaceId, auth.appId, auth.userId]
+      );
 
-    if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
-      return c.json({ error: { message: 'Permission denied' } }, 403);
+      if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
+        return c.json({ error: { message: 'Permission denied' } }, 403);
+      }
     }
 
     const updates = [];
@@ -270,15 +286,18 @@ workspaceRoutes.delete('/:id', requireUser, async (c) => {
   const auth = c.get('auth');
   const workspaceId = c.req.param('id');
 
-  // Verify owner permission
-  const memberCheck = await db.query(
-    `SELECT role FROM workspace_member
-     WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-    [workspaceId, auth.appId, auth.userId]
-  );
+  if (isAppLevelAuth(c)) {
+    logger.info({ type: 'workspace_admin', op: 'delete', app_id: auth.appId, workspace_id: workspaceId, user_id: auth.userId }, 'API key authorized workspace deletion');
+  } else {
+    const memberCheck = await db.query(
+      `SELECT role FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+      [workspaceId, auth.appId, auth.userId]
+    );
 
-  if (memberCheck.rows.length === 0 || memberCheck.rows[0].role !== 'owner') {
-    return c.json({ error: { message: 'Permission denied. Only owners can delete workspaces' } }, 403);
+    if (memberCheck.rows.length === 0 || memberCheck.rows[0].role !== 'owner') {
+      return c.json({ error: { message: 'Permission denied. Only owners can delete workspaces' } }, 403);
+    }
   }
 
   await db.query(
@@ -310,15 +329,18 @@ workspaceRoutes.post(
     const workspaceId = c.req.param('id');
     const body = c.req.valid('json');
 
-    // Verify admin/owner permission
-    const memberCheck = await db.query(
-      `SELECT role FROM workspace_member
-       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-      [workspaceId, auth.appId, auth.userId]
-    );
+    if (isAppLevelAuth(c)) {
+      logger.info({ type: 'workspace_admin', op: 'add_members', app_id: auth.appId, workspace_id: workspaceId, user_id: auth.userId }, 'API key authorized member management');
+    } else {
+      const memberCheck = await db.query(
+        `SELECT role FROM workspace_member
+         WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+        [workspaceId, auth.appId, auth.userId]
+      );
 
-    if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
-      return c.json({ error: { message: 'Permission denied' } }, 403);
+      if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
+        return c.json({ error: { message: 'Permission denied' } }, 403);
+      }
     }
 
     // Add members
@@ -359,38 +381,39 @@ workspaceRoutes.delete('/:id/members/:userId', requireUser, async (c) => {
   const workspaceId = c.req.param('id');
   const targetUserId = c.req.param('userId');
 
-  // Verify admin/owner permission or self-removal
-  const memberCheck = await db.query(
-    `SELECT role FROM workspace_member
-     WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-    [workspaceId, auth.appId, auth.userId]
-  );
-
-  const isSelf = auth.userId === targetUserId;
-  const isAdmin = memberCheck.rows.length > 0 && ['owner', 'admin'].includes(memberCheck.rows[0].role);
-
-  if (!isSelf && !isAdmin) {
-    return c.json({ error: { message: 'Permission denied' } }, 403);
-  }
-
-  // Don't allow removing the last owner
-  if (!isSelf) {
-    const targetRole = await db.query(
+  if (isAppLevelAuth(c)) {
+    logger.info({ type: 'workspace_admin', op: 'remove_member', app_id: auth.appId, workspace_id: workspaceId, target_user_id: targetUserId, user_id: auth.userId }, 'API key authorized member removal');
+  } else {
+    const memberCheck = await db.query(
       `SELECT role FROM workspace_member
        WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-      [workspaceId, auth.appId, targetUserId]
+      [workspaceId, auth.appId, auth.userId]
     );
 
-    if (targetRole.rows.length > 0 && targetRole.rows[0].role === 'owner') {
-      const ownerCount = await db.query(
-        `SELECT COUNT(*) as count FROM workspace_member
-         WHERE workspace_id = $1 AND role = 'owner'`,
-        [workspaceId]
-      );
+    const isSelf = auth.userId === targetUserId;
+    const isAdmin = memberCheck.rows.length > 0 && ['owner', 'admin'].includes(memberCheck.rows[0].role);
 
-      if (parseInt(ownerCount.rows[0].count) <= 1) {
-        return c.json({ error: { message: 'Cannot remove the last owner' } }, 400);
-      }
+    if (!isSelf && !isAdmin) {
+      return c.json({ error: { message: 'Permission denied' } }, 403);
+    }
+  }
+
+  // Don't allow removing the last owner (applies to all auth paths)
+  const targetRole = await db.query(
+    `SELECT role FROM workspace_member
+     WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+    [workspaceId, auth.appId, targetUserId]
+  );
+
+  if (targetRole.rows.length > 0 && targetRole.rows[0].role === 'owner') {
+    const ownerCount = await db.query(
+      `SELECT COUNT(*) as count FROM workspace_member
+       WHERE workspace_id = $1 AND role = 'owner'`,
+      [workspaceId]
+    );
+
+    if (parseInt(ownerCount.rows[0].count) <= 1) {
+      return c.json({ error: { message: 'Cannot remove the last owner' } }, 400);
     }
   }
 
@@ -473,20 +496,23 @@ workspaceRoutes.post(
     const workspaceId = c.req.param('id');
     const body = c.req.valid('json');
 
-    // Check if user is admin/owner of workspace
-    const memberResult = await db.query(
-      `SELECT role FROM workspace_member
-       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-      [workspaceId, auth.appId, auth.userId]
-    );
+    if (isAppLevelAuth(c)) {
+      logger.info({ type: 'workspace_admin', op: 'invite', app_id: auth.appId, workspace_id: workspaceId, user_id: auth.userId }, 'API key authorized workspace invite');
+    } else {
+      const memberResult = await db.query(
+        `SELECT role FROM workspace_member
+         WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+        [workspaceId, auth.appId, auth.userId]
+      );
 
-    if (memberResult.rows.length === 0) {
-      return c.json({ error: { message: 'Workspace not found' } }, 404);
-    }
+      if (memberResult.rows.length === 0) {
+        return c.json({ error: { message: 'Workspace not found' } }, 404);
+      }
 
-    const role = memberResult.rows[0].role;
-    if (!['owner', 'admin'].includes(role)) {
-      return c.json({ error: { message: 'Only admins can invite members' } }, 403);
+      const role = memberResult.rows[0].role;
+      if (!['owner', 'admin'].includes(role)) {
+        return c.json({ error: { message: 'Only admins can invite members' } }, 403);
+      }
     }
 
     // Get workspace details

@@ -177,6 +177,61 @@ describe('Workspace CRUD Operations', () => {
 });
 
 // ============================================================================
+// WORKSPACE MEMBER MANAGEMENT WITH API KEY TESTS
+// ============================================================================
+
+describe('Workspace Member Management with API Key', () => {
+  let regularUserId = 'regular-user-' + Date.now();
+  let regularUserToken = '';
+
+  beforeAll(async () => {
+    // Create a regular user and get their token via POST /tokens
+    const { data } = await apiCall('/tokens', {
+      method: 'POST',
+      body: JSON.stringify({
+        userId: regularUserId,
+        name: 'Regular User',
+      }),
+    });
+
+    regularUserToken = data.token;
+  });
+
+  it('should allow adding members to workspace when API key is present, even if Bearer token user is not a workspace member', async () => {
+    // This reproduces the Impact Idol bug:
+    // The Bearer token belongs to a user who is NOT a workspace member/owner,
+    // but the request includes a valid X-API-Key which should authorize the operation.
+    const { response, data } = await apiCall(
+      `/api/workspaces/${testWorkspaceId}/members`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${regularUserToken}`,
+        },
+        body: JSON.stringify({
+          userIds: [regularUserId],
+          role: 'member',
+        }),
+      }
+    );
+
+    // With a valid API key, this should succeed regardless of the Bearer token user's role
+    expect(response.status).toBe(200);
+    expect(data.added).toContain(regularUserId);
+  });
+
+  afterAll(async () => {
+    // Clean up: remove the regular user from workspace
+    if (testWorkspaceId && regularUserId) {
+      await apiCall(
+        `/api/workspaces/${testWorkspaceId}/members/${regularUserId}`,
+        { method: 'DELETE' }
+      );
+    }
+  });
+});
+
+// ============================================================================
 // CHANNEL TESTS
 // ============================================================================
 
