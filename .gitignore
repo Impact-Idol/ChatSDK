@@ -55,8 +55,9 @@ xcuserdata/
 DerivedData/
 .swiftpm/
 
-# Exclude research and reference assets
-assets/
+# Exclude research and reference assets (but keep delivery-package)
+assets/*
+!assets/delivery-package/
 research/
 
 # Exclude internal documentation (planning, specs, compliance)
