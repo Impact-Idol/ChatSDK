@@ -56,7 +56,6 @@ import * as jose from 'jose';
 const JWT_SECRET = process.env.JWT_SECRET || 'test-secret-key-for-testing';
 const TEST_APP_ID = '00000000-0000-0000-0000-000000000001';
 const TEST_USER_ID = 'user-111';
-const TEST_API_KEY = 'a'.repeat(64);
 
 async function generateToken(userId: string, appId: string): Promise<string> {
   const secret = new TextEncoder().encode(JWT_SECRET);
@@ -95,7 +94,6 @@ async function createChannel(body: object) {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
-      'X-API-Key': TEST_API_KEY,
     },
     body: JSON.stringify(body),
   });
@@ -104,7 +102,7 @@ async function createChannel(body: object) {
 /** Standard auth mocks: app lookup + user lookup + CID check (no match) */
 function setupAuthMocks() {
   mockQuery.mockImplementation((sql: string) => {
-    if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+    if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
       return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
     }
     if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -154,7 +152,7 @@ describe('POST /api/channels - idempotency key', () => {
 
     // Auth mocks + post-transaction re-fetch of existing channel
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -269,7 +267,7 @@ describe('POST /api/channels - idempotency key', () => {
 
     // Setup: conflict path — transaction returns null, then re-fetch query runs
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {

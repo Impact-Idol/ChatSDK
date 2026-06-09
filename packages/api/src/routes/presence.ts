@@ -6,9 +6,10 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { requireUser } from '../middleware/auth';
+import { requireScope, requireUser } from '../middleware/auth';
 import { db } from '../services/database';
 import { centrifugo, getCentrifugo } from '../services/centrifugo';
+import { isChannelMember } from '../services/authorization';
 
 export const presenceRoutes = new Hono();
 
@@ -16,7 +17,7 @@ export const presenceRoutes = new Hono();
  * Update user presence (heartbeat)
  * POST /api/presence/heartbeat
  */
-presenceRoutes.post('/heartbeat', requireUser, async (c) => {
+presenceRoutes.post('/heartbeat', requireUser, requireScope('typing:write'), async (c) => {
   const auth = c.get('auth');
 
   // Update last_active_at
@@ -32,7 +33,7 @@ presenceRoutes.post('/heartbeat', requireUser, async (c) => {
  * Set user online
  * POST /api/presence/online
  */
-presenceRoutes.post('/online', requireUser, async (c) => {
+presenceRoutes.post('/online', requireUser, requireScope('typing:write'), async (c) => {
   const auth = c.get('auth');
 
   // Update user status
@@ -51,7 +52,11 @@ presenceRoutes.post('/online', requireUser, async (c) => {
   );
 
   for (const row of memberships.rows) {
-    await centrifugo.publishPresence(auth.appId, auth.userId!, true);
+    try {
+      await centrifugo.publishPresence(auth.appId, auth.userId!, true);
+    } catch (error) {
+      console.warn('Failed to publish ephemeral presence event:', error);
+    }
   }
 
   return c.json({ success: true });
@@ -61,7 +66,7 @@ presenceRoutes.post('/online', requireUser, async (c) => {
  * Set user offline
  * POST /api/presence/offline
  */
-presenceRoutes.post('/offline', requireUser, async (c) => {
+presenceRoutes.post('/offline', requireUser, requireScope('typing:write'), async (c) => {
   const auth = c.get('auth');
 
   // Update user status
@@ -81,7 +86,11 @@ presenceRoutes.post('/offline', requireUser, async (c) => {
 
   const lastSeen = new Date().toISOString();
   for (const row of memberships.rows) {
-    await centrifugo.publishPresence(auth.appId, auth.userId!, false, lastSeen);
+    try {
+      await centrifugo.publishPresence(auth.appId, auth.userId!, false, lastSeen);
+    } catch (error) {
+      console.warn('Failed to publish ephemeral presence event:', error);
+    }
   }
 
   return c.json({ success: true });
@@ -98,17 +107,25 @@ const queryPresenceSchema = z.object({
 presenceRoutes.post(
   '/query',
   requireUser,
+  requireScope('chat:read'),
   zValidator('json', queryPresenceSchema),
   async (c) => {
     const auth = c.get('auth');
     const body = c.req.valid('json');
 
     const result = await db.query(
-      `SELECT id, name, image_url, last_active_at,
-              COALESCE((custom_data->>'online')::boolean, false) as online
-       FROM app_user
-       WHERE app_id = $1 AND id = ANY($2)`,
-      [auth.appId, body.userIds]
+      `SELECT DISTINCT u.id, u.name, u.image_url, u.last_active_at,
+              COALESCE((u.custom_data->>'online')::boolean, false) as online
+       FROM app_user u
+       JOIN channel_member target_cm
+         ON target_cm.app_id = u.app_id
+        AND target_cm.user_id = u.id
+       JOIN channel_member caller_cm
+         ON caller_cm.app_id = target_cm.app_id
+        AND caller_cm.channel_id = target_cm.channel_id
+        AND caller_cm.user_id = $2
+       WHERE u.app_id = $1 AND u.id = ANY($3)`,
+      [auth.appId, auth.userId, body.userIds]
     );
 
     // Calculate online status (online within last 5 minutes)
@@ -146,17 +163,12 @@ presenceRoutes.post(
  */
 export const channelPresenceRoutes = new Hono();
 
-channelPresenceRoutes.get('/', requireUser, async (c) => {
+channelPresenceRoutes.get('/', requireUser, requireScope('chat:read'), async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
+  const channelId = c.req.param('channelId')!;
 
   // Verify membership
-  const memberCheck = await db.query(
-    `SELECT 1 FROM channel_member WHERE channel_id = $1 AND user_id = $2`,
-    [channelId, auth.userId]
-  );
-
-  if (memberCheck.rows.length === 0) {
+  if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
     return c.json({ error: { message: 'Not a member of this channel', code: 'FORBIDDEN' } }, 403);
   }
 
@@ -166,9 +178,9 @@ channelPresenceRoutes.get('/', requireUser, async (c) => {
             COALESCE((u.custom_data->>'online')::boolean, false) as online
      FROM channel_member cm
      JOIN app_user u ON u.app_id = cm.app_id AND u.id = cm.user_id
-     WHERE cm.channel_id = $1
+     WHERE cm.channel_id = $1 AND cm.app_id = $2
      ORDER BY u.last_active_at DESC NULLS LAST`,
-    [channelId]
+    [channelId, auth.appId]
   );
 
   const now = Date.now();
@@ -209,22 +221,17 @@ channelPresenceRoutes.get('/', requireUser, async (c) => {
  * Get real-time presence from Centrifugo
  * GET /api/channels/:channelId/presence/live
  */
-channelPresenceRoutes.get('/live', requireUser, async (c) => {
+channelPresenceRoutes.get('/live', requireUser, requireScope('chat:read'), async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
+  const channelId = c.req.param('channelId')!;
 
   // Verify membership
-  const memberCheck = await db.query(
-    `SELECT 1 FROM channel_member WHERE channel_id = $1 AND user_id = $2`,
-    [channelId, auth.userId]
-  );
-
-  if (memberCheck.rows.length === 0) {
+  if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
     return c.json({ error: { message: 'Not a member of this channel', code: 'FORBIDDEN' } }, 403);
   }
 
   try {
-    const presence = await getCentrifugo().presence(`chat:${channelId}`);
+    const presence = await getCentrifugo().presence(`chat:${auth.appId}:${channelId}`);
 
     const clients = Object.values(presence.clients).map((client: any) => ({
       clientId: client.client,

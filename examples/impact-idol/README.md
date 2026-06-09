@@ -209,25 +209,19 @@ export async function sendMessage(channelId: string, content: string) {
 Update your root layout to include ChatSDK:
 
 ```typescript
-// app/layout.tsx
+// app/providers.tsx
+'use client';
+
 import { ChatProvider } from '@chatsdk/react';
-import { impactIdolTheme } from '@chatsdk/react';
-import { ChatClient } from '@chatsdk/core';
 
-const chatClient = new ChatClient({
-  apiUrl: process.env.NEXT_PUBLIC_CHATSDK_API_URL!,
-  apiKey: process.env.NEXT_PUBLIC_CHATSDK_API_KEY!,
-});
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export function ChatSDKProvider({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <ChatProvider client={chatClient} theme={impactIdolTheme}>
-          {children}
-        </ChatProvider>
-      </body>
-    </html>
+    <ChatProvider
+      apiUrl={process.env.NEXT_PUBLIC_CHATSDK_API_URL}
+      tokenProvider={() => fetch('/api/chatsdk-token').then((res) => res.json())}
+    >
+      {children}
+    </ChatProvider>
   );
 }
 ```
@@ -375,12 +369,7 @@ ChatSDK includes a custom **Impact Idol theme** that matches your brand:
 ```typescript
 import { impactIdolTheme, themeToCSSVariables } from '@chatsdk/react';
 
-// Option 1: Use theme with ChatProvider
-<ChatProvider client={client} theme={impactIdolTheme}>
-  <App />
-</ChatProvider>
-
-// Option 2: Generate CSS variables
+// Generate CSS variables
 const cssVars = themeToCSSVariables(impactIdolTheme);
 // Inject into <style> tag
 

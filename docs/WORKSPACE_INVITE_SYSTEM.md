@@ -123,7 +123,7 @@ CREATE INDEX idx_workspace_invite_expires ON workspace_invite (expires_at) WHERE
 
 **Endpoint:** `POST /api/workspaces/:id/invite`
 
-**Authentication:** Required (Bearer token + API key)
+**Authentication:** Required (Bearer token)
 
 **Authorization:** Workspace owner or admin only
 
@@ -165,7 +165,6 @@ CREATE INDEX idx_workspace_invite_expires ON workspace_invite (expires_at) WHERE
 **cURL Example:**
 ```bash
 curl -X POST http://localhost:5501/api/workspaces/cc8c0893-caf0-41aa-bc95-931599af2511/invite \
-  -H "X-API-Key: your-api-key" \
   -H "Authorization: Bearer your-jwt-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -181,7 +180,7 @@ curl -X POST http://localhost:5501/api/workspaces/cc8c0893-caf0-41aa-bc95-931599
 
 **Endpoint:** `GET /api/workspaces/invites/:token`
 
-**Authentication:** Required (Bearer token + API key)
+**Authentication:** Required (Bearer token)
 
 **Request Parameters:**
 - `token`: The invite token from the email link (64 hex characters)
@@ -220,7 +219,6 @@ curl -X POST http://localhost:5501/api/workspaces/cc8c0893-caf0-41aa-bc95-931599
 **cURL Example:**
 ```bash
 curl -X GET http://localhost:5501/api/workspaces/invites/791fa8a794bdbb461772efbe77182da2710751df94b044e18e004f8acc77d9d0 \
-  -H "X-API-Key: your-api-key" \
   -H "Authorization: Bearer your-jwt-token"
 ```
 
@@ -444,7 +442,6 @@ export function useSendWorkspaceInvites() {
       const response = await fetch(`${API_URL}/api/workspaces/${workspaceId}/invite`, {
         method: 'POST',
         headers: {
-          'X-API-Key': API_KEY,
           'Authorization': `Bearer ${getAuthToken()}`,
           'Content-Type': 'application/json'
         },
@@ -476,7 +473,6 @@ export function useAcceptWorkspaceInvite() {
       const response = await fetch(`${API_URL}/api/workspaces/invites/${token}`, {
         method: 'GET',
         headers: {
-          'X-API-Key': API_KEY,
           'Authorization': `Bearer ${getAuthToken()}`
         }
       });
@@ -652,13 +648,11 @@ node tests/workspace-invite-test.mjs
 ```bash
 # 1. Get auth token for workspace owner
 curl -X POST http://localhost:5501/tokens \
-  -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"userId": "owner-1", "name": "Workspace Owner"}'
 
 # 2. Send invite
 curl -X POST http://localhost:5501/api/workspaces/{workspace-id}/invite \
-  -H "X-API-Key: your-api-key" \
   -H "Authorization: Bearer {owner-token}" \
   -H "Content-Type: application/json" \
   -d '{"emails": ["newuser@example.com"], "message": "Join us!"}'
@@ -670,13 +664,11 @@ curl -X POST http://localhost:5501/api/workspaces/{workspace-id}/invite \
 ```bash
 # 1. Get auth token for new user
 curl -X POST http://localhost:5501/tokens \
-  -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"userId": "new-user-1", "name": "New User"}'
 
 # 2. Accept invite
 curl -X GET http://localhost:5501/api/workspaces/invites/{token} \
-  -H "X-API-Key: your-api-key" \
   -H "Authorization: Bearer {new-user-token}"
 
 # Expected: 200 OK with workspace details
@@ -686,7 +678,6 @@ curl -X GET http://localhost:5501/api/workspaces/invites/{token} \
 ```bash
 # Accept the same invite twice
 curl -X GET http://localhost:5501/api/workspaces/invites/{token} \
-  -H "X-API-Key: your-api-key" \
   -H "Authorization: Bearer {new-user-token}"
 
 # Expected: 200 OK with "alreadyMember": true
@@ -699,7 +690,6 @@ UPDATE workspace_invite SET expires_at = NOW() - INTERVAL '1 day' WHERE token = 
 ```
 ```bash
 curl -X GET http://localhost:5501/api/workspaces/invites/{expired-token} \
-  -H "X-API-Key: your-api-key" \
   -H "Authorization: Bearer {user-token}"
 
 # Expected: 404 Not Found - "Invalid or expired invite"

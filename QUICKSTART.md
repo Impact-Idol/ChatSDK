@@ -114,7 +114,11 @@ Replace demo authentication with your own:
 import { ChatSDK } from '@chatsdk/react';
 
 const client = await ChatSDK.connect({
-  apiKey: process.env.NEXT_PUBLIC_CHATSDK_API_KEY!,
+  tokenProvider: async () => {
+    const response = await fetch('/api/chatsdk-token', { method: 'POST' });
+    if (!response.ok) throw new Error('Failed to get ChatSDK token');
+    return response.json();
+  },
   userId: currentUser.id,        // From your auth system
   displayName: currentUser.name,
   avatar: currentUser.avatar,
@@ -254,7 +258,7 @@ await client.connectUser(user, { token, wsToken });
 ```typescript
 // 1 step, everything automatic
 const client = await ChatSDK.connect({
-  apiKey: 'xxx',
+  tokenProvider: () => fetch('/api/chatsdk-token', { method: 'POST' }).then((res) => res.json()),
   userId: 'alice',
 });
 // That's it!

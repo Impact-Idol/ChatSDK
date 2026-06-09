@@ -7,10 +7,29 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { v7 as uuidv7 } from 'uuid';
+import type { PoolClient } from 'pg';
 import { db } from '../services/database';
-import { centrifugo } from '../services/centrifugo';
-import { requireUser } from '../middleware/auth';
-import { inngest } from '../inngest';
+import { requireScope, requireUser } from '../middleware/auth';
+import { sendInngestEvent } from '../inngest';
+import { getChannelAccess, isChannelMember } from '../services/authorization';
+import { enqueueRealtimeEvent, triggerRealtimeOutboxDrain } from '../services/realtime-outbox';
+import {
+  enqueueSearchIndexOperationTx,
+  indexMessage,
+  removeFromIndex,
+  updateMessageIndex,
+} from '../services/search';
+import {
+  prepareMessageAttachments,
+  refreshAttachmentMediaUrls,
+  type MediaUrlAuth,
+} from '../services/media-urls';
+import { RATE_LIMIT_POLICIES, rateLimitUser } from '../services/rate-limit';
+import {
+  hardPurgeMessage,
+  purgeStorageKeys,
+  softDeleteMessage,
+} from '../services/data-lifecycle';
 
 export const messageRoutes = new Hono();
 
@@ -20,6 +39,8 @@ const sendMessageSchema = z.object({
   attachments: z.array(z.object({
     type: z.enum(['image', 'video', 'audio', 'file', 'giphy', 'voicenote']),
     url: z.string().url(),
+    name: z.string().optional(),
+    size: z.number().optional(),
     title: z.string().optional(),
     mimeType: z.string().optional(),
     fileSize: z.number().optional(),
@@ -40,10 +61,13 @@ const sendMessageSchema = z.object({
 messageRoutes.post(
   '/',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageSend, (c) => ({ channelId: c.req.param('channelId')! })),
   zValidator('json', sendMessageSchema),
   async (c) => {
     const auth = c.get('auth');
-    const channelId = c.req.param('channelId');
+    const channelId = c.req.param('channelId')!;
     const body = c.req.valid('json');
 
     // Verify user is member of channel
@@ -56,8 +80,14 @@ messageRoutes.post(
     if (memberCheck.rows.length === 0) {
       // Check if this is a public channel - auto-join if so
       const channelCheck = await db.query(
-        `SELECT type FROM channel WHERE id = $1 AND app_id = $2`,
-        [channelId, auth.appId]
+        `SELECT c.type, c.workspace_id, wm.user_id as workspace_member_user_id
+         FROM channel c
+         LEFT JOIN workspace_member wm
+           ON wm.app_id = c.app_id
+          AND wm.workspace_id = c.workspace_id
+          AND wm.user_id = $3
+         WHERE c.id = $1 AND c.app_id = $2`,
+        [channelId, auth.appId, auth.userId]
       );
 
       if (channelCheck.rows.length === 0) {
@@ -65,8 +95,10 @@ messageRoutes.post(
       }
 
       const channelType = channelCheck.rows[0].type;
+      const workspaceId = channelCheck.rows[0].workspace_id;
+      const isWorkspaceMember = Boolean(channelCheck.rows[0].workspace_member_user_id);
 
-      if (channelType === 'public' || channelType === 'team') {
+      if ((channelType === 'public' || channelType === 'team') && (!workspaceId || isWorkspaceMember)) {
         // Auto-join public/team channels
         await db.query(
           `INSERT INTO channel_member (channel_id, app_id, user_id, role, joined_at)
@@ -84,8 +116,8 @@ messageRoutes.post(
     if (body.clientMsgId) {
       const existingResult = await db.query(
         `SELECT id, seq FROM message
-         WHERE channel_id = $1 AND id = $2`,
-        [channelId, body.clientMsgId]
+         WHERE channel_id = $1 AND app_id = $2 AND id = $3`,
+        [channelId, auth.appId, body.clientMsgId]
       );
 
       if (existingResult.rows.length > 0) {
@@ -100,8 +132,24 @@ messageRoutes.post(
       }
     }
 
+    let storedAttachments = body.attachments ?? [];
+    try {
+      storedAttachments = await prepareMessageAttachments(c.req.url, {
+        appId: auth.appId,
+        channelId,
+        attachments: storedAttachments,
+      });
+    } catch {
+      return c.json({
+        error: {
+          message: 'Attachment media is not available in this channel',
+          code: 'ATTACHMENT_FORBIDDEN',
+        },
+      }, 403);
+    }
+
     // Create message in transaction
-    const result = await db.transaction(async (client) => {
+    const { message: outboxMessage, row: result } = await db.transaction(async (client) => {
       // Get next sequence number (OpenIMSDK pattern)
       const seqResult = await client.query(
         'SELECT next_channel_seq($1) as seq',
@@ -127,7 +175,7 @@ messageRoutes.post(
           auth.userId,
           seq,
           body.text,
-          JSON.stringify(body.attachments ?? []),
+          JSON.stringify(storedAttachments),
           body.parentId,
           body.replyToId,
         ]
@@ -137,8 +185,8 @@ messageRoutes.post(
       if (body.parentId) {
         await client.query(
           `UPDATE message SET reply_count = reply_count + 1
-           WHERE id = $1`,
-          [body.parentId]
+           WHERE id = $1 AND channel_id = $2 AND app_id = $3`,
+          [body.parentId, channelId, auth.appId]
         );
       }
 
@@ -166,68 +214,109 @@ messageRoutes.post(
         [channelId, auth.appId, auth.userId]
       );
 
-      return messageResult.rows[0];
+      const message = formatMessage(messageResult.rows[0], auth.user!);
+
+      await enqueueRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'message',
+        aggregateId: message.id,
+        eventType: 'message.new',
+        channels: [`chat:${auth.appId}:${channelId}`],
+        payload: {
+          type: 'message.new',
+          payload: { channelId, message },
+        },
+        idempotencyKey: `message.new:${auth.appId}:${message.id}`,
+      });
+      await enqueueSearchIndexOperationTx(client, auth.appId, message.id, 'index');
+
+      const memberUnreadCounts = await client.query(
+        `SELECT cm.user_id, cm.unread_count,
+                (SELECT COALESCE(SUM(unread_count), 0) FROM channel_member
+                 WHERE app_id = $2 AND user_id = cm.user_id) as total_unread
+         FROM channel_member cm
+         WHERE cm.channel_id = $1 AND cm.app_id = $2 AND cm.user_id != $3`,
+        [channelId, auth.appId, auth.userId]
+      );
+
+      for (const member of memberUnreadCounts.rows) {
+        await enqueueRealtimeEvent(client, {
+          appId: auth.appId,
+          aggregateType: 'channel_member',
+          aggregateId: `${channelId}:${member.user_id}`,
+          eventType: 'channel.unread_changed',
+          channels: [`user:${auth.appId}:${member.user_id}`],
+          payload: {
+            type: 'channel.unread_changed',
+            payload: {
+              channelId,
+              count: member.unread_count,
+            },
+          },
+          idempotencyKey: `channel.unread_changed:${auth.appId}:${message.id}:${member.user_id}`,
+        });
+
+        await enqueueRealtimeEvent(client, {
+          appId: auth.appId,
+          aggregateType: 'app_user',
+          aggregateId: member.user_id,
+          eventType: 'channel.total_unread_changed',
+          channels: [`user:${auth.appId}:${member.user_id}`],
+          payload: {
+            type: 'channel.total_unread_changed',
+            payload: {
+              count: parseInt(member.total_unread, 10),
+            },
+          },
+          idempotencyKey: `channel.total_unread_changed:${auth.appId}:${message.id}:${member.user_id}`,
+        });
+      }
+
+      return { row: messageResult.rows[0], message };
     });
 
     // Format message for response
-    const message = formatMessage(result, auth.user!);
-
-    // Publish to Centrifugo for real-time delivery
-    await centrifugo.publishMessage(auth.appId, channelId, message);
-
-    // Emit unread count events to all members except sender
-    const memberUnreadCounts = await db.query(
-      `SELECT cm.user_id, cm.unread_count,
-              (SELECT COALESCE(SUM(unread_count), 0) FROM channel_member
-               WHERE app_id = $2 AND user_id = cm.user_id) as total_unread
-       FROM channel_member cm
-       WHERE cm.channel_id = $1 AND cm.app_id = $2 AND cm.user_id != $3`,
-      [channelId, auth.appId, auth.userId]
-    );
-
-    // Publish unread count changes to each member (don't await - fire and forget)
-    Promise.all(
-      memberUnreadCounts.rows.map(async (member) => {
-        await centrifugo.publishUnreadCount(
-          auth.appId,
-          member.user_id,
-          channelId,
-          member.unread_count
-        );
-        await centrifugo.publishTotalUnreadCount(
-          auth.appId,
-          member.user_id,
-          parseInt(member.total_unread, 10)
-        );
-      })
-    ).catch((err) => {
-      console.warn('Failed to publish unread count events:', err);
+    const message = formatMessage(result, auth.user!, false, undefined, {
+      requestUrl: c.req.url,
+      auth: { appId: auth.appId, userId: auth.userId! },
     });
 
-    // Get channel info and members for notifications
-    const channelInfo = await db.query(
-      `SELECT c.name, c.type, array_agg(cm.user_id) as member_ids
-       FROM channel c
-       JOIN channel_member cm ON c.id = cm.channel_id
-       WHERE c.id = $1 AND c.app_id = $2
-       GROUP BY c.id`,
-      [channelId, auth.appId]
-    );
+    triggerOutboxDrainSafely();
+    void indexMessage(toSearchableMessage(result, auth.user!, auth.appId)).catch((err) => {
+      console.warn('Failed to index message:', err);
+    });
 
-    const channel = channelInfo.rows[0];
+    let mentions: string[] = [];
+    let channel: { name?: string; type?: 'messaging' | 'group' | 'public'; member_ids?: string[] } | undefined;
 
-    // Extract and store @mentions (resolves names to user IDs)
-    const { storeMentions } = await import('./mentions');
-    const mentions = await storeMentions(
-      result.id,
-      channelId,
-      auth.appId,
-      auth.userId!,
-      body.text
-    );
+    try {
+      // Get channel info and members for notifications
+      const channelInfo = await db.query(
+        `SELECT c.name, c.type, array_agg(cm.user_id) as member_ids
+         FROM channel c
+         JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id
+         WHERE c.id = $1 AND c.app_id = $2
+         GROUP BY c.id`,
+        [channelId, auth.appId]
+      );
+
+      channel = channelInfo.rows[0];
+
+      // Extract and store @mentions (resolves names to user IDs)
+      const { storeMentions } = await import('./mentions');
+      mentions = await storeMentions(
+        result.id,
+        channelId,
+        auth.appId,
+        auth.userId!,
+        body.text
+      );
+    } catch (err) {
+      console.warn('Failed to process post-commit message side effects:', err);
+    }
 
     // Trigger Inngest notification event (async - don't await)
-    inngest.send({
+    sendInngestEvent({
       name: 'chat/message.sent',
       data: {
         messageId: result.id,
@@ -247,7 +336,7 @@ messageRoutes.post(
     });
 
     // Trigger link preview generation event (async - don't await)
-    inngest.send({
+    sendInngestEvent({
       name: 'chat/message.created',
       data: {
         messageId: result.id,
@@ -271,19 +360,32 @@ messageRoutes.post(
  * Query messages
  * GET /api/channels/:channelId/messages
  */
-messageRoutes.get('/', requireUser, async (c) => {
+messageRoutes.get(
+  '/',
+  requireUser,
+  requireScope('chat:read'),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageHistory, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
+  const channelId = c.req.param('channelId')!;
 
   const sinceSeq = parseInt(c.req.query('since_seq') || '0', 10);
   const limit = Math.min(parseInt(c.req.query('limit') || '100', 10), 200);
   const before = c.req.query('before'); // message ID for cursor pagination
   const after = c.req.query('after');
 
+  const access = await getChannelAccess(auth.appId, auth.userId!, channelId);
+  if (!access.exists) {
+    return c.json({ error: { message: 'Channel not found' } }, 404);
+  }
+  if (!access.isMember && !access.isPublic) {
+    return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+  }
+
   // Get current max seq for hasMore calculation
   const seqResult = await db.query(
-    'SELECT current_seq FROM channel_seq WHERE channel_id = $1',
-    [channelId]
+    'SELECT current_seq FROM channel_seq WHERE channel_id = $1 AND app_id = $2',
+    [channelId, auth.appId]
   );
 
   const maxSeq = seqResult.rows[0]?.current_seq ?? 0;
@@ -300,7 +402,7 @@ messageRoutes.get('/', requireUser, async (c) => {
       FROM message m
       JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
       WHERE m.channel_id = $1 AND m.app_id = $2 AND m.seq > $3
-        AND m.deleted_at IS NULL AND m.parent_id IS NULL
+        AND m.hard_deleted_at IS NULL AND m.parent_id IS NULL
       ORDER BY m.seq ASC
       LIMIT $4
     `;
@@ -313,8 +415,11 @@ messageRoutes.get('/', requireUser, async (c) => {
       FROM message m
       JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
       WHERE m.channel_id = $1 AND m.app_id = $2
-        AND m.created_at < (SELECT created_at FROM message WHERE id = $3)
-        AND m.deleted_at IS NULL AND m.parent_id IS NULL
+        AND m.created_at < (
+          SELECT created_at FROM message
+          WHERE id = $3 AND channel_id = $1 AND app_id = $2
+        )
+        AND m.hard_deleted_at IS NULL AND m.parent_id IS NULL
       ORDER BY m.created_at DESC
       LIMIT $4
     `;
@@ -327,8 +432,11 @@ messageRoutes.get('/', requireUser, async (c) => {
       FROM message m
       JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
       WHERE m.channel_id = $1 AND m.app_id = $2
-        AND m.created_at > (SELECT created_at FROM message WHERE id = $3)
-        AND m.deleted_at IS NULL AND m.parent_id IS NULL
+        AND m.created_at > (
+          SELECT created_at FROM message
+          WHERE id = $3 AND channel_id = $1 AND app_id = $2
+        )
+        AND m.hard_deleted_at IS NULL AND m.parent_id IS NULL
       ORDER BY m.created_at ASC
       LIMIT $4
     `;
@@ -341,7 +449,7 @@ messageRoutes.get('/', requireUser, async (c) => {
       FROM message m
       JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
       WHERE m.channel_id = $1 AND m.app_id = $2
-        AND m.deleted_at IS NULL AND m.parent_id IS NULL
+        AND m.hard_deleted_at IS NULL AND m.parent_id IS NULL
       ORDER BY m.created_at DESC
       LIMIT $3
     `;
@@ -364,7 +472,10 @@ messageRoutes.get('/', requireUser, async (c) => {
       id: row.user_id,
       name: row.user_name,
       image: row.user_image,
-    }, pinnedIds.has(row.id), row.poll_id ? polls[row.poll_id] : null),
+    }, pinnedIds.has(row.id), row.poll_id ? polls[row.poll_id] : null, {
+      requestUrl: c.req.url,
+      auth: { appId: auth.appId, userId: auth.userId! },
+    }),
     reactions: reactions[row.id] || [],
     mentions: mentions[row.id] || [],
   }));
@@ -378,27 +489,42 @@ messageRoutes.get('/', requireUser, async (c) => {
   const lastSeq = messages[messages.length - 1]?.seq ?? sinceSeq;
   const hasMore = lastSeq < maxSeq;
 
-  return c.json({
-    messages,
-    maxSeq,
-    hasMore,
-  });
-});
+    return c.json({
+      messages,
+      maxSeq,
+      hasMore,
+    });
+  }
+);
 
 /**
  * Get single message
  * GET /api/channels/:channelId/messages/:messageId
  */
-messageRoutes.get('/:messageId', requireUser, async (c) => {
+messageRoutes.get(
+  '/:messageId',
+  requireUser,
+  requireScope('chat:read'),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageHistory, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
-  const messageId = c.req.param('messageId');
+  const channelId = c.req.param('channelId')!;
+  const messageId = c.req.param('messageId')!;
+
+  const access = await getChannelAccess(auth.appId, auth.userId!, channelId);
+  if (!access.exists) {
+    return c.json({ error: { message: 'Channel not found' } }, 404);
+  }
+  if (!access.isMember && !access.isPublic) {
+    return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+  }
 
   const result = await db.query(
     `SELECT m.*, u.name as user_name, u.image_url as user_image
      FROM message m
      JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
-     WHERE m.id = $1 AND m.channel_id = $2 AND m.app_id = $3`,
+     WHERE m.id = $1 AND m.channel_id = $2 AND m.app_id = $3
+       AND m.hard_deleted_at IS NULL`,
     [messageId, channelId, auth.appId]
   );
 
@@ -410,16 +536,20 @@ messageRoutes.get('/:messageId', requireUser, async (c) => {
   const reactions = await getReactionsForMessages([messageId], auth.appId, auth.userId!);
   const mentions = await getMentionsForMessages([messageId], auth.appId);
 
-  return c.json({
-    ...formatMessage(row, {
-      id: row.user_id,
-      name: row.user_name,
-      image: row.user_image,
-    }),
-    reactions: reactions[messageId] || [],
-    mentions: mentions[messageId] || [],
-  });
-});
+    return c.json({
+      ...formatMessage(row, {
+        id: row.user_id,
+        name: row.user_name,
+        image: row.user_image,
+      }, false, undefined, {
+        requestUrl: c.req.url,
+        auth: { appId: auth.appId, userId: auth.userId! },
+      }),
+      reactions: reactions[messageId] || [],
+      mentions: mentions[messageId] || [],
+    });
+  }
+);
 
 const updateMessageSchema = z.object({
   text: z.string().min(1).max(10000),
@@ -432,17 +562,26 @@ const updateMessageSchema = z.object({
 messageRoutes.patch(
   '/:messageId',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageMutation, (c) => ({ channelId: c.req.param('channelId')! })),
   zValidator('json', updateMessageSchema),
   async (c) => {
     const auth = c.get('auth');
-    const channelId = c.req.param('channelId');
-    const messageId = c.req.param('messageId');
+    const channelId = c.req.param('channelId')!;
+    const messageId = c.req.param('messageId')!;
     const body = c.req.valid('json');
+
+    if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+      return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+    }
 
     // Check ownership
     const checkResult = await db.query(
       `SELECT user_id FROM message
-       WHERE id = $1 AND channel_id = $2 AND app_id = $3`,
+       WHERE id = $1 AND channel_id = $2 AND app_id = $3
+         AND deleted_at IS NULL
+         AND hard_deleted_at IS NULL`,
       [messageId, channelId, auth.appId]
     );
 
@@ -454,21 +593,43 @@ messageRoutes.patch(
       return c.json({ error: { message: 'Can only edit own messages' } }, 403);
     }
 
-    // Update message
-    const result = await db.query(
-      `UPDATE message
-       SET text = $4, edited_at = NOW()
-       WHERE id = $1 AND channel_id = $2 AND app_id = $3
-       RETURNING *`,
-      [messageId, channelId, auth.appId, body.text]
-    );
+    const { message, row: updatedRow } = await db.transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE message
+         SET text = $4, edited_at = NOW()
+         WHERE id = $1 AND channel_id = $2 AND app_id = $3
+           AND deleted_at IS NULL
+           AND hard_deleted_at IS NULL
+         RETURNING *`,
+        [messageId, channelId, auth.appId, body.text]
+      );
+      if (result.rows.length === 0) {
+        throw new Error('MESSAGE_NOT_FOUND');
+      }
+      const updatedMessage = formatMessage(result.rows[0], auth.user!);
 
-    const message = formatMessage(result.rows[0], auth.user!);
+      await enqueueMessageRealtimeEvent(client, {
+        appId: auth.appId,
+        channelId,
+        aggregateId: messageId,
+        eventType: 'message.updated',
+        payload: { channelId, message: updatedMessage },
+        idempotencyKey: `message.updated:${auth.appId}:${messageId}:${result.rows[0].edited_at}`,
+      });
+      await enqueueSearchIndexOperationTx(client, auth.appId, messageId, 'update');
 
-    // Publish update
-    await centrifugo.publishMessageUpdate(auth.appId, channelId, message);
+      return { message: updatedMessage, row: result.rows[0] };
+    });
 
-    return c.json(message);
+    triggerOutboxDrainSafely();
+    void updateMessageIndex(toSearchableMessage(updatedRow, auth.user!, auth.appId)).catch((err) => {
+      console.warn('Failed to update message search index:', err);
+    });
+
+    return c.json(formatMessage(updatedRow, auth.user!, false, undefined, {
+      requestUrl: c.req.url,
+      auth: { appId: auth.appId, userId: auth.userId! },
+    }));
   }
 );
 
@@ -476,16 +637,25 @@ messageRoutes.patch(
  * Delete message
  * DELETE /api/channels/:channelId/messages/:messageId
  */
-messageRoutes.delete('/:messageId', requireUser, async (c) => {
+messageRoutes.delete(
+  '/:messageId',
+  requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageMutation, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
-  const messageId = c.req.param('messageId');
+  const channelId = c.req.param('channelId')!;
+  const messageId = c.req.param('messageId')!;
 
   // Check ownership or admin
   const checkResult = await db.query(
     `SELECT m.user_id, cm.role
      FROM message m
-     JOIN channel_member cm ON cm.channel_id = m.channel_id AND cm.user_id = $4
+     JOIN channel_member cm
+       ON cm.app_id = m.app_id
+      AND cm.channel_id = m.channel_id
+      AND cm.user_id = $4
      WHERE m.id = $1 AND m.channel_id = $2 AND m.app_id = $3`,
     [messageId, channelId, auth.appId, auth.userId]
   );
@@ -502,18 +672,105 @@ messageRoutes.delete('/:messageId', requireUser, async (c) => {
     return c.json({ error: { message: 'Permission denied' } }, 403);
   }
 
-  // Soft delete
-  await db.query(
-    `UPDATE message SET deleted_at = NOW()
-     WHERE id = $1 AND channel_id = $2 AND app_id = $3`,
-    [messageId, channelId, auth.appId]
-  );
+  let storageKeys: string[] = [];
+  try {
+    await db.transaction(async (client) => {
+      const result = await softDeleteMessage(client, {
+        appId: auth.appId,
+        channelId,
+        messageId,
+        deletedBy: auth.userId!,
+        reason: 'message_delete',
+      });
+      storageKeys = result.storageKeys;
 
-  // Publish delete
-  await centrifugo.publishMessageDelete(auth.appId, channelId, messageId);
+      await enqueueMessageRealtimeEvent(client, {
+        appId: auth.appId,
+        channelId,
+        aggregateId: messageId,
+        eventType: 'message.deleted',
+        payload: { channelId, messageId },
+        idempotencyKey: `message.deleted:${auth.appId}:${messageId}:${result.deletedAt}`,
+      });
+      await enqueueSearchIndexOperationTx(client, auth.appId, messageId, 'delete');
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'LEGAL_HOLD_ACTIVE') {
+      return c.json({ error: { message: 'Legal hold blocks deletion', code: 'LEGAL_HOLD_ACTIVE' } }, 423);
+    }
+    throw error;
+  }
 
-  return c.json({ success: true });
-});
+  triggerOutboxDrainSafely();
+  void removeFromIndex(messageId, auth.appId).catch((err) => {
+    console.warn('Failed to remove message from search index:', err);
+  });
+  void purgeStorageKeys(auth.appId, storageKeys).catch((err) => {
+    console.warn('Failed to purge deleted message attachments:', err);
+  });
+
+    return c.json({ success: true });
+  }
+);
+
+/**
+ * Hard purge a message body and attachments.
+ * DELETE /api/channels/:channelId/messages/:messageId/purge
+ */
+messageRoutes.delete(
+  '/:messageId/purge',
+  requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageMutation, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
+    const auth = c.get('auth');
+    const channelId = c.req.param('channelId')!;
+    const messageId = c.req.param('messageId')!;
+
+    const checkResult = await db.query(
+      `SELECT m.id, cm.role
+       FROM message m
+       JOIN channel_member cm
+         ON cm.app_id = m.app_id
+        AND cm.channel_id = m.channel_id
+        AND cm.user_id = $4
+       WHERE m.id = $1 AND m.channel_id = $2 AND m.app_id = $3`,
+      [messageId, channelId, auth.appId, auth.userId]
+    );
+
+    if (checkResult.rows.length === 0) {
+      return c.json({ error: { message: 'Message not found' } }, 404);
+    }
+    if (!['owner', 'admin', 'moderator'].includes(checkResult.rows[0].role)) {
+      return c.json({ error: { message: 'Permission denied' } }, 403);
+    }
+
+    try {
+      const result = await hardPurgeMessage({
+        appId: auth.appId,
+        messageId,
+        purgedBy: auth.userId!,
+        reason: 'admin_hard_purge',
+      });
+      if (!result.purged) {
+        return c.json({ error: { message: 'Message not found' } }, 404);
+      }
+      void purgeStorageKeys(auth.appId, result.storageKeys).catch((err) => {
+        console.warn('Failed to purge hard-deleted message attachments:', err);
+      });
+      void removeFromIndex(messageId, auth.appId).catch((err) => {
+        console.warn('Failed to remove purged message from search index:', err);
+      });
+      return c.json({ success: true, purged: true });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'LEGAL_HOLD_ACTIVE') {
+        return c.json({ error: { message: 'Legal hold blocks purge', code: 'LEGAL_HOLD_ACTIVE' } }, 423);
+      }
+      throw error;
+    }
+  }
+);
 
 // ============================================================================
 // Reactions
@@ -526,17 +783,25 @@ messageRoutes.delete('/:messageId', requireUser, async (c) => {
 messageRoutes.post(
   '/:messageId/reactions',
   requireUser,
+  requireScope('reaction:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.reactionWrite, (c) => ({ channelId: c.req.param('channelId')! })),
   zValidator('json', z.object({ emoji: z.string().min(1).max(50) })),
   async (c) => {
     const auth = c.get('auth');
-    const channelId = c.req.param('channelId');
-    const messageId = c.req.param('messageId');
+    const channelId = c.req.param('channelId')!;
+    const messageId = c.req.param('messageId')!;
     const { emoji } = c.req.valid('json');
+
+    if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+      return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+    }
 
     // Get message author info before inserting reaction
     const messageResult = await db.query(
-      `SELECT user_id, text FROM message WHERE id = $1 AND app_id = $2`,
-      [messageId, auth.appId]
+      `SELECT user_id, text FROM message
+       WHERE id = $1 AND app_id = $2 AND channel_id = $3`,
+      [messageId, auth.appId, channelId]
     );
 
     if (messageResult.rows.length === 0) {
@@ -546,26 +811,33 @@ messageRoutes.post(
     const messageAuthorId = messageResult.rows[0].user_id;
     const messagePreview = messageResult.rows[0].text;
 
-    // Insert reaction (upsert)
-    await db.query(
-      `INSERT INTO reaction (message_id, app_id, user_id, emoji)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT DO NOTHING`,
-      [messageId, auth.appId, auth.userId, emoji]
-    );
+    await db.transaction(async (client) => {
+      await client.query(
+        `INSERT INTO reaction (message_id, app_id, user_id, emoji)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
+        [messageId, auth.appId, auth.userId, emoji]
+      );
 
-    // Publish reaction event
-    await centrifugo.publishReaction(
-      auth.appId,
-      channelId,
-      messageId,
-      { type: emoji, userId: auth.userId, user: auth.user },
-      true
-    );
+      await enqueueMessageRealtimeEvent(client, {
+        appId: auth.appId,
+        channelId,
+        aggregateId: messageId,
+        eventType: 'reaction.added',
+        payload: {
+          channelId,
+          messageId,
+          reaction: { type: emoji, userId: auth.userId, user: auth.user },
+        },
+        idempotencyKey: `reaction.added:${auth.appId}:${messageId}:${auth.userId}:${emoji}`,
+      });
+    });
+
+    triggerOutboxDrainSafely();
 
     // Trigger Inngest notification event for reactions (don't notify self-reactions)
     if (messageAuthorId !== auth.userId) {
-      inngest.send({
+      sendInngestEvent({
         name: 'chat/message.reaction',
         data: {
           messageId,
@@ -589,36 +861,137 @@ messageRoutes.post(
  * Remove reaction
  * DELETE /api/channels/:channelId/messages/:messageId/reactions/:emoji
  */
-messageRoutes.delete('/:messageId/reactions/:emoji', requireUser, async (c) => {
+messageRoutes.delete(
+  '/:messageId/reactions/:emoji',
+  requireUser,
+  requireScope('reaction:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.reactionWrite, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
-  const messageId = c.req.param('messageId');
-  const emoji = decodeURIComponent(c.req.param('emoji'));
+  const channelId = c.req.param('channelId')!;
+  const messageId = c.req.param('messageId')!;
+  const emoji = decodeURIComponent(c.req.param('emoji')!);
 
-  // Delete reaction
-  await db.query(
-    `DELETE FROM reaction
-     WHERE message_id = $1 AND app_id = $2 AND user_id = $3 AND emoji = $4`,
-    [messageId, auth.appId, auth.userId, emoji]
+  if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+    return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+  }
+
+  const messageResult = await db.query(
+    `SELECT id FROM message WHERE id = $1 AND app_id = $2 AND channel_id = $3`,
+    [messageId, auth.appId, channelId]
   );
 
-  // Publish reaction removed event
-  await centrifugo.publishReaction(
-    auth.appId,
-    channelId,
-    messageId,
-    { type: emoji, userId: auth.userId, user: auth.user },
-    false
-  );
+  if (messageResult.rows.length === 0) {
+    return c.json({ error: { message: 'Message not found' } }, 404);
+  }
 
-  return c.json({ success: true });
-});
+  await db.transaction(async (client) => {
+    await client.query(
+      `DELETE FROM reaction
+       WHERE message_id = $1 AND app_id = $2 AND user_id = $3 AND emoji = $4`,
+      [messageId, auth.appId, auth.userId, emoji]
+    );
+
+    await enqueueMessageRealtimeEvent(client, {
+      appId: auth.appId,
+      channelId,
+      aggregateId: messageId,
+      eventType: 'reaction.removed',
+      payload: {
+        channelId,
+        messageId,
+        reaction: { type: emoji, userId: auth.userId, user: auth.user },
+      },
+      idempotencyKey: `reaction.removed:${auth.appId}:${messageId}:${auth.userId}:${emoji}`,
+    });
+  });
+
+  triggerOutboxDrainSafely();
+
+    return c.json({ success: true });
+  }
+);
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-function formatMessage(row: any, user: any, isPinned: boolean = false, poll?: any) {
+function triggerOutboxDrainSafely(): void {
+  try {
+    triggerRealtimeOutboxDrain();
+  } catch (err) {
+    console.warn('Failed to trigger realtime outbox drain:', err);
+  }
+}
+
+function toSearchableMessage(row: any, user: any, appId: string) {
+  const attachments = Array.isArray(row.attachments) ? row.attachments : [];
+
+  return {
+    id: row.id,
+    channelId: row.channel_id,
+    appId,
+    userId: user.id,
+    userName: user.name || 'Unknown',
+    text: row.deleted_at ? '' : row.text || '',
+    createdAt: new Date(row.created_at).getTime(),
+    attachmentTypes: attachments.map((attachment: any) => attachment.type).filter(Boolean),
+  };
+}
+
+async function enqueueMessageRealtimeEvent(
+  client: PoolClient,
+  input: {
+    appId: string;
+    channelId: string;
+    aggregateId: string;
+    eventType: string;
+    payload: unknown;
+    idempotencyKey: string;
+  }
+): Promise<void> {
+  await enqueueRealtimeEvent(client, {
+    appId: input.appId,
+    aggregateType: 'message',
+    aggregateId: input.aggregateId,
+    eventType: input.eventType,
+    channels: [`chat:${input.appId}:${input.channelId}`],
+    payload: {
+      type: input.eventType,
+      payload: input.payload,
+    },
+    idempotencyKey: input.idempotencyKey,
+  });
+}
+
+function formatMessageUser(user: any, fallbackTimestamp: string) {
+  return {
+    id: user.id,
+    name: user.name,
+    image: user.image ?? user.image_url ?? null,
+    custom: user.custom ?? user.custom_data ?? null,
+    lastActiveAt: user.lastActiveAt ?? user.last_active_at ?? null,
+    createdAt: user.createdAt ?? user.created_at ?? fallbackTimestamp,
+    updatedAt: user.updatedAt ?? user.updated_at ?? user.createdAt ?? user.created_at ?? fallbackTimestamp,
+  };
+}
+
+function formatMessage(
+  row: any,
+  user: any,
+  isPinned: boolean = false,
+  poll?: any,
+  mediaContext?: { requestUrl: string; auth: MediaUrlAuth }
+) {
+  const createdAt = row.created_at;
+  const updatedAt = row.edited_at || row.updated_at || row.created_at;
+  const attachments = row.deleted_at
+    ? []
+    : mediaContext
+    ? refreshAttachmentMediaUrls(mediaContext.requestUrl, mediaContext.auth, row.attachments || [])
+    : row.attachments || [];
+
   return {
     id: row.id,
     channelId: row.channel_id,
@@ -628,23 +1001,29 @@ function formatMessage(row: any, user: any, isPinned: boolean = false, poll?: an
     text: row.deleted_at ? null : row.text,
     seq: parseInt(row.seq, 10),
     clientMsgId: row.id, // Using ID as clientMsgId for now
-    user: user,
-    attachments: row.attachments || [],
+    user: formatMessageUser(user, createdAt),
+    attachments,
     parentId: row.parent_id,
     replyToId: row.reply_to_id,
+    reactionCount: parseInt(row.reaction_count ?? '0', 10),
+    replyCount: parseInt(row.reply_count ?? '0', 10),
     threadCount: row.reply_count || 0,
     status: row.status,
     pinned: isPinned,
-    linkPreviews: row.link_previews || [],
+    pinnedAt: row.pinned_at || null,
+    pinnedBy: row.pinned_by || null,
+    linkPreviews: row.deleted_at ? [] : (row.link_previews || []),
     pollId: row.poll_id || null,
     poll: poll || null,
-    createdAt: row.created_at,
-    updatedAt: row.edited_at || row.created_at,
+    createdAt,
+    updatedAt,
     deletedAt: row.deleted_at,
+    hardDeletedAt: row.hard_deleted_at,
     // Legacy snake_case fields for backward compatibility
-    created_at: row.created_at,
-    updated_at: row.edited_at,
+    created_at: createdAt,
+    updated_at: updatedAt,
     deleted_at: row.deleted_at,
+    hard_deleted_at: row.hard_deleted_at,
   };
 }
 
@@ -758,9 +1137,9 @@ async function getPollsForMessages(
   const voteCountsResult = await db.query(
     `SELECT poll_id, option_id, COUNT(*) as count
      FROM poll_vote
-     WHERE poll_id = ANY($1)
+     WHERE poll_id = ANY($1) AND app_id = $2
      GROUP BY poll_id, option_id`,
-    [validPollIds]
+    [validPollIds, appId]
   );
 
   const voteCountsMap: Record<string, Record<string, number>> = {};
@@ -802,16 +1181,22 @@ async function getPollsForMessages(
  * Pin a message
  * POST /api/messages/:messageId/pin
  */
-messageRoutes.post('/:messageId/pin', requireUser, async (c) => {
+messageRoutes.post(
+  '/:messageId/pin',
+  requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageMutation, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
-  const messageId = c.req.param('messageId');
+  const channelId = c.req.param('channelId')!;
+  const messageId = c.req.param('messageId')!;
 
   // Get channel type and user's role
   const memberCheck = await db.query(
     `SELECT cm.role, c.type as channel_type
      FROM channel_member cm
-     JOIN channel c ON cm.channel_id = c.id
+     JOIN channel c ON cm.channel_id = c.id AND cm.app_id = c.app_id
      WHERE cm.channel_id = $1 AND cm.app_id = $2 AND cm.user_id = $3`,
     [channelId, auth.appId, auth.userId]
   );
@@ -850,38 +1235,53 @@ messageRoutes.post('/:messageId/pin', requireUser, async (c) => {
     return c.json({ error: { message: 'Message not found' } }, 404);
   }
 
-  // Pin message
-  await db.query(
-    `INSERT INTO pinned_message (channel_id, message_id, app_id, pinned_by, pinned_at)
-     VALUES ($1, $2, $3, $4, NOW())
-     ON CONFLICT (channel_id, message_id) DO NOTHING`,
-    [channelId, messageId, auth.appId, auth.userId]
-  );
+  await db.transaction(async (client) => {
+    await client.query(
+      `INSERT INTO pinned_message (channel_id, message_id, app_id, pinned_by, pinned_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (channel_id, message_id) DO NOTHING`,
+      [channelId, messageId, auth.appId, auth.userId]
+    );
 
-  // Broadcast pin update to all channel members
-  await centrifugo.publishMessageUpdate(auth.appId, channelId, {
-    id: messageId,
-    channelId,
-    pinned: true,
+    await enqueueMessageRealtimeEvent(client, {
+      appId: auth.appId,
+      channelId,
+      aggregateId: messageId,
+      eventType: 'message.updated',
+      payload: {
+        channelId,
+        message: { id: messageId, channelId, pinned: true },
+      },
+      idempotencyKey: `message.pinned:${auth.appId}:${messageId}`,
+    });
   });
 
-  return c.json({ success: true });
-});
+  triggerOutboxDrainSafely();
+
+    return c.json({ success: true });
+  }
+);
 
 /**
  * Unpin a message
  * DELETE /api/messages/:messageId/pin
  */
-messageRoutes.delete('/:messageId/pin', requireUser, async (c) => {
+messageRoutes.delete(
+  '/:messageId/pin',
+  requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageMutation, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
-  const messageId = c.req.param('messageId');
+  const channelId = c.req.param('channelId')!;
+  const messageId = c.req.param('messageId')!;
 
   // Get channel type and user's role
   const memberCheck = await db.query(
     `SELECT cm.role, c.type as channel_type
      FROM channel_member cm
-     JOIN channel c ON cm.channel_id = c.id
+     JOIN channel c ON cm.channel_id = c.id AND cm.app_id = c.app_id
      WHERE cm.channel_id = $1 AND cm.app_id = $2 AND cm.user_id = $3`,
     [channelId, auth.appId, auth.userId]
   );
@@ -900,43 +1300,53 @@ messageRoutes.delete('/:messageId/pin', requireUser, async (c) => {
     return c.json({ error: { message: 'Only admins can unpin messages' } }, 403);
   }
 
-  await db.query(
-    `DELETE FROM pinned_message WHERE channel_id = $1 AND message_id = $2 AND app_id = $3`,
-    [channelId, messageId, auth.appId]
-  );
+  await db.transaction(async (client) => {
+    await client.query(
+      `DELETE FROM pinned_message WHERE channel_id = $1 AND message_id = $2 AND app_id = $3`,
+      [channelId, messageId, auth.appId]
+    );
 
-  // Broadcast unpin update to all channel members
-  await centrifugo.publishMessageUpdate(auth.appId, channelId, {
-    id: messageId,
-    channelId,
-    pinned: false,
+    await enqueueMessageRealtimeEvent(client, {
+      appId: auth.appId,
+      channelId,
+      aggregateId: messageId,
+      eventType: 'message.updated',
+      payload: {
+        channelId,
+        message: { id: messageId, channelId, pinned: false },
+      },
+      idempotencyKey: `message.unpinned:${auth.appId}:${messageId}`,
+    });
   });
 
-  return c.json({ success: true });
-});
+  triggerOutboxDrainSafely();
+
+    return c.json({ success: true });
+  }
+);
 
 /**
  * Get pinned messages for a channel
  * GET /api/channels/:channelId/pins
  */
-messageRoutes.get('/pins', requireUser, async (c) => {
+messageRoutes.get(
+  '/pins',
+  requireUser,
+  requireScope('chat:read'),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageHistory, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
+  const channelId = c.req.param('channelId')!;
 
   // Verify membership
-  const memberCheck = await db.query(
-    `SELECT 1 FROM channel_member WHERE channel_id = $1 AND user_id = $2`,
-    [channelId, auth.userId]
-  );
-
-  if (memberCheck.rows.length === 0) {
+  if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
     return c.json({ error: { message: 'Not a channel member' } }, 403);
   }
 
   const result = await db.query(
     `SELECT m.*, pm.pinned_by, pm.pinned_at, u.name as user_name, u.image_url as user_image
      FROM pinned_message pm
-     JOIN message m ON pm.message_id = m.id
+     JOIN message m ON pm.message_id = m.id AND pm.app_id = m.app_id
      JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
      WHERE pm.channel_id = $1 AND pm.app_id = $2
      ORDER BY pm.pinned_at DESC`,
@@ -946,7 +1356,10 @@ messageRoutes.get('/pins', requireUser, async (c) => {
   const messages = result.rows.map((row) => ({
     id: row.id,
     text: row.text,
-    attachments: row.attachments,
+    attachments: refreshAttachmentMediaUrls(c.req.url, {
+      appId: auth.appId,
+      userId: auth.userId!,
+    }, row.attachments),
     createdAt: row.created_at,
     user: {
       id: row.user_id,
@@ -957,8 +1370,9 @@ messageRoutes.get('/pins', requireUser, async (c) => {
     pinnedAt: row.pinned_at,
   }));
 
-  return c.json({ messages });
-});
+    return c.json({ messages });
+  }
+);
 
 // ============================================================================
 // Work Stream 11: Saved Messages
@@ -968,16 +1382,25 @@ messageRoutes.get('/pins', requireUser, async (c) => {
  * Save/bookmark a message
  * POST /api/messages/:messageId/save
  */
-messageRoutes.post('/:messageId/save', requireUser, async (c) => {
+messageRoutes.post(
+  '/:messageId/save',
+  requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageMutation, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const channelId = c.req.param('channelId');
-  const messageId = c.req.param('messageId');
+  const channelId = c.req.param('channelId')!;
+  const messageId = c.req.param('messageId')!;
 
   // Verify message exists and user has access
   const messageCheck = await db.query(
     `SELECT m.id
      FROM message m
-     JOIN channel_member cm ON m.channel_id = cm.channel_id AND cm.user_id = $3
+     JOIN channel_member cm
+       ON cm.app_id = m.app_id
+      AND cm.channel_id = m.channel_id
+      AND cm.user_id = $3
      WHERE m.id = $1 AND m.channel_id = $2 AND m.app_id = $4`,
     [messageId, channelId, auth.userId, auth.appId]
   );
@@ -994,30 +1417,43 @@ messageRoutes.post('/:messageId/save', requireUser, async (c) => {
     [auth.appId, auth.userId, messageId]
   );
 
-  return c.json({ success: true });
-});
+    return c.json({ success: true });
+  }
+);
 
 /**
  * Unsave/remove bookmark from a message
  * DELETE /api/messages/:messageId/save
  */
-messageRoutes.delete('/:messageId/save', requireUser, async (c) => {
+messageRoutes.delete(
+  '/:messageId/save',
+  requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageMutation, (c) => ({ channelId: c.req.param('channelId')! })),
+  async (c) => {
   const auth = c.get('auth');
-  const messageId = c.req.param('messageId');
+  const messageId = c.req.param('messageId')!;
 
   await db.query(
     `DELETE FROM saved_message WHERE app_id = $1 AND user_id = $2 AND message_id = $3`,
     [auth.appId, auth.userId, messageId]
   );
 
-  return c.json({ success: true });
-});
+    return c.json({ success: true });
+  }
+);
 
 /**
  * Get user's saved messages
  * GET /api/users/me/saved
  */
-messageRoutes.get('/me/saved', requireUser, async (c) => {
+messageRoutes.get(
+  '/me/saved',
+  requireUser,
+  requireScope('chat:read'),
+  rateLimitUser(RATE_LIMIT_POLICIES.messageHistory),
+  async (c) => {
   const auth = c.get('auth');
   const limit = parseInt(c.req.query('limit') || '50', 10);
   const offset = parseInt(c.req.query('offset') || '0', 10);
@@ -1026,9 +1462,13 @@ messageRoutes.get('/me/saved', requireUser, async (c) => {
     `SELECT m.*, sm.saved_at, u.name as user_name, u.image_url as user_image,
             c.name as channel_name, c.id as channel_id
      FROM saved_message sm
-     JOIN message m ON sm.message_id = m.id
+     JOIN message m ON sm.message_id = m.id AND sm.app_id = m.app_id
+     JOIN channel_member cm
+       ON cm.app_id = m.app_id
+      AND cm.channel_id = m.channel_id
+      AND cm.user_id = sm.user_id
      JOIN app_user u ON m.app_id = u.app_id AND m.user_id = u.id
-     JOIN channel c ON m.channel_id = c.id
+     JOIN channel c ON m.app_id = c.app_id AND m.channel_id = c.id
      WHERE sm.app_id = $1 AND sm.user_id = $2
      ORDER BY sm.saved_at DESC
      LIMIT $3 OFFSET $4`,
@@ -1038,7 +1478,10 @@ messageRoutes.get('/me/saved', requireUser, async (c) => {
   const messages = result.rows.map((row) => ({
     id: row.id,
     text: row.text,
-    attachments: row.attachments,
+    attachments: refreshAttachmentMediaUrls(c.req.url, {
+      appId: auth.appId,
+      userId: auth.userId!,
+    }, row.attachments),
     createdAt: row.created_at,
     savedAt: row.saved_at,
     user: {
@@ -1052,5 +1495,6 @@ messageRoutes.get('/me/saved', requireUser, async (c) => {
     },
   }));
 
-  return c.json({ messages });
-});
+    return c.json({ messages });
+  }
+);

@@ -15,7 +15,7 @@ import { getStoredTokens } from './auth';
 
 interface ApiConfig {
   apiUrl: string;
-  apiKey: string;
+  tokenUrl: string;
 }
 
 // Default configuration - tries multiple environment variable formats
@@ -43,7 +43,7 @@ function getDefaultConfig(): ApiConfig {
 
   return {
     apiUrl: getEnv('VITE_API_URL', 'NEXT_PUBLIC_API_URL', 'API_URL', 'http://localhost:5500'),
-    apiKey: getEnv('VITE_API_KEY', 'NEXT_PUBLIC_API_KEY', 'API_KEY', ''),
+    tokenUrl: getEnv('VITE_CHATSDK_TOKEN_URL', 'NEXT_PUBLIC_CHATSDK_TOKEN_URL', 'CHATSDK_TOKEN_URL', '/api/chatsdk-token'),
   };
 }
 
@@ -57,7 +57,7 @@ let config = getDefaultConfig();
  * // In your app initialization
  * configureApi({
  *   apiUrl: 'https://api.myapp.com',
- *   apiKey: 'your-api-key',
+ *   tokenUrl: '/api/chat-token',
  * });
  */
 export function configureApi(newConfig: Partial<ApiConfig>): void {
@@ -93,11 +93,6 @@ async function apiRequest<T>(
     'Content-Type': 'application/json',
     ...options.headers as Record<string, string>,
   };
-
-  // Add API key if configured
-  if (config.apiKey) {
-    headers['X-API-Key'] = config.apiKey;
-  }
 
   // Add auth token if available
   if (tokens?.token) {

@@ -30,11 +30,11 @@ curl http://localhost:5501/health
 | Redis | 6380 | Pub/Sub & Caching |
 | Centrifugo | 8001 | Real-time WebSocket |
 
-## 2. Get Your API Key
+## 2. Get Your Server API Key
 
 ### Option A: Use the Default Development Key
 
-For development/testing, use the pre-configured key:
+For development/testing, use the pre-configured key on your backend only:
 
 ```
 API_KEY: your-api-key-here
@@ -69,7 +69,7 @@ curl -X POST http://localhost:5501/admin/apps \
 
 ## 3. Generate User Tokens
 
-The `/tokens` endpoint generates JWT tokens for user authentication:
+The server-only `/tokens` endpoint generates JWT tokens for user authentication. Call it from your backend token route, not directly from browser code:
 
 ```bash
 curl -X POST http://localhost:5501/tokens \
@@ -102,11 +102,12 @@ curl -X POST http://localhost:5501/tokens \
 
 ## 4. Make Your First API Call
 
+Authenticated user API calls use the bearer token. Keep `X-API-Key` on backend token/admin calls only.
+
 ### Create a Channel
 
 ```bash
 curl -X POST http://localhost:5501/api/channels \
-  -H "X-API-Key: your-api-key-here" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -120,7 +121,6 @@ curl -X POST http://localhost:5501/api/channels \
 
 ```bash
 curl -X POST http://localhost:5501/api/channels/CHANNEL_ID/messages \
-  -H "X-API-Key: your-api-key-here" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -147,8 +147,8 @@ Create a `.env` file for your frontend application:
 ```env
 # Required
 VITE_API_URL=http://localhost:5501
-VITE_API_KEY=your-api-key-here
 VITE_WS_URL=ws://localhost:8001/connection/websocket
+VITE_CHAT_TOKEN_URL=/api/chat-token
 
 # Optional
 VITE_DEBUG=true
@@ -219,7 +219,7 @@ When a request matches an allowed origin, these headers are returned:
 - `Access-Control-Allow-Origin`: The requesting origin
 - `Access-Control-Allow-Credentials`: `true`
 - `Access-Control-Allow-Methods`: `GET, POST, PUT, DELETE, PATCH, OPTIONS`
-- `Access-Control-Allow-Headers`: `Content-Type, Authorization, X-API-Key`
+- `Access-Control-Allow-Headers`: `Content-Type, Authorization`
 - `Access-Control-Max-Age`: `86400` (24 hours)
 
 ## 8. Run Tests
@@ -245,7 +245,7 @@ node tests/realtime-messaging-test.mjs
 ## Troubleshooting
 
 ### "Missing API key" Error
-Ensure you're passing `X-API-Key` header with a valid key from your database.
+This should only happen on server-side calls. Ensure your backend token route passes `X-API-Key` with a valid key from your database, and that browser code calls your token route instead of sending the API key itself.
 
 ### "Invalid token" Error
 Your JWT token may be expired. Generate a new one via `/tokens`.

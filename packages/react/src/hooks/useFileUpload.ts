@@ -79,6 +79,7 @@ export function useFileUpload(options: UseFileUploadOptions): UseFileUploadResul
           key: string;
           uploadUrl: string;
           publicUrl: string;
+          headers?: Record<string, string>;
         }>('/api/uploads/presigned', {
           method: 'POST',
           body: JSON.stringify({
@@ -122,7 +123,10 @@ export function useFileUpload(options: UseFileUploadOptions): UseFileUploadResul
           });
 
           xhr.open('PUT', presigned.uploadUrl);
-          xhr.setRequestHeader('Content-Type', file.type);
+          const uploadHeaders = presigned.headers ?? { 'Content-Type': file.type };
+          for (const [name, value] of Object.entries(uploadHeaders)) {
+            xhr.setRequestHeader(name, value);
+          }
           xhr.send(file);
 
           // Store xhr for cancellation
@@ -132,7 +136,7 @@ export function useFileUpload(options: UseFileUploadOptions): UseFileUploadResul
         });
 
         // Confirm upload
-        const result = await client.fetch<{ id: string; key: string; url: string }>(
+        const result = await client.fetch<{ id: string; key: string; url: string; contentType?: string }>(
           `/api/uploads/${encodeURIComponent(presigned.key)}/confirm`,
           { method: 'POST' }
         );
@@ -140,9 +144,9 @@ export function useFileUpload(options: UseFileUploadOptions): UseFileUploadResul
         const uploadedFile: UploadedFile = {
           id: result.id,
           key: result.key,
-          url: presigned.publicUrl,
+          url: result.url,
           filename: file.name,
-          contentType: file.type,
+          contentType: result.contentType || file.type || 'application/octet-stream',
           size: file.size,
         };
 

@@ -12,6 +12,7 @@ export interface ProcessedImage extends UploadedFile {
   height: number;
   blurhash?: string;
   thumbnailUrl?: string;
+  thumbnailKey?: string;
 }
 
 export interface ImageProcessingOptions extends UploadOptions {
@@ -86,6 +87,7 @@ export async function processAndUploadImage(
     });
 
     result.thumbnailUrl = thumbnailUploaded.url;
+    result.thumbnailKey = thumbnailUploaded.key;
   }
 
   // Generate blurhash

@@ -6,7 +6,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { app } from '../src/index';
 
-const API_BASE = 'http://localhost:5500';
+const API_BASE = process.env.TEST_API_URL;
+const describeLive = API_BASE ? describe : describe.skip;
 const TEST_APP_ID = '00000000-0000-0000-0000-000000000001';
 const TEST_USER_1 = { id: 'test-user-1', name: 'Alice Test' };
 const TEST_USER_2 = { id: 'test-user-2', name: 'Bob Test' };
@@ -15,7 +16,7 @@ let token1: string;
 let token2: string;
 let testChannelId: string;
 
-describe('End-to-End: Full Chat Flow', () => {
+describeLive('End-to-End: Full Chat Flow', () => {
   beforeAll(async () => {
     // Generate tokens for test users
     token1 = await testHelpers.generateToken(TEST_USER_1.id, TEST_APP_ID);
@@ -520,7 +521,7 @@ describe('End-to-End: Full Chat Flow', () => {
   });
 });
 
-describe('Error Handling', () => {
+describeLive('Error Handling', () => {
   it('should return 401 for unauthenticated requests', async () => {
     const response = await fetch(`${API_BASE}/api/channels`);
     expect(response.status).toBe(401);

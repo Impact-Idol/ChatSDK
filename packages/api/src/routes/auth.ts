@@ -8,12 +8,19 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import * as jose from 'jose';
 import { db } from '../services/database';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'chatsdk-dev-secret-key-change-in-production';
-const CENTRIFUGO_SECRET = process.env.CENTRIFUGO_TOKEN_SECRET || process.env.CENTRIFUGO_SECRET || 'chatsdk-dev-secret-key-change-in-production';
-const TOKEN_EXPIRY = '24h';
+import { config } from '../config/defaults';
+import {
+  issueTokenBundle,
+  refreshTokenBundle,
+  TokenValidationError,
+} from '../services/tokens';
+import {
+  applyRateLimits,
+  getClientIp,
+  RATE_LIMIT_POLICIES,
+  rateLimitPublic,
+} from '../services/rate-limit';
 
 export const authRoutes = new Hono();
 
@@ -41,10 +48,22 @@ const connectSchema = z.object({
  */
 authRoutes.post(
   '/connect',
-  zValidator('json', connectSchema),
-  async (c) => {
-    // 1. Validate API key
-    const apiKey = c.req.header('X-API-Key');
+  rateLimitPublic(RATE_LIMIT_POLICIES.tokenConnectIp),
+	  zValidator('json', connectSchema),
+	  async (c) => {
+	    const body = c.req.valid('json');
+	    const apiKey = c.req.header('X-API-Key');
+
+	    if (!config.auth.allowApiKeyTokenBroker) {
+	      return c.json({
+	        error: {
+	          code: 'TOKEN_BROKER_DISABLED',
+	          message: 'API-key user token broker is disabled',
+	        },
+	      }, 404);
+	    }
+
+	    // 1. Validate API key
     if (!apiKey) {
       return c.json({
         error: {
@@ -74,7 +93,17 @@ authRoutes.post(
     }
 
     const appId = appResult.rows[0].id;
-    const body = c.req.valid('json');
+    const appLimit = await applyRateLimits(c, [
+      {
+        policy: RATE_LIMIT_POLICIES.tokenConnectUser,
+        scope: { appId, userId: body.userId, ip: getClientIp(c), key: apiKey },
+      },
+      {
+        policy: RATE_LIMIT_POLICIES.appWrites,
+        scope: { appId, global: true },
+      },
+    ]);
+    if (appLimit) return appLimit;
 
     // 3. Build metadata with email
     const metadata = body.metadata ?? {};
@@ -84,7 +113,7 @@ authRoutes.post(
 
     // 4. Create or update user
     try {
-      await db.query(
+      await withTenantContext(appId, body.userId, () => db.query(
         `INSERT INTO app_user (app_id, id, name, image_url, custom_data, last_active_at)
          VALUES ($1, $2, $3, $4, $5, NOW())
          ON CONFLICT (app_id, id) DO UPDATE SET
@@ -92,10 +121,10 @@ authRoutes.post(
            image_url = COALESCE($4, app_user.image_url),
            custom_data = app_user.custom_data || COALESCE($5, '{}'::jsonb),
            last_active_at = NOW(),
-           updated_at = NOW()
+         updated_at = NOW()
          RETURNING id, name, image_url, custom_data`,
         [appId, body.userId, body.displayName, body.avatar, JSON.stringify(metadata)]
-      );
+      ));
     } catch (error) {
       console.error('[Auth] Failed to create/update user:', error);
       return c.json({
@@ -107,39 +136,7 @@ authRoutes.post(
       }, 500);
     }
 
-    // 5. Generate JWT access token (for REST API calls)
-    const secret = new TextEncoder().encode(JWT_SECRET);
-    const accessToken = await new jose.SignJWT({
-      user_id: body.userId,
-      app_id: appId,
-      type: 'access',
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime('15m') // Short-lived access token (15 minutes)
-      .sign(secret);
-
-    // 6. Generate refresh token (24 hours)
-    const refreshToken = await new jose.SignJWT({
-      user_id: body.userId,
-      app_id: appId,
-      type: 'refresh',
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(TOKEN_EXPIRY) // 24 hours
-      .sign(secret);
-
-    // 7. Generate Centrifugo WebSocket token (24 hours)
-    const centrifugoSecret = new TextEncoder().encode(CENTRIFUGO_SECRET);
-    const wsToken = await new jose.SignJWT({
-      sub: body.userId,
-      app_id: appId,
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(TOKEN_EXPIRY)
-      .sign(centrifugoSecret);
+	    const tokens = await issueTokenBundle({ appId, userId: body.userId });
 
     // 8. Return response
     // The SDK will use accessToken for API calls, refreshToken for renewal,
@@ -151,14 +148,14 @@ authRoutes.post(
         avatar: body.avatar || null,
         metadata: metadata,
       },
-      token: accessToken, // 15-minute access token
-      refreshToken: refreshToken, // 24-hour refresh token
-      expiresIn: 900, // 15 minutes in seconds
-      _internal: {
-        wsToken: wsToken, // WebSocket token (SDK uses internally)
-      },
-    });
-  }
+	      token: tokens.token,
+	      refreshToken: tokens.refreshToken,
+	      expiresIn: tokens.expiresIn,
+	      _internal: {
+	        wsToken: tokens.wsToken,
+	      },
+	    });
+	  }
 );
 
 /**
@@ -167,8 +164,9 @@ authRoutes.post(
  *
  * Exchanges refresh token for new access token + refresh token
  */
-authRoutes.post('/refresh', async (c) => {
+authRoutes.post('/refresh', rateLimitPublic(RATE_LIMIT_POLICIES.tokenRefresh), async (c) => {
   const authHeader = c.req.header('Authorization');
+
   if (!authHeader?.startsWith('Bearer ')) {
     return c.json({
       error: {
@@ -182,65 +180,34 @@ authRoutes.post('/refresh', async (c) => {
   const oldRefreshToken = authHeader.slice(7);
 
   try {
-    const secret = new TextEncoder().encode(JWT_SECRET);
-    const { payload } = await jose.jwtVerify(oldRefreshToken, secret);
+	    const tokens = await refreshTokenBundle(oldRefreshToken);
 
-    // Verify it's a refresh token
-    if (payload.type !== 'refresh') {
-      return c.json({
-        error: {
-          code: 'INVALID_TOKEN_TYPE',
-          message: 'Invalid token type',
-          suggestion: 'This endpoint requires a refresh token, not an access token',
-        },
-      }, 401);
-    }
-
-    // Generate new access token
-    const accessToken = await new jose.SignJWT({
-      user_id: payload.user_id,
-      app_id: payload.app_id,
-      type: 'access',
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime('15m')
-      .sign(secret);
-
-    // Generate new refresh token
-    const refreshToken = await new jose.SignJWT({
-      user_id: payload.user_id,
-      app_id: payload.app_id,
-      type: 'refresh',
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(TOKEN_EXPIRY)
-      .sign(secret);
-
-    return c.json({
-      token: accessToken,
-      refreshToken: refreshToken,
-      expiresIn: 900,
-    });
-  } catch (error) {
-    if (error instanceof jose.errors.JWTExpired) {
-      return c.json({
-        error: {
-          code: 'REFRESH_TOKEN_EXPIRED',
+	    return c.json({
+	      token: tokens.token,
+	      refreshToken: tokens.refreshToken,
+	      expiresIn: tokens.expiresIn,
+	      _internal: {
+	        wsToken: tokens.wsToken,
+	      },
+	    });
+	  } catch (error) {
+	    if (error instanceof TokenValidationError && error.code === 'TOKEN_EXPIRED') {
+	      return c.json({
+	        error: {
+	          code: 'REFRESH_TOKEN_EXPIRED',
           message: 'Refresh token expired',
           suggestion: 'Please log in again using ChatSDK.connect()',
         },
       }, 401);
     }
 
-    return c.json({
-      error: {
-        code: 'INVALID_REFRESH_TOKEN',
-        message: 'Invalid refresh token',
-        suggestion: 'The refresh token is invalid or corrupted. Please log in again.',
-      },
-    }, 401);
+	    return c.json({
+	      error: {
+	        code: 'INVALID_REFRESH_TOKEN',
+	        message: error instanceof TokenValidationError ? error.message : 'Invalid refresh token',
+	        suggestion: 'The refresh token is invalid or corrupted. Please log in again.',
+	      },
+	    }, 401);
   }
 });
 
@@ -248,15 +215,28 @@ authRoutes.post('/refresh', async (c) => {
  * Development Mode - Connect Without API Key
  * POST /api/auth/connect-dev
  *
- * ONLY ENABLED IN DEVELOPMENT (when NODE_ENV !== 'production')
+ * ONLY ENABLED IN EXPLICIT DEVELOPMENT MODE
  * Allows developers to test without API keys
  */
-if (process.env.NODE_ENV !== 'production') {
+if (config.isDevelopment && process.env.ALLOW_DEV_AUTH === 'true') {
   authRoutes.post(
     '/connect-dev',
+    rateLimitPublic(RATE_LIMIT_POLICIES.tokenConnectIp),
     zValidator('json', connectSchema),
     async (c) => {
       console.warn('[Auth] Using development mode authentication (no API key required)');
+      const body = c.req.valid('json');
+      const devLimit = await applyRateLimits(c, [
+        {
+          policy: RATE_LIMIT_POLICIES.tokenConnectIp,
+          scope: { appId: 'dev', userId: body.userId, ip: getClientIp(c) },
+        },
+        {
+          policy: RATE_LIMIT_POLICIES.appWrites,
+          scope: { appId: 'dev', global: true },
+        },
+      ]);
+      if (devLimit) return devLimit;
 
       // Use default dev app or create one
       let appResult = await db.query(
@@ -276,15 +256,13 @@ if (process.env.NODE_ENV !== 'production') {
         appId = appResult.rows[0].id;
       }
 
-      const body = c.req.valid('json');
-
       const metadata = body.metadata ?? {};
       if (body.email) {
         metadata.email = body.email;
       }
 
       // Create/update user
-      await db.query(
+      await withTenantContext(appId, body.userId, () => db.query(
         `INSERT INTO app_user (app_id, id, name, image_url, custom_data, last_active_at)
          VALUES ($1, $2, $3, $4, $5, NOW())
          ON CONFLICT (app_id, id) DO UPDATE SET
@@ -294,39 +272,9 @@ if (process.env.NODE_ENV !== 'production') {
            last_active_at = NOW(),
            updated_at = NOW()`,
         [appId, body.userId, body.displayName, body.avatar, JSON.stringify(metadata)]
-      );
+      ));
 
-      // Generate tokens
-      const secret = new TextEncoder().encode(JWT_SECRET);
-      const accessToken = await new jose.SignJWT({
-        user_id: body.userId,
-        app_id: appId,
-        type: 'access',
-      })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setIssuedAt()
-        .setExpirationTime('24h') // Longer in dev mode
-        .sign(secret);
-
-      const refreshToken = await new jose.SignJWT({
-        user_id: body.userId,
-        app_id: appId,
-        type: 'refresh',
-      })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setIssuedAt()
-        .setExpirationTime('7d') // 7 days in dev mode
-        .sign(secret);
-
-      const centrifugoSecret = new TextEncoder().encode(CENTRIFUGO_SECRET);
-      const wsToken = await new jose.SignJWT({
-        sub: body.userId,
-        app_id: appId,
-      })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setIssuedAt()
-        .setExpirationTime('24h')
-        .sign(centrifugoSecret);
+	      const tokens = await issueTokenBundle({ appId, userId: body.userId });
 
       return c.json({
         user: {
@@ -335,12 +283,12 @@ if (process.env.NODE_ENV !== 'production') {
           avatar: body.avatar || null,
           metadata: metadata,
         },
-        token: accessToken,
-        refreshToken: refreshToken,
-        expiresIn: 86400, // 24 hours
-        _internal: {
-          wsToken: wsToken,
-        },
+	        token: tokens.token,
+	        refreshToken: tokens.refreshToken,
+	        expiresIn: tokens.expiresIn,
+	        _internal: {
+	          wsToken: tokens.wsToken,
+	        },
         _dev: {
           warning: 'Development mode - API key not required',
           apiKey: 'dev-api-key',
@@ -348,4 +296,12 @@ if (process.env.NODE_ENV !== 'production') {
       });
     }
   );
+}
+
+function withTenantContext<T>(appId: string, userId: string, fn: () => Promise<T>): Promise<T> {
+  const runner = db.withTenantContext?.bind(db);
+  if (typeof runner === 'function') {
+    return runner({ appId, userId }, fn);
+  }
+  return fn();
 }

@@ -54,7 +54,7 @@ export const handleNewMessage = inngest.createFunction(
     // Step 1: Get recipients (exclude sender)
     const recipientIds = await step.run('get-recipients', async () => {
       // Filter out the sender
-      const recipients = data.memberIds.filter((id) => id !== data.senderId);
+      const recipients = data.memberIds.filter((id: string) => id !== data.senderId);
 
       // In a real app, you'd also filter by:
       // - Online status (don't notify users already viewing the channel)
@@ -109,7 +109,7 @@ export const handleNewMessage = inngest.createFunction(
 
     // Step 3: Notify remaining members (excluding mentioned users)
     const nonMentionedRecipients = recipientIds.filter(
-      (id) => !data.mentions.includes(id)
+      (id: string) => !data.mentions.includes(id)
     );
 
     if (nonMentionedRecipients.length > 0) {
@@ -263,7 +263,7 @@ export const handleThreadReply = inngest.createFunction(
 
     // Get participants excluding the replier
     const recipientIds = data.threadParticipantIds.filter(
-      (id) => id !== data.replierId
+      (id: string) => id !== data.replierId
     );
 
     if (recipientIds.length === 0) {

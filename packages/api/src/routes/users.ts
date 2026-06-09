@@ -7,10 +7,18 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { db } from '../services/database';
-import { requireUser } from '../middleware/auth';
+import { requireApp, requireUser } from '../middleware/auth';
 import { deleteSubscriber } from '../services/novu';
+import { centrifugo } from '../services/centrifugo';
+import { realtimeUserSubject, revokeUserTokens } from '../services/tokens';
+import { anonymizeUser, createDataExport } from '../services/data-lifecycle';
+import { RATE_LIMIT_POLICIES, rateLimitUser } from '../services/rate-limit';
 
 export const userRoutes = new Hono();
+
+const revokeTokensSchema = z.object({
+  reason: z.string().max(255).optional(),
+});
 
 /**
  * Get current user
@@ -91,7 +99,7 @@ userRoutes.patch(
  * Get a specific user
  * GET /api/users/:userId
  */
-userRoutes.get('/:userId', async (c) => {
+userRoutes.get('/:userId', requireUser, async (c) => {
   const auth = c.get('auth');
   const userId = c.req.param('userId');
 
@@ -123,7 +131,7 @@ userRoutes.get('/:userId', async (c) => {
  * Query users
  * GET /api/users
  */
-userRoutes.get('/', async (c) => {
+userRoutes.get('/', requireUser, async (c) => {
   const auth = c.get('auth');
   const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
   const offset = parseInt(c.req.query('offset') || '0', 10);
@@ -247,21 +255,91 @@ userRoutes.get('/me/blocked', requireUser, async (c) => {
   return c.json({ blockedUsers });
 });
 
+/**
+ * Export current user's chat data.
+ * POST /api/users/me/export
+ */
+userRoutes.post(
+  '/me/export',
+  requireUser,
+  rateLimitUser(RATE_LIMIT_POLICIES.exportCreate),
+  async (c) => {
+    const auth = c.get('auth');
+    const result = await createDataExport({
+      appId: auth.appId,
+      requestedBy: auth.userId!,
+      scopeType: 'user',
+      scopeId: auth.userId!,
+    });
+
+    return c.json(result, 201);
+  }
+);
+
 // ============================================================================
 // User Deletion (for cleaning up seed/test data)
 // ============================================================================
 
+userRoutes.post(
+  '/:userId/revoke-tokens',
+  requireApp,
+  zValidator('json', revokeTokensSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const userId = c.req.param('userId');
+    const body = c.req.valid('json');
+
+    const userCheck = await db.query(
+      `SELECT id FROM app_user WHERE app_id = $1 AND id = $2`,
+      [auth.appId, userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return c.json({ error: { message: 'User not found' } }, 404);
+    }
+
+    await revokeUserTokens({
+      appId: auth.appId,
+      userId,
+      reason: body.reason ?? 'server_revoke',
+    });
+
+    disconnectRealtimeUser(auth.appId, userId);
+
+    return c.json({ success: true, revokedUserId: userId });
+  }
+);
+
 /**
- * Delete a user
+ * Export a user's chat data with app/server credentials.
+ * POST /api/users/:userId/export
+ */
+userRoutes.post(
+  '/:userId/export',
+  requireApp,
+  rateLimitUser(RATE_LIMIT_POLICIES.exportCreate, (c) => ({ key: c.req.param('userId') })),
+  async (c) => {
+    const auth = c.get('auth');
+    const userId = c.req.param('userId');
+    const result = await createDataExport({
+      appId: auth.appId,
+      requestedBy: 'app',
+      scopeType: 'user',
+      scopeId: userId,
+    });
+
+    return c.json(result, 201);
+  }
+);
+
+/**
+ * Delete/anonymize a user
  * DELETE /api/users/:userId
  *
- * Removes a user and all their associated data (messages, reactions, etc.).
- * Use this to clean up seed/test users or remove inactive accounts.
- *
- * Note: This is a destructive operation. Messages from deleted users
- * will have their user_id set to NULL (orphaned).
+ * P0 production lifecycle behavior anonymizes the user row and revokes tokens
+ * instead of deleting message history or breaking message foreign keys.
  */
-userRoutes.delete('/:userId', requireUser, async (c) => {
+userRoutes.delete('/:userId', requireApp, async (c) => {
   const auth = c.get('auth');
   const userId = c.req.param('userId');
 
@@ -275,27 +353,35 @@ userRoutes.delete('/:userId', requireUser, async (c) => {
     return c.json({ error: { message: 'User not found' } }, 404);
   }
 
-  // Delete user (cascades to channel_member, reactions, etc. via FK constraints)
-  await db.query(
-    `DELETE FROM app_user WHERE app_id = $1 AND id = $2`,
-    [auth.appId, userId]
-  );
+  await anonymizeUser({
+    appId: auth.appId,
+    userId,
+    deletedBy: 'app',
+    reason: 'app_user_delete',
+  });
 
-  // Clean up Novu subscriber (non-blocking)
-  deleteSubscriber(userId);
+  await revokeUserTokens({
+    appId: auth.appId,
+    userId,
+    reason: 'user_deleted',
+  });
 
-  return c.json({ success: true, deletedUserId: userId });
+	  // Clean up Novu subscriber (non-blocking)
+	  deleteSubscriber(userId);
+	  disconnectRealtimeUser(auth.appId, userId);
+
+  return c.json({ success: true, anonymizedUserId: userId });
 });
 
 /**
  * Bulk delete users
  * POST /api/users/bulk-delete
  *
- * Delete multiple users at once. Useful for cleaning up seed data.
+ * Anonymize multiple users at once. Useful for cleaning up seed data.
  */
 userRoutes.post(
   '/bulk-delete',
-  requireUser,
+  requireApp,
   zValidator('json', z.object({
     userIds: z.array(z.string()).min(1).max(100),
   })),
@@ -303,22 +389,37 @@ userRoutes.post(
     const auth = c.get('auth');
     const { userIds } = c.req.valid('json');
 
-    const result = await db.query(
-      `DELETE FROM app_user WHERE app_id = $1 AND id = ANY($2) RETURNING id`,
-      [auth.appId, userIds]
-    );
+    const deletedIds: string[] = [];
+    for (const userId of userIds) {
+      const updated = await anonymizeUser({
+        appId: auth.appId,
+        userId,
+        deletedBy: 'app',
+        reason: 'bulk_user_delete',
+      });
+      if (!updated) {
+        continue;
+      }
+      await revokeUserTokens({ appId: auth.appId, userId, reason: 'user_deleted' });
+      deletedIds.push(userId);
+    }
 
     // Clean up Novu subscribers (non-blocking, fire-and-forget)
-    const deletedIds = result.rows.map((r) => r.id);
     deletedIds.forEach((id) => deleteSubscriber(id));
 
     return c.json({
       success: true,
-      deleted: deletedIds,
-      count: result.rowCount,
+      anonymized: deletedIds,
+      count: deletedIds.length,
     });
-  }
-);
+	  }
+	);
+
+function disconnectRealtimeUser(appId: string, userId: string): void {
+  centrifugo.disconnect(realtimeUserSubject(appId, userId)).catch((error) => {
+    console.warn('[Users] Failed to disconnect revoked realtime user:', error);
+  });
+}
 
 // ============================================================================
 // User Sync (Bulk User Management)
@@ -354,7 +455,7 @@ const syncUsersSchema = z.object({
  */
 userRoutes.post(
   '/sync',
-  requireUser,
+  requireApp,
   zValidator('json', syncUsersSchema),
   async (c) => {
     const auth = c.get('auth');
@@ -416,7 +517,7 @@ userRoutes.post(
  */
 userRoutes.put(
   '/:userId',
-  requireUser,
+  requireApp,
   zValidator('json', z.object({
     name: z.string().optional(),
     image: z.string().url().optional().nullable(),

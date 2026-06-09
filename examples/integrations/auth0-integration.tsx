@@ -16,6 +16,8 @@ const CHATSDK_API_URL = process.env.REACT_APP_CHATSDK_API_URL || 'http://localho
 interface ChatSDKTokens {
   token: string;
   wsToken: string;
+  refreshToken?: string;
+  expiresIn?: number;
   expiresAt: number;
 }
 
@@ -54,6 +56,8 @@ export function useChatSDKWithAuth0() {
         const chatTokens = {
           token: data.token,
           wsToken: data.wsToken,
+          refreshToken: data.refreshToken,
+          expiresIn: data.expiresIn,
           expiresAt: Date.now() + (data.expiresIn * 1000),
         };
 
@@ -133,8 +137,7 @@ function ChatSDKProviderInner({
 
   return (
     <ChatProvider 
-      token={tokens.token} 
-      wsToken={tokens.wsToken} 
+      tokenProvider={async () => tokens}
       apiUrl={chatsdkApiUrl}
     >
       {children}

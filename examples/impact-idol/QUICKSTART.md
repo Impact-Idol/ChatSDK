@@ -56,25 +56,19 @@ curl -X POST http://localhost:5500/api/auth/api-keys \
 ## Step 4: Update Root Layout (1 min)
 
 ```typescript
-// app/layout.tsx
+// app/providers.tsx
+'use client';
+
 import { ChatProvider } from '@chatsdk/react';
-import { impactIdolTheme } from '@chatsdk/react';
-import { ChatClient } from '@chatsdk/core';
 
-const chatClient = new ChatClient({
-  apiUrl: process.env.NEXT_PUBLIC_CHATSDK_API_URL!,
-  apiKey: process.env.NEXT_PUBLIC_CHATSDK_API_KEY!,
-});
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export function ChatSDKProvider({ children }: { children: React.ReactNode }) {
   return (
-    <html>
-      <body>
-        <ChatProvider client={chatClient} theme={impactIdolTheme}>
-          {children}
-        </ChatProvider>
-      </body>
-    </html>
+    <ChatProvider
+      apiUrl={process.env.NEXT_PUBLIC_CHATSDK_API_URL}
+      tokenProvider={() => fetch('/api/chatsdk-token').then((res) => res.json())}
+    >
+      {children}
+    </ChatProvider>
   );
 }
 ```
@@ -141,13 +135,13 @@ export async function sendMessage(channelId: string, content: string) {
 ### Messages not appearing?
 
 1. Check ChatSDK API is running: `http://localhost:5500`
-2. Verify API key is set in `.env.local`
+2. Verify your backend token route is configured
 3. Check browser console for errors
 
 ### Theme not matching?
 
 1. Verify `impactIdolTheme` is imported
-2. Check `ChatProvider` has `theme={impactIdolTheme}`
+2. Check `themeToCSSVariables(impactIdolTheme)` is injected
 3. Customize theme if needed:
 
 ```typescript

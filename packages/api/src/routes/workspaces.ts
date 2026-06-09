@@ -4,23 +4,17 @@
  */
 
 import { Hono } from 'hono';
-import type { Context } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { requireUser } from '../middleware/auth';
 import { db } from '../services/database';
-import { logger } from '../services/logger';
-
-/**
- * Check if the request is a trusted server-side call via API key.
- * The authMiddleware validates the API key before any route handler runs,
- * so if we reach a handler, the API key is guaranteed valid.
- * API-key-authenticated requests bypass per-user role checks for
- * workspace management operations (add/remove members, update, delete).
- */
-function isAppLevelAuth(c: Context): boolean {
-  return !!c.req.header('X-API-Key');
-}
+import { centrifugo } from '../services/centrifugo';
+import {
+  enqueueDomainRealtimeEvent,
+  triggerRealtimeOutboxDrainSafely,
+  userChannel,
+} from '../services/realtime-events';
+import { realtimeUserSubject } from '../services/tokens';
 
 export const workspaceRoutes = new Hono();
 
@@ -56,55 +50,61 @@ workspaceRoutes.post(
     const auth = c.get('auth');
     const body = c.req.valid('json');
 
-    const result = await db.query(
-      `INSERT INTO workspace (app_id, name, type, image_url, config, created_by, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
-      [
-        auth.appId,
-        body.name,
-        body.type,
-        body.image,
-        JSON.stringify(body.config || {}),
-        auth.userId,
-        body.expiresAt,
-      ]
-    );
+    const formattedWorkspace = await db.transaction(async (client) => {
+      const result = await client.query(
+        `INSERT INTO workspace (app_id, name, type, image_url, config, created_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          auth.appId,
+          body.name,
+          body.type,
+          body.image,
+          JSON.stringify(body.config || {}),
+          auth.userId,
+          body.expiresAt,
+        ]
+      );
 
-    const workspace = result.rows[0];
+      const workspace = result.rows[0];
 
-    // Add creator as owner
-    await db.query(
-      `INSERT INTO workspace_member (workspace_id, app_id, user_id, role, is_default)
-       VALUES ($1, $2, $3, 'owner', TRUE)`,
-      [workspace.id, auth.appId, auth.userId]
-    );
+      await client.query(
+        `INSERT INTO workspace_member (workspace_id, app_id, user_id, role, is_default)
+         VALUES ($1, $2, $3, 'owner', TRUE)`,
+        [workspace.id, auth.appId, auth.userId]
+      );
 
-    // Update member count
-    await db.query(
-      `UPDATE workspace SET member_count = 1 WHERE id = $1`,
-      [workspace.id]
-    );
+      await client.query(
+        `UPDATE workspace SET member_count = 1 WHERE id = $1 AND app_id = $2`,
+        [workspace.id, auth.appId]
+      );
 
-    const formattedWorkspace = {
-      id: workspace.id,
-      name: workspace.name,
-      type: workspace.type,
-      image: workspace.image_url,
-      memberCount: 1,
-      channelCount: 0,
-      expiresAt: workspace.expires_at,
-      createdAt: workspace.created_at,
-      createdBy: workspace.created_by,
-    };
+      const formatted = {
+        id: workspace.id,
+        name: workspace.name,
+        type: workspace.type,
+        image: workspace.image_url,
+        memberCount: 1,
+        channelCount: 0,
+        expiresAt: workspace.expires_at,
+        createdAt: workspace.created_at,
+        createdBy: workspace.created_by,
+      };
 
-    // Broadcast workspace created event
-    try {
-      const { centrifugo } = await import('../services/centrifugo');
-      await centrifugo.publishWorkspaceCreated(auth.appId, formattedWorkspace);
-    } catch (error) {
-      console.error('Failed to broadcast workspace.created event:', error);
-    }
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'workspace',
+        aggregateId: workspace.id,
+        eventType: 'workspace.created',
+        channels: [userChannel(auth.appId, auth.userId!)],
+        payload: { workspace: formatted },
+        idempotencyKey: `workspace.created:${auth.appId}:${workspace.id}`,
+      });
+
+      return formatted;
+    });
+
+    triggerRealtimeOutboxDrainSafely();
 
     return c.json(formattedWorkspace);
   }
@@ -120,8 +120,8 @@ workspaceRoutes.get('/', requireUser, async (c) => {
   const result = await db.query(
     `SELECT w.*, wm.role, wm.is_default
      FROM workspace w
-     JOIN workspace_member wm ON w.id = wm.workspace_id
-     WHERE wm.app_id = $1 AND wm.user_id = $2
+     JOIN workspace_member wm ON w.id = wm.workspace_id AND w.app_id = wm.app_id
+     WHERE w.app_id = $1 AND wm.user_id = $2
      ORDER BY w.created_at DESC`,
     [auth.appId, auth.userId]
   );
@@ -200,22 +200,18 @@ workspaceRoutes.put(
     const workspaceId = c.req.param('id');
     const body = c.req.valid('json');
 
-    if (isAppLevelAuth(c)) {
-      logger.info({ type: 'workspace_admin', op: 'update', app_id: auth.appId, workspace_id: workspaceId, user_id: auth.userId }, 'API key authorized workspace update');
-    } else {
-      const memberCheck = await db.query(
-        `SELECT role FROM workspace_member
-         WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-        [workspaceId, auth.appId, auth.userId]
-      );
+    const memberCheck = await db.query(
+      `SELECT role FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+      [workspaceId, auth.appId, auth.userId]
+    );
 
-      if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
-        return c.json({ error: { message: 'Permission denied' } }, 403);
-      }
+    if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
+      return c.json({ error: { message: 'Permission denied' } }, 403);
     }
 
-    const updates = [];
-    const values = [];
+    const updates: string[] = [];
+    const values: unknown[] = [];
     let paramCount = 1;
 
     if (body.name) {
@@ -242,37 +238,52 @@ workspaceRoutes.put(
     updates.push(`updated_at = NOW()`);
     values.push(workspaceId, auth.appId);
 
-    const result = await db.query(
-      `UPDATE workspace SET ${updates.join(', ')}
-       WHERE id = $${paramCount++} AND app_id = $${paramCount}
-       RETURNING *`,
-      values
-    );
+    const formattedWorkspace = await db.transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE workspace SET ${updates.join(', ')}
+         WHERE id = $${paramCount++} AND app_id = $${paramCount}
+         RETURNING *`,
+        values
+      );
 
-    if (result.rows.length === 0) {
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const workspace = result.rows[0];
+      const memberResult = await client.query(
+        `SELECT user_id FROM workspace_member
+         WHERE workspace_id = $1 AND app_id = $2`,
+        [workspaceId, auth.appId]
+      );
+      const formatted = {
+        id: workspace.id,
+        name: workspace.name,
+        type: workspace.type,
+        image: workspace.image_url,
+        memberCount: workspace.member_count,
+        channelCount: workspace.channel_count,
+        expiresAt: workspace.expires_at,
+        updatedAt: workspace.updated_at,
+      };
+
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'workspace',
+        aggregateId: workspaceId,
+        eventType: 'workspace.updated',
+        channels: memberResult.rows.map((row) => userChannel(auth.appId, row.user_id)),
+        payload: { workspace: formatted },
+      });
+
+      return formatted;
+    });
+
+    if (!formattedWorkspace) {
       return c.json({ error: { message: 'Workspace not found' } }, 404);
     }
 
-    const workspace = result.rows[0];
-
-    const formattedWorkspace = {
-      id: workspace.id,
-      name: workspace.name,
-      type: workspace.type,
-      image: workspace.image_url,
-      memberCount: workspace.member_count,
-      channelCount: workspace.channel_count,
-      expiresAt: workspace.expires_at,
-      updatedAt: workspace.updated_at,
-    };
-
-    // Broadcast workspace updated event
-    try {
-      const { centrifugo } = await import('../services/centrifugo');
-      await centrifugo.publishWorkspaceUpdated(auth.appId, workspaceId, formattedWorkspace);
-    } catch (error) {
-      console.error('Failed to broadcast workspace.updated event:', error);
-    }
+    triggerRealtimeOutboxDrainSafely();
 
     return c.json(formattedWorkspace);
   }
@@ -286,32 +297,40 @@ workspaceRoutes.delete('/:id', requireUser, async (c) => {
   const auth = c.get('auth');
   const workspaceId = c.req.param('id');
 
-  if (isAppLevelAuth(c)) {
-    logger.info({ type: 'workspace_admin', op: 'delete', app_id: auth.appId, workspace_id: workspaceId, user_id: auth.userId }, 'API key authorized workspace deletion');
-  } else {
-    const memberCheck = await db.query(
-      `SELECT role FROM workspace_member
-       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-      [workspaceId, auth.appId, auth.userId]
-    );
-
-    if (memberCheck.rows.length === 0 || memberCheck.rows[0].role !== 'owner') {
-      return c.json({ error: { message: 'Permission denied. Only owners can delete workspaces' } }, 403);
-    }
-  }
-
-  await db.query(
-    `DELETE FROM workspace WHERE id = $1 AND app_id = $2`,
-    [workspaceId, auth.appId]
+  const memberCheck = await db.query(
+    `SELECT role FROM workspace_member
+     WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+    [workspaceId, auth.appId, auth.userId]
   );
 
-  // Broadcast workspace deleted event
-  try {
-    const { centrifugo } = await import('../services/centrifugo');
-    await centrifugo.publishWorkspaceDeleted(auth.appId, workspaceId);
-  } catch (error) {
-    console.error('Failed to broadcast workspace.deleted event:', error);
+  if (memberCheck.rows.length === 0 || memberCheck.rows[0].role !== 'owner') {
+    return c.json({ error: { message: 'Permission denied. Only owners can delete workspaces' } }, 403);
   }
+
+  await db.transaction(async (client) => {
+    const memberResult = await client.query(
+      `SELECT user_id FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2`,
+      [workspaceId, auth.appId]
+    );
+
+    await client.query(
+      `DELETE FROM workspace WHERE id = $1 AND app_id = $2`,
+      [workspaceId, auth.appId]
+    );
+
+    await enqueueDomainRealtimeEvent(client, {
+      appId: auth.appId,
+      aggregateType: 'workspace',
+      aggregateId: workspaceId,
+      eventType: 'workspace.deleted',
+      channels: memberResult.rows.map((row) => userChannel(auth.appId, row.user_id)),
+      payload: { workspaceId },
+      idempotencyKey: `workspace.deleted:${auth.appId}:${workspaceId}`,
+    });
+  });
+
+  triggerRealtimeOutboxDrainSafely();
 
   return c.json({ success: true });
 });
@@ -329,18 +348,19 @@ workspaceRoutes.post(
     const workspaceId = c.req.param('id');
     const body = c.req.valid('json');
 
-    if (isAppLevelAuth(c)) {
-      logger.info({ type: 'workspace_admin', op: 'add_members', app_id: auth.appId, workspace_id: workspaceId, user_id: auth.userId }, 'API key authorized member management');
-    } else {
-      const memberCheck = await db.query(
-        `SELECT role FROM workspace_member
-         WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-        [workspaceId, auth.appId, auth.userId]
-      );
+    const memberCheck = await db.query(
+      `SELECT role FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+      [workspaceId, auth.appId, auth.userId]
+    );
 
-      if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
-        return c.json({ error: { message: 'Permission denied' } }, 403);
-      }
+    if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
+      return c.json({ error: { message: 'Permission denied' } }, 403);
+    }
+
+    const callerRole = memberCheck.rows[0].role;
+    if (body.role === 'owner' && callerRole !== 'owner') {
+      return c.json({ error: { message: 'Only owners can grant owner role' } }, 403);
     }
 
     // Verify workspace exists and belongs to this app
@@ -352,30 +372,59 @@ workspaceRoutes.post(
       return c.json({ error: { message: 'Workspace not found' } }, 404);
     }
 
-    // Add members
-    const added = [];
-    for (const userId of body.userIds) {
-      try {
-        await db.query(
+    const added = await db.transaction(async (client) => {
+      const addedUserIds: string[] = [];
+
+      for (const userId of body.userIds) {
+        const insertResult = await client.query(
           `INSERT INTO workspace_member (workspace_id, app_id, user_id, role)
            VALUES ($1, $2, $3, $4)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT DO NOTHING
+           RETURNING user_id`,
           [workspaceId, auth.appId, userId, body.role]
         );
-        added.push(userId);
-      } catch (error) {
-        // User doesn't exist or other error - skip
-        console.error(`Failed to add user ${userId}:`, error);
-      }
-    }
 
-    // Update member count
-    await db.query(
-      `UPDATE workspace
-       SET member_count = (SELECT COUNT(*) FROM workspace_member WHERE workspace_id = $1)
-       WHERE id = $1`,
-      [workspaceId]
-    );
+        if (insertResult.rows.length > 0) {
+          addedUserIds.push(userId);
+        }
+      }
+
+      await client.query(
+        `UPDATE workspace
+         SET member_count = (
+           SELECT COUNT(*) FROM workspace_member
+           WHERE workspace_id = $1 AND app_id = $2
+         )
+         WHERE id = $1 AND app_id = $2`,
+        [workspaceId, auth.appId]
+      );
+
+      if (addedUserIds.length > 0) {
+        const memberResult = await client.query(
+          `SELECT user_id FROM workspace_member
+           WHERE workspace_id = $1 AND app_id = $2`,
+          [workspaceId, auth.appId]
+        );
+        const channels = memberResult.rows.map((row) => userChannel(auth.appId, row.user_id));
+
+        for (const userId of addedUserIds) {
+          await enqueueDomainRealtimeEvent(client, {
+            appId: auth.appId,
+            aggregateType: 'workspace_member',
+            aggregateId: workspaceId,
+            eventType: 'workspace.member_joined',
+            channels,
+            payload: { workspaceId, userId },
+          });
+        }
+      }
+
+      return addedUserIds;
+    });
+
+    if (added.length > 0) {
+      triggerRealtimeOutboxDrainSafely();
+    }
 
     return c.json({ added, count: added.length });
   }
@@ -399,25 +448,19 @@ workspaceRoutes.patch(
     const targetUserId = c.req.param('userId');
     const body = c.req.valid('json');
 
-    if (isAppLevelAuth(c)) {
-      logger.info({
-        type: 'workspace_admin',
-        op: 'update_member_role',
-        app_id: auth.appId,
-        workspace_id: workspaceId,
-        target_user_id: targetUserId,
-        user_id: auth.userId,
-      }, 'API key authorized member role update');
-    } else {
-      const memberCheck = await db.query(
-        `SELECT role FROM workspace_member
-         WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-        [workspaceId, auth.appId, auth.userId]
-      );
+    const memberCheck = await db.query(
+      `SELECT role FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+      [workspaceId, auth.appId, auth.userId]
+    );
 
-      if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
-        return c.json({ error: { message: 'Permission denied' } }, 403);
-      }
+    if (memberCheck.rows.length === 0 || !['owner', 'admin'].includes(memberCheck.rows[0].role)) {
+      return c.json({ error: { message: 'Permission denied' } }, 403);
+    }
+
+    const callerRole = memberCheck.rows[0].role;
+    if (body.role === 'owner' && callerRole !== 'owner') {
+      return c.json({ error: { message: 'Only owners can grant owner role' } }, 403);
     }
 
     // Verify workspace exists
@@ -440,12 +483,16 @@ workspaceRoutes.patch(
       return c.json({ error: { message: 'Member not found' } }, 404);
     }
 
+    if (targetRole.rows[0].role === 'owner' && callerRole !== 'owner') {
+      return c.json({ error: { message: 'Only owners can modify owners' } }, 403);
+    }
+
     // Prevent demoting the last owner
     if (targetRole.rows[0].role === 'owner' && body.role !== 'owner') {
       const ownerCount = await db.query(
         `SELECT COUNT(*) as count FROM workspace_member
-         WHERE workspace_id = $1 AND role = 'owner'`,
-        [workspaceId]
+         WHERE workspace_id = $1 AND app_id = $2 AND role = 'owner'`,
+        [workspaceId, auth.appId]
       );
 
       if (parseInt(ownerCount.rows[0].count) <= 1) {
@@ -473,21 +520,18 @@ workspaceRoutes.delete('/:id/members/:userId', requireUser, async (c) => {
   const workspaceId = c.req.param('id');
   const targetUserId = c.req.param('userId');
 
-  if (isAppLevelAuth(c)) {
-    logger.info({ type: 'workspace_admin', op: 'remove_member', app_id: auth.appId, workspace_id: workspaceId, target_user_id: targetUserId, user_id: auth.userId }, 'API key authorized member removal');
-  } else {
-    const memberCheck = await db.query(
-      `SELECT role FROM workspace_member
-       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-      [workspaceId, auth.appId, auth.userId]
-    );
+  const memberCheck = await db.query(
+    `SELECT role FROM workspace_member
+     WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+    [workspaceId, auth.appId, auth.userId]
+  );
 
-    const isSelf = auth.userId === targetUserId;
-    const isAdmin = memberCheck.rows.length > 0 && ['owner', 'admin'].includes(memberCheck.rows[0].role);
+  const isSelf = auth.userId === targetUserId;
+  const callerRole = memberCheck.rows[0]?.role;
+  const isAdmin = memberCheck.rows.length > 0 && ['owner', 'admin'].includes(callerRole);
 
-    if (!isSelf && !isAdmin) {
-      return c.json({ error: { message: 'Permission denied' } }, 403);
-    }
+  if (!isSelf && !isAdmin) {
+    return c.json({ error: { message: 'Permission denied' } }, 403);
   }
 
   // Verify workspace exists and belongs to this app
@@ -507,10 +551,14 @@ workspaceRoutes.delete('/:id/members/:userId', requireUser, async (c) => {
   );
 
   if (targetRole.rows.length > 0 && targetRole.rows[0].role === 'owner') {
+    if (callerRole !== 'owner') {
+      return c.json({ error: { message: 'Only owners can modify owners' } }, 403);
+    }
+
     const ownerCount = await db.query(
       `SELECT COUNT(*) as count FROM workspace_member
-       WHERE workspace_id = $1 AND role = 'owner'`,
-      [workspaceId]
+       WHERE workspace_id = $1 AND app_id = $2 AND role = 'owner'`,
+      [workspaceId, auth.appId]
     );
 
     if (parseInt(ownerCount.rows[0].count) <= 1) {
@@ -518,22 +566,44 @@ workspaceRoutes.delete('/:id/members/:userId', requireUser, async (c) => {
     }
   }
 
-  await db.query(
-    `DELETE FROM workspace_member
-     WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-    [workspaceId, auth.appId, targetUserId]
-  );
+	  await db.query(
+	    `DELETE FROM workspace_member
+	     WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+	    [workspaceId, auth.appId, targetUserId]
+	  );
 
-  // Update member count
-  await db.query(
-    `UPDATE workspace
-     SET member_count = (SELECT COUNT(*) FROM workspace_member WHERE workspace_id = $1)
-     WHERE id = $1`,
-    [workspaceId]
-  );
+	  await db.query(
+	    `DELETE FROM channel_member cm
+	     USING channel c
+	     WHERE cm.channel_id = c.id
+	       AND cm.app_id = c.app_id
+	       AND c.workspace_id = $1
+	       AND cm.app_id = $2
+	       AND cm.user_id = $3`,
+	    [workspaceId, auth.appId, targetUserId]
+	  );
 
-  return c.json({ success: true });
-});
+	  // Update member count
+	  await db.query(
+	    `UPDATE workspace
+     SET member_count = (
+       SELECT COUNT(*) FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2
+     )
+     WHERE id = $1 AND app_id = $2`,
+	    [workspaceId, auth.appId]
+	  );
+
+	  disconnectRemovedWorkspaceMember(auth.appId, targetUserId);
+
+	  return c.json({ success: true });
+	});
+
+function disconnectRemovedWorkspaceMember(appId: string, userId: string): void {
+  centrifugo.disconnect(realtimeUserSubject(appId, userId)).catch((error) => {
+    console.warn('[Workspaces] Failed to disconnect removed workspace member:', error);
+  });
+}
 
 /**
  * Get workspace channels
@@ -557,8 +627,9 @@ workspaceRoutes.get('/:id/channels', requireUser, async (c) => {
   const result = await db.query(
     `SELECT c.*, cm.last_read_seq, cm.unread_count
      FROM channel c
-     LEFT JOIN channel_member cm ON c.id = cm.channel_id AND cm.user_id = $3
+     LEFT JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id AND cm.user_id = $3
      WHERE c.workspace_id = $1 AND c.app_id = $2
+       AND (c.type IN ('public', 'team') OR cm.user_id IS NOT NULL)
      ORDER BY c.last_message_at DESC NULLS LAST`,
     [workspaceId, auth.appId, auth.userId]
   );
@@ -597,23 +668,23 @@ workspaceRoutes.post(
     const workspaceId = c.req.param('id');
     const body = c.req.valid('json');
 
-    if (isAppLevelAuth(c)) {
-      logger.info({ type: 'workspace_admin', op: 'invite', app_id: auth.appId, workspace_id: workspaceId, user_id: auth.userId }, 'API key authorized workspace invite');
-    } else {
-      const memberResult = await db.query(
-        `SELECT role FROM workspace_member
-         WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
-        [workspaceId, auth.appId, auth.userId]
-      );
+    const memberResult = await db.query(
+      `SELECT role FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2 AND user_id = $3`,
+      [workspaceId, auth.appId, auth.userId]
+    );
 
-      if (memberResult.rows.length === 0) {
-        return c.json({ error: { message: 'Workspace not found' } }, 404);
-      }
+    if (memberResult.rows.length === 0) {
+      return c.json({ error: { message: 'Workspace not found' } }, 404);
+    }
 
-      const role = memberResult.rows[0].role;
-      if (!['owner', 'admin'].includes(role)) {
-        return c.json({ error: { message: 'Only admins can invite members' } }, 403);
-      }
+    const role = memberResult.rows[0].role;
+    if (!['owner', 'admin'].includes(role)) {
+      return c.json({ error: { message: 'Only admins can invite members' } }, 403);
+    }
+
+    if (body.role === 'owner' && role !== 'owner') {
+      return c.json({ error: { message: 'Only owners can grant owner role' } }, 403);
     }
 
     // Get workspace details
@@ -637,18 +708,22 @@ workspaceRoutes.post(
 
       // Check if there's already a pending invite for this email
       const existingInvite = await db.query(
-        `SELECT id FROM workspace_invite
-         WHERE workspace_id = $1 AND email = $2 AND status = 'pending' AND expires_at > NOW()`,
-        [workspaceId, email]
+        `SELECT id, role FROM workspace_invite
+         WHERE workspace_id = $1 AND app_id = $2 AND email = $3 AND status = 'pending' AND expires_at > NOW()`,
+        [workspaceId, auth.appId, email]
       );
 
       if (existingInvite.rows.length > 0) {
+        if ((existingInvite.rows[0].role === 'owner' || body.role === 'owner') && role !== 'owner') {
+          return c.json({ error: { message: 'Only owners can grant owner role' } }, 403);
+        }
+
         // Update existing invite with new token
         await db.query(
           `UPDATE workspace_invite
-           SET token = $1, invited_by = $2, message = $3, created_at = NOW(), expires_at = NOW() + INTERVAL '7 days'
-           WHERE id = $4`,
-          [token, auth.userId, body.message, existingInvite.rows[0].id]
+           SET token = $1, invited_by = $2, message = $3, role = $4, created_at = NOW(), expires_at = NOW() + INTERVAL '7 days'
+           WHERE id = $5 AND app_id = $6`,
+          [token, auth.userId, body.message, body.role, existingInvite.rows[0].id, auth.appId]
         );
       } else {
         // Create new invite
@@ -668,8 +743,8 @@ workspaceRoutes.post(
 
     // Trigger email sending via Inngest
     try {
-      const { inngest } = await import('../inngest');
-      await inngest.send({
+      const { sendInngestEvent } = await import('../inngest');
+      await sendInngestEvent({
         name: 'workspace/invite.sent',
         data: {
           workspaceId,
@@ -705,8 +780,8 @@ workspaceRoutes.get('/invites/:token', requireUser, async (c) => {
   // Find the invite
   const inviteResult = await db.query(
     `SELECT * FROM workspace_invite
-     WHERE token = $1 AND status = 'pending' AND expires_at > NOW()`,
-    [token]
+     WHERE token = $1 AND app_id = $2 AND status = 'pending' AND expires_at > NOW()`,
+    [token, auth.appId]
   );
 
   if (inviteResult.rows.length === 0) {
@@ -725,8 +800,9 @@ workspaceRoutes.get('/invites/:token', requireUser, async (c) => {
   if (memberCheck.rows.length > 0) {
     // Update invite status to accepted anyway
     await db.query(
-      `UPDATE workspace_invite SET status = 'accepted', accepted_by = $1, accepted_at = NOW() WHERE id = $2`,
-      [auth.userId, invite.id]
+      `UPDATE workspace_invite SET status = 'accepted', accepted_by = $1, accepted_at = NOW()
+       WHERE id = $2 AND app_id = $3`,
+      [auth.userId, invite.id, auth.appId]
     );
 
     return c.json({
@@ -736,46 +812,54 @@ workspaceRoutes.get('/invites/:token', requireUser, async (c) => {
     });
   }
 
-  // Add user to workspace
-  await db.query(
-    `INSERT INTO workspace_member (workspace_id, app_id, user_id, role)
-     VALUES ($1, $2, $3, $4)`,
-    [invite.workspace_id, auth.appId, auth.userId, invite.role]
-  );
+  const workspaceResult = await db.transaction(async (client) => {
+    await client.query(
+      `INSERT INTO workspace_member (workspace_id, app_id, user_id, role)
+       VALUES ($1, $2, $3, $4)`,
+      [invite.workspace_id, auth.appId, auth.userId, invite.role]
+    );
 
-  // Update workspace member count
-  await db.query(
-    `UPDATE workspace SET member_count = member_count + 1, updated_at = NOW()
-     WHERE id = $1`,
-    [invite.workspace_id]
-  );
+    await client.query(
+      `UPDATE workspace SET member_count = member_count + 1, updated_at = NOW()
+       WHERE id = $1 AND app_id = $2`,
+      [invite.workspace_id, auth.appId]
+    );
 
-  // Mark invite as accepted
-  await db.query(
-    `UPDATE workspace_invite SET status = 'accepted', accepted_by = $1, accepted_at = NOW()
-     WHERE id = $2`,
-    [auth.userId, invite.id]
-  );
+    await client.query(
+      `UPDATE workspace_invite SET status = 'accepted', accepted_by = $1, accepted_at = NOW()
+       WHERE id = $2 AND app_id = $3`,
+      [auth.userId, invite.id, auth.appId]
+    );
 
-  // Get workspace details
-  const workspaceResult = await db.query(
-    `SELECT * FROM workspace WHERE id = $1`,
-    [invite.workspace_id]
-  );
+    const memberResult = await client.query(
+      `SELECT user_id FROM workspace_member
+       WHERE workspace_id = $1 AND app_id = $2`,
+      [invite.workspace_id, auth.appId]
+    );
+
+    await enqueueDomainRealtimeEvent(client, {
+      appId: auth.appId,
+      aggregateType: 'workspace_member',
+      aggregateId: invite.workspace_id,
+      eventType: 'workspace.member_joined',
+      channels: memberResult.rows.map((row) => userChannel(auth.appId, row.user_id)),
+      payload: { workspaceId: invite.workspace_id, userId: auth.userId },
+      idempotencyKey: `workspace.member_joined:${auth.appId}:${invite.workspace_id}:${auth.userId}`,
+    });
+
+    return client.query(
+      `SELECT * FROM workspace WHERE id = $1 AND app_id = $2`,
+      [invite.workspace_id, auth.appId]
+    );
+  });
+
+  if (workspaceResult.rows.length === 0) {
+    return c.json({ error: { message: 'Workspace not found' } }, 404);
+  }
 
   const workspace = workspaceResult.rows[0];
 
-  // Broadcast workspace.member_joined event
-  try {
-    const { centrifugo } = await import('../services/centrifugo');
-    await centrifugo.publishWorkspaceMemberJoined(
-      auth.appId,
-      invite.workspace_id,
-      auth.userId
-    );
-  } catch (error) {
-    console.error('Failed to broadcast member joined event:', error);
-  }
+  triggerRealtimeOutboxDrainSafely();
 
   return c.json({
     success: true,

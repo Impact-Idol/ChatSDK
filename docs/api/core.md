@@ -6,19 +6,28 @@ The `@chatsdk/core` package provides the foundation for building chat applicatio
 
 The main entry point for the SDK.
 
-### Constructor
+### Creation
 
 ```typescript
-import { ChatClient } from '@chatsdk/core';
+import { createChatClient } from '@chatsdk/core';
 
-const client = new ChatClient(options: ChatClientOptions);
+const client = createChatClient({
+  apiUrl: 'https://api.your-server.com',
+  tokenProvider: (user) =>
+    fetch('/api/chat-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user?.id }),
+    }).then((response) => response.json()),
+});
 ```
 
 #### ChatClientOptions
 
 | Property | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
-| `apiKey` | `string` | Yes | - | Your API key |
+| `tokenProvider` | `(user?: ConnectUserOptions) => ChatTokenSet \| Promise<ChatTokenSet>` | Yes, for browser clients | - | Fetches chat tokens from your backend |
+| `apiKey` | `string` | No | - | Deprecated; server/app API key for legacy server-side clients only |
 | `apiUrl` | `string` | No | `http://localhost:5500` | API server URL |
 | `wsUrl` | `string` | No | `ws://localhost:8000/...` | WebSocket URL |
 | `debug` | `boolean` | No | `false` | Enable debug logging |
@@ -51,17 +60,18 @@ Returns the configured API URL.
 ```typescript
 async connectUser(
   user: ConnectUserOptions,
-  token: string
+  tokenOrTokens?: string | ChatTokenSet
 ): Promise<User>
 ```
 
 Connect a user to the chat service.
 
 ```typescript
-const user = await client.connectUser(
-  { id: 'user-123', name: 'Alice', image: 'https://...' },
-  'jwt-token'
-);
+const user = await client.connectUser({
+  id: 'user-123',
+  name: 'Alice',
+  image: 'https://...',
+});
 ```
 
 #### `disconnect()`

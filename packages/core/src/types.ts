@@ -27,19 +27,22 @@ export interface UserToken {
 // Channels
 // ============================================================================
 
-export type ChannelType = 'messaging' | 'livestream' | 'team' | 'commerce';
+export type ChannelType = 'messaging' | 'group' | 'livestream' | 'team' | 'commerce';
 
 export interface Channel {
   id: string;
   cid: string; // e.g., "messaging:general"
   type: ChannelType;
   name?: string;
+  description?: string;
   image?: string;
   member_count: number;
+  unread_count?: number;
   created_by?: User;
   created_at: string;
   updated_at?: string;
   last_message_at?: string;
+  last_message?: Message;
   frozen?: boolean;
   config?: ChannelConfig;
   members?: ChannelMember[];
@@ -70,6 +73,19 @@ export interface ChannelMember {
   updated_at?: string;
 }
 
+export interface Workspace {
+  id: string;
+  name: string;
+  type?: string;
+  image?: string;
+  memberCount?: number;
+  channelCount?: number;
+  expiresAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  createdBy?: string;
+}
+
 // ============================================================================
 // Messages
 // ============================================================================
@@ -94,8 +110,11 @@ export interface Message {
   thread_participants?: User[];
   status?: MessageStatus;
   created_at: string;
+  createdAt?: string;
   updated_at?: string;
+  updatedAt?: string;
   deleted_at?: string;
+  deletedAt?: string;
   // Voice message fields (2025 table stakes)
   voice_url?: string;
   voice_duration_ms?: number;
@@ -117,6 +136,9 @@ export type AttachmentType = 'image' | 'video' | 'audio' | 'file' | 'giphy' | 'v
 
 export interface Attachment {
   type: AttachmentType;
+  url?: string;
+  name?: string;
+  size?: number;
   fallback?: string;
   title?: string;
   title_link?: string;
@@ -125,7 +147,9 @@ export interface Attachment {
   thumb_url?: string;
   asset_url?: string;
   og_scrape_url?: string;
+  mimeType?: string;
   mime_type?: string;
+  fileSize?: number;
   file_size?: number;
   // Audio/Voice specific
   duration?: number;
@@ -432,8 +456,16 @@ export interface EventMap {
   'channel.created': { channel: Channel };
   'channel.updated': { channel: Channel };
   'channel.deleted': { channelId: string };
+  'channel.member_joined': { channelId: string; userId: string };
+  'channel.member_left': { channelId: string; userId: string };
   'channel.unread_changed': { channelId: string; count: number };
   'channel.total_unread_changed': { count: number };
+
+  // Workspace events
+  'workspace.created': { workspace: Workspace };
+  'workspace.updated': { workspace: Workspace };
+  'workspace.deleted': { workspaceId: string };
+  'workspace.member_joined': { workspaceId: string; userId: string };
 
   // Message events
   'message.new': { channelId: string; message: MessageWithSeq };
@@ -455,7 +487,12 @@ export interface EventMap {
 
   // Read receipt events
   'read.updated': { channelId: string; userId: string; lastReadSeq: number };
-  'read_receipt': { channelId: string; userId: string; messageId: string };
+  'read_receipt': { channelId: string; userId: string; messageId: string; userName?: string; readAt?: string };
+
+  // Poll events
+  'poll.created': { channelId: string; messageId: string; poll: any };
+  'poll.voted': { channelId: string; pollId: string; userId: string | null; optionIds?: string[]; totalVotes: number };
+  'poll.vote_removed': { channelId: string; pollId: string; userId: string | null; totalVotes: number };
 
   // Thread events
   'thread.reply': { channelId: string; threadId: string; message: MessageWithSeq };
@@ -470,8 +507,34 @@ export type EventCallback<K extends keyof EventMap> = (data: EventMap[K]) => voi
 // Client Configuration
 // ============================================================================
 
+export interface ChatTokenUser {
+  id: string;
+  displayName?: string;
+  name?: string;
+  avatar?: string;
+  image?: string;
+  email?: string;
+  metadata?: Record<string, unknown>;
+  custom?: Record<string, unknown>;
+}
+
+export interface ChatTokenSet {
+  token: string;
+  wsToken?: string;
+  refreshToken?: string;
+  expiresIn?: number;
+  user?: ChatTokenUser;
+}
+
+export type ChatTokenProvider = (user?: ConnectUserOptions) => ChatTokenSet | Promise<ChatTokenSet>;
+
 export interface ChatClientOptions {
-  apiKey: string;
+  /**
+   * Server/app API key. Prefer tokenProvider for browser clients.
+   * @deprecated Browser clients should use bearer tokens from tokenProvider instead.
+   */
+  apiKey?: string;
+  tokenProvider?: ChatTokenProvider;
   apiUrl?: string;
   wsUrl?: string;
   debug?: boolean;

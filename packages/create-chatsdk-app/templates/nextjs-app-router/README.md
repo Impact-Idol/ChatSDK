@@ -57,9 +57,10 @@ All variables are pre-configured in `.env.local` for development.
 
 For production, update:
 ```bash
-NEXT_PUBLIC_CHATSDK_API_KEY=your-production-api-key
 NEXT_PUBLIC_CHATSDK_API_URL=https://your-api-url.com
 NEXT_PUBLIC_CHATSDK_WS_URL=wss://your-ws-url.com
+NEXT_PUBLIC_CHATSDK_TOKEN_URL=/api/chatsdk-token
+CHATSDK_API_KEY=your-server-side-api-key
 ```
 
 ## Customization

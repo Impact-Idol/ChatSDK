@@ -1,0 +1,34 @@
+run_id: 2026-06-09-client-owned-token-broker-implementation
+objective: Autonomously implement the client-owned token broker architecture with seeded multi-client tests, Playwright coverage, per-slice GPT-5.5 high and Antigravity adversarial reviews, and a final security/code hardening sweep.
+status: active
+started_at: 2026-06-09
+source_workspace: /Users/pushkar/chatsdk
+governing_specs:
+  - docs/features/chatsdk-production-hardening/CLIENT_OWNED_TOKEN_BROKER_PLAN.md
+  - docs/features/chatsdk-production-hardening/PRODUCTION_STURDINESS_SPEC.md
+  - docs/features/chatsdk-production-hardening/PRODUCTION_STURDINESS_TEST_PLAN.md
+  - docs/features/chatsdk-production-hardening/MULTI_TENANT_ARCHITECTURE_SPEC.md
+review_policy:
+  after_each_slice:
+    - GPT-5.5 high adversarial review
+    - Antigravity adversarial review via agy
+    - fix all critical/high findings before proceeding
+test_policy:
+  required:
+    - focused unit tests for each new service/route
+    - integration tests with two seeded clients and two ChatSDK apps
+    - negative security tests for cross-app, stale membership, replay, disabled credential, browser direct mint, origin mismatch, and revoked sessions
+    - Playwright where browser/UI or deployed behavior is part of the contract
+artifacts:
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/00-run-manifest.yml
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/01-run-plan.md
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/02-slice-0-discovery-plan-log.md
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/03-slice-1-schema-readiness-log.md
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/04-slice-2-credential-membership-log.md
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/05-slice-3-server-mint-log.md
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/06-slice-4-reference-broker-ui-playwright-log.md
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/07-slice-5-deployed-validation-log.md
+  - docs/agent-runs/2026-06-09-client-owned-token-broker-implementation/08-final-security-code-review-log.md
+notes:
+  - The existing demo/LAN token broker may remain for local demonstration only, but production readiness must not depend on it.
+  - The final implementation must keep ChatSDK client-agnostic; Vouch is one adapter/client fixture, not a core identity authority.

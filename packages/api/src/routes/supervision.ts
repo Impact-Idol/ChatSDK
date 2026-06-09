@@ -23,6 +23,17 @@ const updateSupervisionSchema = z.object({
   ageRestriction: z.number().int().min(1).max(100).nullable().optional(),
 });
 
+async function isSupervisionAdmin(appId: string, userId: string): Promise<boolean> {
+  const adminCheck = await db.query(
+    `SELECT custom_data->>'is_admin' as is_admin
+     FROM app_user
+     WHERE app_id = $1 AND id = $2`,
+    [appId, userId]
+  );
+
+  return adminCheck.rows[0]?.is_admin === 'true';
+}
+
 /**
  * Create supervision relationship
  * POST /api/users/:userId/supervise
@@ -35,6 +46,10 @@ supervisionRoutes.post(
     const auth = c.get('auth');
     const supervisorId = auth.userId;
     const body = c.req.valid('json');
+
+    if (!(await isSupervisionAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Supervision management requires admin access' } }, 403);
+    }
 
     // Validate supervised user exists
     const supervisedResult = await db.query(
@@ -174,6 +189,10 @@ supervisionRoutes.get(
     const limit = parseInt(c.req.query('limit') || '50', 10);
     const offset = parseInt(c.req.query('offset') || '0', 10);
 
+    if (!(await isSupervisionAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Supervision activity requires admin access' } }, 403);
+    }
+
     // Verify supervision relationship exists and monitoring is enabled
     const supervisionResult = await db.query(
       `SELECT monitoring_enabled
@@ -202,7 +221,7 @@ supervisionRoutes.get(
          c.name as channel_name,
          c.type as channel_type
        FROM message m
-       JOIN channel c ON m.channel_id = c.id
+       JOIN channel c ON m.channel_id = c.id AND m.app_id = c.app_id
        WHERE m.app_id = $1
          AND m.user_id = $2
          AND m.deleted_at IS NULL
@@ -219,7 +238,7 @@ supervisionRoutes.get(
          c.type,
          cm.joined_at
        FROM channel_member cm
-       JOIN channel c ON cm.channel_id = c.id
+       JOIN channel c ON cm.channel_id = c.id AND cm.app_id = c.app_id
        WHERE cm.app_id = $1
          AND cm.user_id = $2
        ORDER BY cm.joined_at DESC`,
@@ -237,7 +256,7 @@ supervisionRoutes.get(
          m.text as message_text,
          u.name as reporter_name
        FROM message_report mr
-       JOIN message m ON mr.message_id = m.id
+       JOIN message m ON mr.message_id = m.id AND mr.app_id = m.app_id
        LEFT JOIN app_user u ON mr.reporter_user_id = u.id AND mr.app_id = u.app_id
        WHERE mr.app_id = $1
          AND m.user_id = $2
@@ -289,6 +308,10 @@ supervisionRoutes.patch(
     const auth = c.get('auth');
     const supervisedUserId = c.req.param('userId');
     const body = c.req.valid('json');
+
+    if (!(await isSupervisionAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Supervision management requires admin access' } }, 403);
+    }
 
     const updates = [];
     const values = [];
@@ -346,6 +369,10 @@ supervisionRoutes.delete(
   async (c) => {
     const auth = c.get('auth');
     const supervisedUserId = c.req.param('userId');
+
+    if (!(await isSupervisionAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Supervision management requires admin access' } }, 403);
+    }
 
     const result = await db.query(
       `DELETE FROM supervised_user

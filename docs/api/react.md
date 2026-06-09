@@ -15,21 +15,35 @@ npm install @chatsdk/core @chatsdk/react
 Wrap your app to provide the chat client context.
 
 ```tsx
-import { ChatProvider, ChatClient } from '@chatsdk/react';
-
-const client = new ChatClient({
-  apiKey: 'your-api-key',
-  apiUrl: 'https://api.your-server.com',
-});
+import { ChatProvider } from '@chatsdk/react';
 
 function App() {
   return (
-    <ChatProvider client={client}>
+    <ChatProvider
+      apiUrl="https://api.your-server.com"
+      tokenProvider={(user) =>
+        fetch('/api/chat-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user?.id }),
+        }).then((response) => response.json())
+      }
+    >
       <YourApp />
     </ChatProvider>
   );
 }
 ```
+
+#### ChatProvider Props
+
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `tokenProvider` | `(user?) => ChatTokenSet \| Promise<ChatTokenSet>` | Yes, for browser clients | Fetches chat tokens from your backend |
+| `apiKey` | `string` | No | Deprecated; server/app API key for legacy server-side clients only |
+| `apiUrl` | `string` | No | API server URL |
+| `wsUrl` | `string` | No | WebSocket URL |
+| `debug` | `boolean` | No | Enable debug logging |
 
 ### useChatClient
 

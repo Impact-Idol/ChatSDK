@@ -6,9 +6,14 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { requireUser } from '../middleware/auth';
+import { requireScope, requireUser } from '../middleware/auth';
 import { db } from '../services/database';
-import { getCentrifugo } from '../services/centrifugo';
+import { isChannelMember } from '../services/authorization';
+import {
+  chatChannel,
+  enqueueDomainRealtimeEvent,
+  triggerRealtimeOutboxDrainSafely,
+} from '../services/realtime-events';
 
 export const pollRoutes = new Hono();
 
@@ -36,6 +41,7 @@ const voteSchema = z.object({
 pollRoutes.post(
   '/',
   requireUser,
+  requireScope('chat:write'),
   zValidator('json', createPollSchema),
   async (c) => {
     const auth = c.get('auth');
@@ -55,48 +61,61 @@ pollRoutes.post(
 
     const channelId = messageCheck.rows[0].channel_id;
 
-    // Create poll
-    const result = await db.query(
-      `INSERT INTO poll (message_id, app_id, question, options, is_anonymous, is_multi_choice, ends_at, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [
-        messageId,
-        auth.appId,
-        body.question,
-        JSON.stringify(body.options),
-        body.isAnonymous,
-        body.isMultiChoice,
-        body.endsAt,
-        auth.userId,
-      ]
-    );
+    if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+      return c.json({ error: { message: 'Not a channel member' } }, 403);
+    }
 
-    const poll = result.rows[0];
+    const poll = await db.transaction(async (client) => {
+      const result = await client.query(
+        `INSERT INTO poll (message_id, app_id, question, options, is_anonymous, is_multi_choice, ends_at, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [
+          messageId,
+          auth.appId,
+          body.question,
+          JSON.stringify(body.options),
+          body.isAnonymous,
+          body.isMultiChoice,
+          body.endsAt,
+          auth.userId,
+        ]
+      );
 
-    // Update message with poll_id
-    await db.query(
-      `UPDATE message SET poll_id = $1 WHERE id = $2`,
-      [poll.id, messageId]
-    );
+      const poll = result.rows[0];
 
-    // Publish poll created event
-    await getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
-      type: 'poll.created',
-      payload: {
-        channelId,
-        messageId,
-        poll: {
-          id: poll.id,
-          question: poll.question,
-          options: poll.options,
-          isAnonymous: poll.is_anonymous,
-          isMultiChoice: poll.is_multi_choice,
-          totalVotes: 0,
-          endsAt: poll.ends_at,
+      await client.query(
+        `UPDATE message SET poll_id = $1
+         WHERE id = $2 AND channel_id = $3 AND app_id = $4`,
+        [poll.id, messageId, channelId, auth.appId]
+      );
+
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'poll',
+        aggregateId: poll.id,
+        eventType: 'poll.created',
+        channels: [chatChannel(auth.appId, channelId)],
+        payload: {
+          channelId,
+          messageId,
+          poll: {
+            id: poll.id,
+            question: poll.question,
+            options: poll.options,
+            isAnonymous: poll.is_anonymous,
+            isMultiChoice: poll.is_multi_choice,
+            totalVotes: 0,
+            endsAt: poll.ends_at,
+          },
         },
-      },
+        idempotencyKey: `poll.created:${auth.appId}:${poll.id}`,
+      });
+
+      return poll;
     });
+
+    triggerRealtimeOutboxDrainSafely();
 
     return c.json({
       id: poll.id,
@@ -118,6 +137,7 @@ pollRoutes.post(
 pollRoutes.post(
   '/:id/vote',
   requireUser,
+  requireScope('chat:write'),
   zValidator('json', voteSchema),
   async (c) => {
     const auth = c.get('auth');
@@ -128,7 +148,7 @@ pollRoutes.post(
     const pollResult = await db.query(
       `SELECT p.*, m.channel_id
        FROM poll p
-       JOIN message m ON p.message_id = m.id
+       JOIN message m ON p.message_id = m.id AND p.app_id = m.app_id
        WHERE p.id = $1 AND p.app_id = $2`,
       [pollId, auth.appId]
     );
@@ -146,12 +166,7 @@ pollRoutes.post(
     }
 
     // Verify user is channel member
-    const memberCheck = await db.query(
-      `SELECT 1 FROM channel_member WHERE channel_id = $1 AND user_id = $2`,
-      [channelId, auth.userId]
-    );
-
-    if (memberCheck.rows.length === 0) {
+    if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
       return c.json({ error: { message: 'Not a channel member' } }, 403);
     }
 
@@ -168,45 +183,66 @@ pollRoutes.post(
       return c.json({ error: { message: 'This poll allows only one choice' } }, 400);
     }
 
-    // Remove existing votes if changing vote
-    await db.query(
-      `DELETE FROM poll_vote WHERE poll_id = $1 AND app_id = $2 AND user_id = $3`,
-      [pollId, auth.appId, auth.userId]
-    );
-
-    // Insert new votes
-    for (const optionId of body.optionIds) {
-      await db.query(
-        `INSERT INTO poll_vote (poll_id, app_id, user_id, option_id)
-         VALUES ($1, $2, $3, $4)`,
-        [pollId, auth.appId, auth.userId, optionId]
+    const totalVotes = await db.transaction(async (client) => {
+      const lockedPollResult = await client.query(
+        `SELECT p.*, m.channel_id
+         FROM poll p
+         JOIN message m ON p.message_id = m.id AND p.app_id = m.app_id
+         WHERE p.id = $1 AND p.app_id = $2
+         FOR UPDATE OF p`,
+        [pollId, auth.appId]
       );
-    }
+      const lockedPoll = lockedPollResult.rows[0];
+      if (!lockedPoll) {
+        throw new Error('Poll disappeared during vote transaction');
+      }
 
-    // Update total votes count
-    const voteCount = await db.query(
-      `SELECT COUNT(DISTINCT user_id) as count FROM poll_vote WHERE poll_id = $1`,
-      [pollId]
-    );
+      await client.query(
+        `DELETE FROM poll_vote WHERE poll_id = $1 AND app_id = $2 AND user_id = $3`,
+        [pollId, auth.appId, auth.userId]
+      );
 
-    await db.query(
-      `UPDATE poll SET total_votes = $1 WHERE id = $2`,
-      [voteCount.rows[0].count, pollId]
-    );
+      for (const optionId of body.optionIds) {
+        await client.query(
+          `INSERT INTO poll_vote (poll_id, app_id, user_id, option_id)
+           VALUES ($1, $2, $3, $4)`,
+          [pollId, auth.appId, auth.userId, optionId]
+        );
+      }
 
-    // Publish vote event
-    await getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
-      type: 'poll.voted',
-      payload: {
-        channelId,
-        pollId,
-        userId: poll.is_anonymous ? null : auth.userId,
-        optionIds: body.optionIds,
-        totalVotes: parseInt(voteCount.rows[0].count),
-      },
+      const voteCount = await client.query(
+        `SELECT COUNT(DISTINCT user_id) as count FROM poll_vote
+         WHERE poll_id = $1 AND app_id = $2`,
+        [pollId, auth.appId]
+      );
+      const totalVotes = parseInt(voteCount.rows[0].count, 10);
+
+      await client.query(
+        `UPDATE poll SET total_votes = $1 WHERE id = $2 AND app_id = $3`,
+        [totalVotes, pollId, auth.appId]
+      );
+
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'poll',
+        aggregateId: pollId,
+        eventType: 'poll.voted',
+        channels: [chatChannel(auth.appId, channelId)],
+        payload: {
+          channelId,
+          pollId,
+          userId: lockedPoll.is_anonymous ? null : auth.userId,
+          ...(!lockedPoll.is_anonymous ? { optionIds: body.optionIds } : {}),
+          totalVotes,
+        },
+      });
+
+      return totalVotes;
     });
 
-    return c.json({ success: true, totalVotes: parseInt(voteCount.rows[0].count) });
+    triggerRealtimeOutboxDrainSafely();
+
+    return c.json({ success: true, totalVotes });
   }
 );
 
@@ -214,16 +250,16 @@ pollRoutes.post(
  * Get poll results
  * GET /api/polls/:id/results
  */
-pollRoutes.get('/:id/results', requireUser, async (c) => {
+pollRoutes.get('/:id/results', requireUser, requireScope('chat:read'), async (c) => {
   const auth = c.get('auth');
   const pollId = c.req.param('id');
 
   // Get poll
   const pollResult = await db.query(
-    `SELECT p.*, m.channel_id
-     FROM poll p
-     JOIN message m ON p.message_id = m.id
-     WHERE p.id = $1 AND p.app_id = $2`,
+     `SELECT p.*, m.channel_id
+      FROM poll p
+      JOIN message m ON p.message_id = m.id AND p.app_id = m.app_id
+      WHERE p.id = $1 AND p.app_id = $2`,
     [pollId, auth.appId]
   );
 
@@ -235,12 +271,7 @@ pollRoutes.get('/:id/results', requireUser, async (c) => {
   const channelId = pollResult.rows[0].channel_id;
 
   // Verify user is channel member
-  const memberCheck = await db.query(
-    `SELECT 1 FROM channel_member WHERE channel_id = $1 AND user_id = $2`,
-    [channelId, auth.userId]
-  );
-
-  if (memberCheck.rows.length === 0) {
+  if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
     return c.json({ error: { message: 'Not a channel member' } }, 403);
   }
 
@@ -248,9 +279,9 @@ pollRoutes.get('/:id/results', requireUser, async (c) => {
   const votesResult = await db.query(
     `SELECT option_id, COUNT(*) as count
      FROM poll_vote
-     WHERE poll_id = $1
+     WHERE poll_id = $1 AND app_id = $2
      GROUP BY option_id`,
-    [pollId]
+    [pollId, auth.appId]
   );
 
   const voteCounts: Record<string, number> = {};
@@ -274,9 +305,9 @@ pollRoutes.get('/:id/results', requireUser, async (c) => {
       `SELECT pv.option_id, pv.user_id, u.name, u.image_url
        FROM poll_vote pv
        JOIN app_user u ON pv.app_id = u.app_id AND pv.user_id = u.id
-       WHERE pv.poll_id = $1
+       WHERE pv.poll_id = $1 AND pv.app_id = $2
        ORDER BY pv.voted_at DESC`,
-      [pollId]
+      [pollId, auth.appId]
     );
 
     voters = {};
@@ -316,15 +347,15 @@ pollRoutes.get('/:id/results', requireUser, async (c) => {
  * Remove vote from poll
  * DELETE /api/polls/:id/vote
  */
-pollRoutes.delete('/:id/vote', requireUser, async (c) => {
+pollRoutes.delete('/:id/vote', requireUser, requireScope('chat:write'), async (c) => {
   const auth = c.get('auth');
   const pollId = c.req.param('id');
 
   // Get poll and channel
   const pollResult = await db.query(
-    `SELECT p.id, m.channel_id
+    `SELECT p.id, p.is_anonymous, m.channel_id
      FROM poll p
-     JOIN message m ON p.message_id = m.id
+     JOIN message m ON p.message_id = m.id AND p.app_id = m.app_id
      WHERE p.id = $1 AND p.app_id = $2`,
     [pollId, auth.appId]
   );
@@ -335,33 +366,62 @@ pollRoutes.delete('/:id/vote', requireUser, async (c) => {
 
   const channelId = pollResult.rows[0].channel_id;
 
-  // Remove votes
-  await db.query(
-    `DELETE FROM poll_vote WHERE poll_id = $1 AND app_id = $2 AND user_id = $3`,
-    [pollId, auth.appId, auth.userId]
-  );
+  if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+    return c.json({ error: { message: 'Not a channel member' } }, 403);
+  }
 
-  // Update total votes count
-  const voteCount = await db.query(
-    `SELECT COUNT(DISTINCT user_id) as count FROM poll_vote WHERE poll_id = $1`,
-    [pollId]
-  );
+  const removed = await db.transaction(async (client) => {
+    const lockedPollResult = await client.query(
+      `SELECT p.id, p.is_anonymous
+       FROM poll p
+       WHERE p.id = $1 AND p.app_id = $2
+       FOR UPDATE`,
+      [pollId, auth.appId]
+    );
+    const lockedPoll = lockedPollResult.rows[0];
+    if (!lockedPoll) {
+      throw new Error('Poll disappeared during vote removal transaction');
+    }
 
-  await db.query(
-    `UPDATE poll SET total_votes = $1 WHERE id = $2`,
-    [voteCount.rows[0].count, pollId]
-  );
+    const deleteResult = await client.query(
+      `DELETE FROM poll_vote WHERE poll_id = $1 AND app_id = $2 AND user_id = $3`,
+      [pollId, auth.appId, auth.userId]
+    );
 
-  // Publish event
-  await getCentrifugo().publish(`chat:${auth.appId}:${channelId}`, {
-    type: 'poll.vote_removed',
-    payload: {
-      channelId,
-      pollId,
-      userId: auth.userId,
-      totalVotes: parseInt(voteCount.rows[0].count),
-    },
+    const voteCount = await client.query(
+      `SELECT COUNT(DISTINCT user_id) as count FROM poll_vote
+       WHERE poll_id = $1 AND app_id = $2`,
+      [pollId, auth.appId]
+    );
+    const totalVotes = parseInt(voteCount.rows[0].count, 10);
+
+    await client.query(
+      `UPDATE poll SET total_votes = $1 WHERE id = $2 AND app_id = $3`,
+      [totalVotes, pollId, auth.appId]
+    );
+
+    if ((deleteResult.rowCount ?? 0) > 0) {
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'poll',
+        aggregateId: pollId,
+        eventType: 'poll.vote_removed',
+        channels: [chatChannel(auth.appId, channelId)],
+        payload: {
+          channelId,
+          pollId,
+          userId: lockedPoll.is_anonymous ? null : auth.userId,
+          totalVotes,
+        },
+      });
+    }
+
+    return (deleteResult.rowCount ?? 0) > 0;
   });
+
+  if (removed) {
+    triggerRealtimeOutboxDrainSafely();
+  }
 
   return c.json({ success: true });
 });

@@ -19,6 +19,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: chatsdk-postgres
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
@@ -55,6 +56,7 @@ services:
   centrifugo:
     image: centrifugo/centrifugo:v5
     container_name: chatsdk-centrifugo
+    restart: unless-stopped
     ports:
       - "8001:8000"  # WebSocket/HTTP
     volumes:
@@ -73,6 +75,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: chatsdk-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
@@ -87,6 +90,7 @@ services:
   minio:
     image: minio/minio:latest
     container_name: chatsdk-minio
+    restart: unless-stopped
     ports:
       - "9000:9000"   # API
       - "9001:9001"   # Console
@@ -102,10 +106,25 @@ services:
       timeout: 5s
       retries: 5
 
+  minio-init:
+    image: minio/mc:latest
+    container_name: chatsdk-minio-init
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_USER:-chatsdk} ${MINIO_PASSWORD:-changeme123} &&
+      mc mb --ignore-existing local/chatsdk-uploads &&
+      mc version enable local/chatsdk-uploads &&
+      mc anonymous set none local/chatsdk-uploads
+      "
+    depends_on:
+      minio:
+        condition: service_healthy
+
   # Meilisearch - Full-text Search
   meilisearch:
     image: getmeili/meilisearch:v1.6
     container_name: chatsdk-meilisearch
+    restart: unless-stopped
     ports:
       - "7700:7700"
     environment:
@@ -135,7 +154,8 @@ services:
       # Database connection (internal Docker network)
       DATABASE_URL: postgresql://${DB_USER:-chatsdk}:${DB_PASSWORD:-changeme}@postgres:5432/${DB_NAME:-chatsdk}
       # Centrifugo connection (internal Docker network)
-      CENTRIFUGO_URL: http://centrifugo:8000
+      CENTRIFUGO_URL: ws://centrifugo:8000/connection/websocket
+      CENTRIFUGO_API_URL: http://centrifugo:8000/api
       CENTRIFUGO_API_KEY: chatsdk-api-key-change-in-production
       CENTRIFUGO_TOKEN_SECRET: chatsdk-dev-secret-key-change-in-production
       # Redis connection (internal Docker network)
@@ -158,11 +178,13 @@ services:
       flyway:
         condition: service_completed_successfully
       centrifugo:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       meilisearch:
         condition: service_healthy
     volumes:

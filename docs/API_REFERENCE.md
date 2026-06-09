@@ -4,12 +4,14 @@ Base URL: `http://localhost:5501`
 
 ## Authentication
 
-All API requests require two headers:
+Authentication depends on the endpoint type:
 
-| Header | Description |
-|--------|-------------|
-| `X-API-Key` | Your application API key |
-| `Authorization` | `Bearer <JWT_TOKEN>` (for user-specific endpoints) |
+| Endpoint type | Header |
+|---------------|--------|
+| User chat/workspace endpoints | `Authorization: Bearer <JWT_TOKEN>` |
+| Backend token/admin endpoints | `X-API-Key: <server API key>` |
+
+Do not send `X-API-Key` from browser or mobile clients. Browser and mobile apps should call your backend token route, then use the returned bearer token for user API requests.
 
 ---
 
@@ -63,6 +65,9 @@ Generate JWT tokens for a user. Call this from your backend after authenticating
 ### GET /api/channels
 
 List channels for the authenticated user.
+
+**Headers:**
+- `Authorization: Bearer <JWT_TOKEN>`
 
 **Query Parameters:**
 | Parameter | Type | Default | Description |

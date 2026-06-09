@@ -18,6 +18,7 @@ import * as SecureStore from 'expo-secure-store';
 import { router } from 'expo-router';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5500';
+const TOKEN_URL = process.env.EXPO_PUBLIC_CHATSDK_TOKEN_URL || `${API_URL}/api/chatsdk-token`;
 
 export default function LoginScreen() {
   const [userId, setUserId] = useState('');
@@ -35,13 +36,13 @@ export default function LoginScreen() {
     setError('');
 
     try {
-      // Get token from API
-      const response = await fetch(`${API_URL}/tokens`, {
+      // Get user-scoped ChatSDK tokens from your backend
+      const response = await fetch(TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: userId.trim(),
-          name: name.trim(),
+          displayName: name.trim(),
         }),
       });
 
@@ -51,8 +52,13 @@ export default function LoginScreen() {
 
       const data = await response.json();
 
-      // Save token securely
-      await SecureStore.setItemAsync('chat_token', data.token);
+      // Save token set securely
+      await SecureStore.setItemAsync('chat_tokens', JSON.stringify({
+        token: data.token,
+        wsToken: data.wsToken ?? data._internal?.wsToken ?? data.token,
+        refreshToken: data.refreshToken,
+        expiresIn: data.expiresIn,
+      }));
 
       // Navigate to main app (triggers re-render of layout)
       router.replace('/');

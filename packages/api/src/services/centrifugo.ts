@@ -3,8 +3,7 @@
  * Server-side Centrifugo API for publishing events
  */
 
-const CENTRIFUGO_API_URL = process.env.CENTRIFUGO_API_URL || 'http://localhost:8000/api';
-const CENTRIFUGO_API_KEY = process.env.CENTRIFUGO_API_KEY || 'chatsdk-api-key-change-in-production';
+import { config } from '../config/defaults.js';
 
 interface CentrifugoResponse {
   error?: {
@@ -124,12 +123,13 @@ let client: CentrifugoClient | null = null;
  * Initialize Centrifugo client
  */
 export async function initCentrifugo(): Promise<CentrifugoClient> {
-  client = new CentrifugoClient(CENTRIFUGO_API_URL, CENTRIFUGO_API_KEY);
+  client = new CentrifugoClient(config.centrifugo.apiUrl, config.centrifugo.apiKey);
 
   // Test connection
   const healthy = await client.ping();
   if (!healthy) {
-    console.warn('Centrifugo is not responding. Real-time features may not work.');
+    const message = 'Centrifugo is not responding. Real-time features may not work.';
+    console.warn(message);
   }
 
   return client;
@@ -272,12 +272,18 @@ export const centrifugo = {
   /**
    * Publish channel created event
    */
-  async publishChannelCreated(appId: string, channel: any): Promise<void> {
-    // Broadcast to app-wide channel
-    await getCentrifugo().publish(`app:${appId}`, {
+  async publishChannelCreated(appId: string, channel: any, userIds: string[]): Promise<void> {
+    const payload = {
       type: 'channel.created',
       payload: { channel },
-    });
+    };
+
+    if (userIds.length === 0) {
+      return;
+    }
+
+    const channels = [...new Set(userIds)].map((userId) => `user:${appId}:${userId}`);
+    await getCentrifugo().broadcast(channels, payload);
   },
 
   /**
@@ -333,10 +339,18 @@ export const centrifugo = {
   /**
    * Publish total unread count change to a specific user
    */
-  async publishTotalUnreadCount(appId: string, userId: string, count: number): Promise<void> {
-    await getCentrifugo().publish(`user:${appId}:${userId}`, {
-      type: 'channel.total_unread_changed',
-      payload: { count },
-    });
-  },
-};
+	  async publishTotalUnreadCount(appId: string, userId: string, count: number): Promise<void> {
+	    await getCentrifugo().publish(`user:${appId}:${userId}`, {
+	      type: 'channel.total_unread_changed',
+	      payload: { count },
+	    });
+	  },
+
+	  async disconnect(user: string): Promise<void> {
+	    await getCentrifugo().disconnect(user);
+	  },
+
+	  async unsubscribe(channel: string, user: string): Promise<void> {
+	    await getCentrifugo().unsubscribe(channel, user);
+	  },
+	};

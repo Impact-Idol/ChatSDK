@@ -82,7 +82,10 @@ import { ChatProvider, useMessages } from '@chatsdk/react-native';
 
 function App() {
   return (
-    <ChatProvider apiUrl="http://localhost:5500" token={userToken}>
+    <ChatProvider
+      apiUrl="http://localhost:5500"
+      tokenProvider={() => fetch('/api/chatsdk-token', { method: 'POST' }).then((res) => res.json())}
+    >
       <ChatScreen />
     </ChatProvider>
   );

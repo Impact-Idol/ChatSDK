@@ -6,13 +6,21 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import * as jose from 'jose';
 import { db } from '../services/database';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'chatsdk-dev-secret-key-change-in-production';
-// Support both CENTRIFUGO_TOKEN_SECRET (documented) and CENTRIFUGO_SECRET (legacy) for backward compatibility
-const CENTRIFUGO_SECRET = process.env.CENTRIFUGO_TOKEN_SECRET || process.env.CENTRIFUGO_SECRET || 'chatsdk-dev-secret-key-change-in-production';
-const TOKEN_EXPIRY = '24h';
+import { config } from '../config/defaults';
+import {
+  issueTokenBundle,
+  refreshTokenBundle,
+  TokenValidationError,
+  verifyAccessToken,
+  verifyWebSocketToken,
+} from '../services/tokens';
+import {
+  applyRateLimits,
+  getClientIp,
+  RATE_LIMIT_POLICIES,
+  rateLimitPublic,
+} from '../services/rate-limit';
 
 export const tokenRoutes = new Hono();
 
@@ -30,10 +38,17 @@ const createTokenSchema = z.object({
  */
 tokenRoutes.post(
   '/',
-  zValidator('json', createTokenSchema),
-  async (c) => {
+  rateLimitPublic(RATE_LIMIT_POLICIES.tokenConnectIp),
+	  zValidator('json', createTokenSchema),
+	  async (c) => {
+	    const body = c.req.valid('json');
+	    const apiKey = c.req.header('X-API-Key');
+
+	    if (!config.auth.allowLegacyTokenEndpoint) {
+	      return c.json({ error: { message: 'Legacy token endpoint is disabled' } }, 404);
+	    }
+
     // Validate API key
-    const apiKey = c.req.header('X-API-Key');
     if (!apiKey) {
       return c.json({ error: { message: 'Missing API key' } }, 401);
     }
@@ -49,7 +64,17 @@ tokenRoutes.post(
     }
 
     const appId = appResult.rows[0].id;
-    const body = c.req.valid('json');
+    const appLimit = await applyRateLimits(c, [
+      {
+        policy: RATE_LIMIT_POLICIES.tokenConnectUser,
+        scope: { appId, userId: body.userId, ip: getClientIp(c), key: apiKey },
+      },
+      {
+        policy: RATE_LIMIT_POLICIES.appWrites,
+        scope: { appId, global: true },
+      },
+    ]);
+    if (appLimit) return appLimit;
 
     // Build custom_data with email if provided
     const customData = body.custom ?? {};
@@ -59,7 +84,7 @@ tokenRoutes.post(
 
     // Upsert user - always update when values are provided (not just when non-null)
     // This ensures client-provided names/images always take precedence over existing data
-    await db.query(
+    await withTenantContext(appId, body.userId, () => db.query(
       `INSERT INTO app_user (app_id, id, name, image_url, custom_data, last_active_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (app_id, id) DO UPDATE SET
@@ -69,92 +94,59 @@ tokenRoutes.post(
          last_active_at = NOW(),
          updated_at = NOW()`,
       [appId, body.userId, body.name, body.image, customData]
-    );
+    ));
 
-    // Generate JWT token
-    const secret = new TextEncoder().encode(JWT_SECRET);
-    const token = await new jose.SignJWT({
-      user_id: body.userId,
-      app_id: appId,
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(TOKEN_EXPIRY)
-      .sign(secret);
+	    const tokens = await issueTokenBundle({ appId, userId: body.userId });
 
-    // Generate Centrifugo token
-    const centrifugoSecret = new TextEncoder().encode(CENTRIFUGO_SECRET);
-    const wsToken = await new jose.SignJWT({
-      sub: body.userId,
-      app_id: appId,
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(TOKEN_EXPIRY)
-      .sign(centrifugoSecret);
-
-    return c.json({
-      token,
-      wsToken,
-      user: {
-        id: body.userId,
+		    return c.json({
+		      token: tokens.token,
+		      refreshToken: tokens.refreshToken,
+		      wsToken: tokens.wsToken,
+		      user: {
+	        id: body.userId,
         name: body.name,
         email: body.email,
         image: body.image,
       },
-      expiresIn: 86400, // 24 hours in seconds
-    });
-  }
+	      expiresIn: tokens.expiresIn,
+	    });
+	  }
 );
 
 /**
  * Refresh token
  * POST /tokens/refresh
  */
-tokenRoutes.post('/refresh', async (c) => {
-  const authHeader = c.req.header('Authorization');
+tokenRoutes.post('/refresh', rateLimitPublic(RATE_LIMIT_POLICIES.tokenRefresh), async (c) => {
+	  const authHeader = c.req.header('Authorization');
+
+	  if (!config.auth.allowLegacyTokenEndpoint) {
+	    return c.json({ error: { message: 'Legacy token endpoint is disabled' } }, 404);
+	  }
+
   if (!authHeader?.startsWith('Bearer ')) {
     return c.json({ error: { message: 'Missing token' } }, 401);
   }
 
   const oldToken = authHeader.slice(7);
 
-  try {
-    const secret = new TextEncoder().encode(JWT_SECRET);
-    const { payload } = await jose.jwtVerify(oldToken, secret, {
-      // Allow expired tokens for refresh
-      clockTolerance: 86400, // 24 hours grace period
-    });
+		  try {
+		    const tokens = await refreshTokenBundle(oldToken);
 
-    // Generate new tokens
-    const token = await new jose.SignJWT({
-      user_id: payload.user_id,
-      app_id: payload.app_id,
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(TOKEN_EXPIRY)
-      .sign(secret);
-
-    const centrifugoSecret = new TextEncoder().encode(CENTRIFUGO_SECRET);
-    const wsToken = await new jose.SignJWT({
-      sub: payload.user_id as string,
-      app_id: payload.app_id as string,
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(TOKEN_EXPIRY)
-      .sign(centrifugoSecret);
-
-    return c.json({
-      token,
-      wsToken,
-      expiresIn: 86400,
-    });
-  } catch (error) {
-    return c.json({ error: { message: 'Invalid token' } }, 401);
-  }
-});
+		    return c.json({
+		      token: tokens.token,
+		      refreshToken: tokens.refreshToken,
+		      wsToken: tokens.wsToken,
+		      expiresIn: tokens.expiresIn,
+		    });
+	  } catch (error) {
+	    return c.json({
+	      error: {
+	        message: error instanceof TokenValidationError ? error.message : 'Invalid token',
+	      },
+	    }, 401);
+	  }
+	});
 
 /**
  * Validate token
@@ -163,7 +155,7 @@ tokenRoutes.post('/refresh', async (c) => {
  * Validates a JWT token and returns its payload if valid.
  * Useful for debugging token issues and checking if a token is still valid.
  */
-tokenRoutes.get('/validate', async (c) => {
+tokenRoutes.get('/validate', rateLimitPublic(RATE_LIMIT_POLICIES.tokenValidate), async (c) => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return c.json({
@@ -178,14 +170,13 @@ tokenRoutes.get('/validate', async (c) => {
   const token = authHeader.slice(7);
 
   try {
-    const secret = new TextEncoder().encode(JWT_SECRET);
-    const { payload } = await jose.jwtVerify(token, secret);
+	    const { payload, appId, userId } = await verifyAccessToken(token);
 
-    // Check if user exists
-    const userResult = await db.query(
+	    // Check if user exists
+	    const userResult = await withTenantContext(appId, userId, () => db.query(
       'SELECT id, name, image_url FROM app_user WHERE app_id = $1 AND id = $2',
-      [payload.app_id, payload.user_id]
-    );
+      [appId, userId]
+    ));
 
     const user = userResult.rows[0] || null;
 
@@ -203,29 +194,19 @@ tokenRoutes.get('/validate', async (c) => {
         image: user.image_url,
       } : null,
     });
-  } catch (error) {
-    if (error instanceof jose.errors.JWTExpired) {
-      return c.json({
+	  } catch (error) {
+	    if (error instanceof TokenValidationError && error.code === 'TOKEN_EXPIRED') {
+	      return c.json({
         valid: false,
         error: {
           message: 'Token expired',
-          hint: 'Call POST /api/tokens/refresh to get a new token',
+          hint: 'Call POST /tokens/refresh to get a new token',
         },
       }, 401);
     }
 
-    if (error instanceof jose.errors.JWSSignatureVerificationFailed) {
-      return c.json({
-        valid: false,
-        error: {
-          message: 'Invalid token signature',
-          hint: 'The token was signed with a different secret. Ensure JWT_SECRET is consistent.',
-        },
-      }, 401);
-    }
-
-    return c.json({
-      valid: false,
+	    return c.json({
+	      valid: false,
       error: {
         message: 'Invalid token',
         hint: 'The token format is invalid or corrupted',
@@ -234,13 +215,21 @@ tokenRoutes.get('/validate', async (c) => {
   }
 });
 
+function withTenantContext<T>(appId: string, userId: string, fn: () => Promise<T>): Promise<T> {
+  const runner = db.withTenantContext?.bind(db);
+  if (typeof runner === 'function') {
+    return runner({ appId, userId }, fn);
+  }
+  return fn();
+}
+
 /**
  * Validate WebSocket token
  * GET /tokens/validate-ws
  *
  * Validates a Centrifugo WebSocket token.
  */
-tokenRoutes.get('/validate-ws', async (c) => {
+tokenRoutes.get('/validate-ws', rateLimitPublic(RATE_LIMIT_POLICIES.tokenValidate), async (c) => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader?.startsWith('Bearer ')) {
     return c.json({
@@ -255,8 +244,7 @@ tokenRoutes.get('/validate-ws', async (c) => {
   const token = authHeader.slice(7);
 
   try {
-    const secret = new TextEncoder().encode(CENTRIFUGO_SECRET);
-    const { payload } = await jose.jwtVerify(token, secret);
+	    const { payload } = await verifyWebSocketToken(token);
 
     return c.json({
       valid: true,
@@ -267,28 +255,18 @@ tokenRoutes.get('/validate-ws', async (c) => {
         expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
       },
     });
-  } catch (error) {
-    if (error instanceof jose.errors.JWTExpired) {
-      return c.json({
+	  } catch (error) {
+	    if (error instanceof TokenValidationError && error.code === 'TOKEN_EXPIRED') {
+	      return c.json({
         valid: false,
         error: {
           message: 'WebSocket token expired',
-          hint: 'Call POST /api/tokens to get new tokens',
+          hint: 'Call POST /tokens to get new tokens',
         },
       }, 401);
     }
 
-    if (error instanceof jose.errors.JWSSignatureVerificationFailed) {
-      return c.json({
-        valid: false,
-        error: {
-          message: 'Invalid WebSocket token signature',
-          hint: 'Ensure CENTRIFUGO_TOKEN_SECRET matches between API server and Centrifugo config',
-        },
-      }, 401);
-    }
-
-    return c.json({
+	    return c.json({
       valid: false,
       error: {
         message: 'Invalid WebSocket token',

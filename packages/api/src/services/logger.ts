@@ -10,15 +10,40 @@
  */
 
 import pino from 'pino';
+import {
+  getLogContext as getCurrentLogContext,
+  runWithLogContext as runWithCurrentLogContext,
+} from './log-context';
 
-const isDevelopment = process.env.NODE_ENV !== 'production';
+const isLocalLogging = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 
 // Create logger instance
-export const logger = pino({
-  level: process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info'),
+const baseLogger = pino({
+  level: process.env.LOG_LEVEL || (isLocalLogging ? 'debug' : 'info'),
+  redact: {
+    paths: [
+      'authorization',
+      'Authorization',
+      'x-api-key',
+      'X-API-Key',
+      '*.authorization',
+      '*.Authorization',
+      '*.x-api-key',
+      '*.X-API-Key',
+      '*.token',
+      '*.refreshToken',
+      '*.wsToken',
+      '*.apiKey',
+      '*.secret',
+      '*.password',
+      '*.DATABASE_URL',
+      '*.REDIS_URL',
+    ],
+    censor: '[REDACTED]',
+  },
 
   // Pretty print in development
-  transport: isDevelopment
+  transport: isLocalLogging
     ? {
         target: 'pino-pretty',
         options: {
@@ -31,7 +56,7 @@ export const logger = pino({
 
   // Base fields included in all logs
   base: {
-    env: process.env.NODE_ENV || 'development',
+    env: process.env.NODE_ENV || 'unknown',
     service: 'chatsdk-api',
   },
 
@@ -45,6 +70,37 @@ export const logger = pino({
     res: pino.stdSerializers.res,
   },
 });
+
+function withLogContext(args: unknown[]): unknown[] {
+  const context = getCurrentLogContext();
+  if (!context || Object.keys(context).length === 0) {
+    return args;
+  }
+
+  const [first, ...rest] = args;
+  if (first && typeof first === 'object' && !Array.isArray(first) && !(first instanceof Error)) {
+    return [{ ...context, ...(first as Record<string, unknown>) }, ...rest];
+  }
+  return [context, ...args];
+}
+
+export const logger = new Proxy(baseLogger, {
+  get(target, prop, receiver) {
+    const value = Reflect.get(target, prop, receiver);
+    if (typeof value === 'function' && ['debug', 'info', 'warn', 'error', 'fatal', 'trace'].includes(String(prop))) {
+      return (...args: unknown[]) => value.apply(target, withLogContext(args));
+    }
+    return value;
+  },
+}) as typeof baseLogger;
+
+export function runWithLogContext<T>(context: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
+  return runWithCurrentLogContext(context, fn);
+}
+
+export function getLogContext(): Record<string, unknown> {
+  return getCurrentLogContext();
+}
 
 // ============================================================================
 // Helper Functions

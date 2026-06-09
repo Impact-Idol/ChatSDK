@@ -8,6 +8,7 @@ import 'dotenv/config';
 // Set test environment variables
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-secret-key-for-testing';
+process.env.CENTRIFUGO_TOKEN_SECRET = 'test-centrifugo-secret-key-for-testing';
 process.env.API_KEY_SECRET = 'test-api-key-secret';
 
 // Increase timeout for async operations

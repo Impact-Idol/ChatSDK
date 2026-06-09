@@ -290,17 +290,18 @@ describe('Core Types', () => {
   });
 
   describe('ChatClientOptions', () => {
-    it('should have required apiKey', () => {
+    it('should support browser clients without apiKey', () => {
       const options: ChatClientOptions = {
-        apiKey: 'test-key',
+        apiUrl: 'https://api.example.com',
       };
 
-      expect(options.apiKey).toBe('test-key');
+      expect(options.apiKey).toBeUndefined();
     });
 
     it('should support all options', () => {
       const options: ChatClientOptions = {
         apiKey: 'test-key',
+        tokenProvider: () => ({ token: 'api-token', wsToken: 'ws-token' }),
         apiUrl: 'https://api.example.com',
         wsUrl: 'wss://ws.example.com',
         debug: true,
@@ -309,6 +310,7 @@ describe('Core Types', () => {
       };
 
       expect(options.debug).toBe(true);
+      expect(options.tokenProvider).toBeDefined();
       expect(options.enableOfflineSupport).toBe(true);
       expect(options.reconnectIntervals).toHaveLength(3);
     });

@@ -562,7 +562,7 @@ let client = ChatClient(
 **Initialization**
 ```swift
 // Stream Chat
-let client = ChatClient(config: .init(apiKey: "key"))
+let client = ChatClient(config: .init(streamKey: "key"))
 
 // ChatSDK
 let client = ChatClient(apiURL: URL(string: "https://api.example.com")!, token: "jwt-token")

@@ -13,16 +13,20 @@ npm install @chatsdk/core @chatsdk/react
 Wrap your app with the ChatProvider:
 
 ```tsx
-import { ChatProvider, ChatClient } from '@chatsdk/react';
-
-const client = new ChatClient({
-  apiKey: 'your-api-key',
-  apiUrl: 'https://api.your-server.com',
-});
+import { ChatProvider } from '@chatsdk/react';
 
 function App() {
   return (
-    <ChatProvider client={client}>
+    <ChatProvider
+      apiUrl="https://api.your-server.com"
+      tokenProvider={(user) =>
+        fetch('/api/chat-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user?.id }),
+        }).then((response) => response.json())
+      }
+    >
       <YourApp />
     </ChatProvider>
   );
@@ -43,11 +47,7 @@ function AuthWrapper({ children }) {
   useEffect(() => {
     if (authUser) {
       const connect = async () => {
-        const token = await getChatToken(); // From your backend
-        await client.connectUser(
-          { id: authUser.id, name: authUser.name },
-          token
-        );
+        await client.connectUser({ id: authUser.id, name: authUser.name });
       };
       connect();
 

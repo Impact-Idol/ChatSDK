@@ -41,45 +41,19 @@ export function CreateChannelModal({ onClose, onChannelCreated }: CreateChannelM
     setError(null);
 
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5501';
-      const API_KEY = import.meta.env.VITE_API_KEY;
-
-      // Get the user's JWT token from the client - use type guard
-      const token = client && 'token' in client ? (client as { token?: string }).token : undefined;
-
-      if (!token) {
+      if (!client) {
         throw new Error('User not authenticated. Please refresh the page.');
       }
 
-      const response = await fetch(`${API_URL}/api/channels`, {
+      await client.fetch('/api/channels', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': API_KEY,
-          'Authorization': `Bearer ${token}`,
-        },
         body: JSON.stringify({
           type: channelType, // 'group' or 'messaging'
           name: channelType === 'group' ? name.trim() : undefined,
           memberIds: channelType === 'messaging' ? [selectedUserId] : [],
-          config: channelType === 'group' ? {
-            private: isPrivate,
-          } : undefined,
+          description: channelType === 'group' && isPrivate ? 'Private channel' : undefined,
         }),
       });
-
-      if (!response.ok) {
-        // Safely parse error response
-        let errorMessage = 'Failed to create channel';
-        try {
-          const errorData = await response.json();
-          errorMessage = errorData.error?.message || errorData.message || errorMessage;
-        } catch {
-          // Response wasn't JSON, use status text or default message
-          errorMessage = response.statusText || errorMessage;
-        }
-        throw new Error(errorMessage);
-      }
 
       onChannelCreated();
       onClose();

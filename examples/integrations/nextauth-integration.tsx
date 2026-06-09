@@ -16,6 +16,8 @@ const CHATSDK_API_URL = process.env.NEXT_PUBLIC_CHATSDK_API_URL || 'http://local
 interface ChatSDKTokens {
   token: string;
   wsToken: string;
+  refreshToken?: string;
+  expiresIn?: number;
   expiresAt: number;
 }
 
@@ -51,6 +53,8 @@ export function useChatSDK() {
         const chatTokens = {
           token: data.token,
           wsToken: data.wsToken,
+          refreshToken: data.refreshToken,
+          expiresIn: data.expiresIn,
           expiresAt: Date.now() + (data.expiresIn * 1000),
         };
 
@@ -97,8 +101,7 @@ export function ChatSDKProvider({ children }: { children: ReactNode }) {
 
   return (
     <ChatProvider 
-      token={tokens.token} 
-      wsToken={tokens.wsToken} 
+      tokenProvider={async () => tokens}
       apiUrl={CHATSDK_API_URL}
     >
       {children}

@@ -3,10 +3,14 @@
  * Generates link previews for messages in the background
  */
 
+import { createHash } from 'crypto';
 import { inngest } from '../client';
 import { db } from '../../services/database';
-import { centrifugo } from '../../services/centrifugo';
 import { generateLinkPreviews } from '../../services/link-preview';
+import {
+  chatChannel,
+  enqueueDomainRealtimeEvent,
+} from '../../services/realtime-events';
 
 export const generateLinkPreview = inngest.createFunction(
   {
@@ -32,33 +36,49 @@ export const generateLinkPreview = inngest.createFunction(
       return { skipped: true, reason: 'No URLs found or all preview generation failed' };
     }
 
-    // Update message with link previews in another step
+    // Update message and enqueue realtime update in one DB transaction.
     const updatedMessage = await step.run('update-message', async () => {
-      const result = await db.query(
-        `UPDATE message SET link_previews = $1, edited_at = NOW() WHERE id = $2
-         RETURNING id, channel_id, app_id, link_previews`,
-        [JSON.stringify(previews), messageId]
-      );
-      return result.rows[0];
+      const previewHash = createHash('sha256')
+        .update(JSON.stringify(previews))
+        .digest('hex')
+        .slice(0, 32);
+
+      return db.transaction(async (client) => {
+        const result = await client.query(
+          `UPDATE message
+           SET link_previews = $1, edited_at = NOW()
+           WHERE id = $2 AND app_id = $3
+           RETURNING id, channel_id, app_id, link_previews`,
+          [JSON.stringify(previews), messageId, appId]
+        );
+        const message = result.rows[0];
+        if (!message) {
+          return null;
+        }
+
+        await enqueueDomainRealtimeEvent(client, {
+          appId: message.app_id,
+          aggregateType: 'message',
+          aggregateId: messageId,
+          eventType: 'message.updated',
+          channels: [chatChannel(message.app_id, message.channel_id)],
+          payload: {
+            channelId: message.channel_id,
+            message: {
+              id: messageId,
+              channelId: message.channel_id,
+              linkPreviews: previews,
+            },
+          },
+          idempotencyKey: `message.updated:${message.app_id}:${messageId}:link_preview:${previewHash}`,
+        });
+
+        return message;
+      });
     });
 
-    // Publish link preview update to Centrifugo for real-time updates
-    if (updatedMessage) {
-      await step.run('publish-update', async () => {
-        await centrifugo.publishMessageUpdate(
-          updatedMessage.app_id,
-          updatedMessage.channel_id,
-          {
-            id: messageId,
-            channelId: updatedMessage.channel_id,
-            linkPreviews: previews,
-          }
-        );
-      });
-    }
-
     return {
-      success: true,
+      success: Boolean(updatedMessage),
       messageId,
       previewCount: previews.length,
       previews: previews.map((p) => ({ url: p.url, title: p.title })),

@@ -25,18 +25,22 @@ npm install @chatsdk/react-native
 ### Basic Setup
 
 ```typescript
-import { ChatClient } from '@chatsdk/core';
+import { createChatClient } from '@chatsdk/core';
 
-const client = new ChatClient({
-  apiKey: 'your-api-key',
+const client = createChatClient({
   apiUrl: 'https://your-api-server.com',
+  tokenProvider: async (user) => {
+    const response = await fetch('/api/chat-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user?.id }),
+    });
+    return response.json();
+  },
 });
 
 // Connect a user
-await client.connectUser(
-  { id: 'user-123', name: 'Alice' },
-  'jwt-token'
-);
+await client.connectUser({ id: 'user-123', name: 'Alice' });
 
 // Query channels
 const channels = await client.queryChannels();

@@ -98,7 +98,7 @@ export function ChatRoom({ channel, onOpenThread }: ChatRoomProps) {
           url: uploaded.url,
           name: uploaded.filename,
           size: uploaded.size,
-          mime_type: uploaded.contentType,
+          mimeType: uploaded.contentType,
         });
       }
 

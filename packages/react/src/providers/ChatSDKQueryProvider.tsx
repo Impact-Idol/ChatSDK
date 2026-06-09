@@ -69,7 +69,7 @@ function shouldRetry(failureCount: number, error: unknown): boolean {
  * function App() {
  *   return (
  *     <ChatSDKQueryProvider>
- *       <ChatProvider apiKey="...">
+ *       <ChatProvider tokenProvider={() => fetch('/api/chat-token').then((res) => res.json())}>
  *         <YourApp />
  *       </ChatProvider>
  *     </ChatSDKQueryProvider>

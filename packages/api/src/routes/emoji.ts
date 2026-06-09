@@ -8,7 +8,9 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { db } from '../services/database';
 import { requireUser } from '../middleware/auth';
-import { uploadFile } from '../services/storage';
+import { deleteFile, uploadFile } from '../services/storage';
+import { buildUploadContentUrl, extractStorageKeyFromUrl } from '../services/media-urls';
+import { getWorkspaceRole, isChannelMember, isPrivilegedWorkspaceRole } from '../services/authorization';
 
 export const emojiRoutes = new Hono();
 
@@ -17,6 +19,23 @@ const createEmojiSchema = z.object({
   name: z.string().min(1).max(50).regex(/^[a-z0-9_-]+$/), // Only lowercase, numbers, underscore, hyphen
   category: z.enum(['custom', 'brand', 'team']).default('custom'),
 });
+
+async function requireWorkspaceMemberRole(appId: string, userId: string, workspaceId: string) {
+  const role = await getWorkspaceRole(appId, userId, workspaceId);
+  if (!role) {
+    return { ok: false as const, role: null };
+  }
+  return { ok: true as const, role };
+}
+
+function emojiImageUrl(
+  requestUrl: string,
+  auth: { appId: string; userId: string },
+  row: { image_storage_key?: string | null; image_url?: string | null }
+): string {
+  const key = row.image_storage_key || extractStorageKeyFromUrl(row.image_url || '', requestUrl);
+  return key ? buildUploadContentUrl(requestUrl, key, auth) : row.image_url || '';
+}
 
 /**
  * Upload custom emoji
@@ -43,14 +62,12 @@ emojiRoutes.post(
       return c.json({ error: { message: 'workspaceId and name are required' } }, 400);
     }
 
-    // Validate workspace exists
-    const workspaceResult = await db.query(
-      'SELECT id FROM workspace WHERE id = $1 AND app_id = $2',
-      [workspaceId, auth.appId]
-    );
-
-    if (workspaceResult.rows.length === 0) {
-      return c.json({ error: { message: 'Workspace not found' } }, 404);
+    const workspaceAccess = await requireWorkspaceMemberRole(auth.appId, auth.userId!, workspaceId);
+    if (!workspaceAccess.ok) {
+      return c.json({ error: { message: 'Not a member of this workspace', code: 'FORBIDDEN' } }, 403);
+    }
+    if (!isPrivilegedWorkspaceRole(workspaceAccess.role)) {
+      return c.json({ error: { message: 'Only workspace admins can upload emoji', code: 'FORBIDDEN' } }, 403);
     }
 
     // Validate file type (images only)
@@ -68,8 +85,9 @@ emojiRoutes.post(
     const uploaded = await uploadFile(buffer, {
       contentType: file.type,
       filename: `emoji_${name}_${Date.now()}.${file.type.split('/')[1]}`,
+      appId: auth.appId,
       channelId: workspaceId, // Use workspace ID as pseudo-channel ID
-      userId: auth.userId,
+      userId: auth.userId!,
       metadata: {
         'emoji-name': name,
         'workspace-id': workspaceId,
@@ -79,15 +97,24 @@ emojiRoutes.post(
     // Create emoji record
     const result = await db.query(
       `INSERT INTO custom_emoji
-       (app_id, workspace_id, name, image_url, category, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6)
+       (app_id, workspace_id, name, image_url, image_storage_key, category, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (app_id, workspace_id, name)
        DO UPDATE SET
          image_url = EXCLUDED.image_url,
+         image_storage_key = EXCLUDED.image_storage_key,
          category = EXCLUDED.category,
          created_at = NOW()
        RETURNING *`,
-      [auth.appId, workspaceId, name, uploaded.url, category, auth.userId]
+      [
+        auth.appId,
+        workspaceId,
+        name,
+        buildUploadContentUrl(c.req.url, uploaded.key, { appId: auth.appId, userId: auth.userId! }),
+        uploaded.key,
+        category,
+        auth.userId,
+      ]
     );
 
     const emoji = result.rows[0];
@@ -96,7 +123,7 @@ emojiRoutes.post(
       id: emoji.id,
       workspaceId: emoji.workspace_id,
       name: emoji.name,
-      imageUrl: emoji.image_url,
+      imageUrl: emojiImageUrl(c.req.url, { appId: auth.appId, userId: auth.userId! }, emoji),
       category: emoji.category,
       createdBy: emoji.created_by,
       usageCount: emoji.usage_count,
@@ -119,6 +146,11 @@ emojiRoutes.get(
 
     if (!workspaceId) {
       return c.json({ error: { message: 'workspaceId is required' } }, 400);
+    }
+
+    const workspaceAccess = await requireWorkspaceMemberRole(auth.appId, auth.userId!, workspaceId);
+    if (!workspaceAccess.ok) {
+      return c.json({ error: { message: 'Not a member of this workspace', code: 'FORBIDDEN' } }, 403);
     }
 
     let query = `
@@ -144,7 +176,7 @@ emojiRoutes.get(
         id: row.id,
         workspaceId: row.workspace_id,
         name: row.name,
-        imageUrl: row.image_url,
+        imageUrl: emojiImageUrl(c.req.url, { appId: auth.appId, userId: auth.userId! }, row),
         category: row.category,
         createdBy: row.created_by,
         createdByName: row.created_by_name,
@@ -180,11 +212,16 @@ emojiRoutes.get(
 
     const emoji = result.rows[0];
 
+    const workspaceAccess = await requireWorkspaceMemberRole(auth.appId, auth.userId!, emoji.workspace_id);
+    if (!workspaceAccess.ok) {
+      return c.json({ error: { message: 'Not a member of this workspace', code: 'FORBIDDEN' } }, 403);
+    }
+
     return c.json({
       id: emoji.id,
       workspaceId: emoji.workspace_id,
       name: emoji.name,
-      imageUrl: emoji.image_url,
+      imageUrl: emojiImageUrl(c.req.url, { appId: auth.appId, userId: auth.userId! }, emoji),
       category: emoji.category,
       createdBy: emoji.created_by,
       createdByName: emoji.created_by_name,
@@ -207,7 +244,7 @@ emojiRoutes.delete(
 
     // Verify ownership or admin role
     const emojiResult = await db.query(
-      'SELECT created_by FROM custom_emoji WHERE id = $1 AND app_id = $2',
+      'SELECT created_by, workspace_id, image_storage_key FROM custom_emoji WHERE id = $1 AND app_id = $2',
       [emojiId, auth.appId]
     );
 
@@ -215,7 +252,20 @@ emojiRoutes.delete(
       return c.json({ error: { message: 'Emoji not found' } }, 404);
     }
 
-    // TODO: Check if user is workspace admin or emoji creator
+    const workspaceAccess = await requireWorkspaceMemberRole(auth.appId, auth.userId!, emojiResult.rows[0].workspace_id);
+    if (!workspaceAccess.ok) {
+      return c.json({ error: { message: 'Not a member of this workspace', code: 'FORBIDDEN' } }, 403);
+    }
+    if (
+      emojiResult.rows[0].created_by !== auth.userId
+      && !isPrivilegedWorkspaceRole(workspaceAccess.role)
+    ) {
+      return c.json({ error: { message: 'Permission denied', code: 'FORBIDDEN' } }, 403);
+    }
+
+    if (emojiResult.rows[0].image_storage_key) {
+      await deleteFile(emojiResult.rows[0].image_storage_key);
+    }
 
     const result = await db.query(
       'DELETE FROM custom_emoji WHERE id = $1 AND app_id = $2 RETURNING id',
@@ -247,7 +297,7 @@ emojiRoutes.post(
 
     // Verify emoji exists
     const emojiResult = await db.query(
-      'SELECT id FROM custom_emoji WHERE id = $1 AND app_id = $2',
+      'SELECT id, workspace_id FROM custom_emoji WHERE id = $1 AND app_id = $2',
       [emojiId, auth.appId]
     );
 
@@ -255,14 +305,23 @@ emojiRoutes.post(
       return c.json({ error: { message: 'Emoji not found' } }, 404);
     }
 
-    // Verify message exists
+    const workspaceAccess = await requireWorkspaceMemberRole(auth.appId, auth.userId!, emojiResult.rows[0].workspace_id);
+    if (!workspaceAccess.ok) {
+      return c.json({ error: { message: 'Not a member of this workspace', code: 'FORBIDDEN' } }, 403);
+    }
+
+    // Verify message exists and caller can access its channel
     const messageResult = await db.query(
-      'SELECT id FROM message WHERE id = $1 AND app_id = $2',
+      'SELECT id, channel_id FROM message WHERE id = $1 AND app_id = $2',
       [messageId, auth.appId]
     );
 
     if (messageResult.rows.length === 0) {
       return c.json({ error: { message: 'Message not found' } }, 404);
+    }
+
+    if (!(await isChannelMember(auth.appId, auth.userId!, messageResult.rows[0].channel_id))) {
+      return c.json({ error: { message: 'Not a member of this channel', code: 'FORBIDDEN' } }, 403);
     }
 
     // Record usage
@@ -275,8 +334,8 @@ emojiRoutes.post(
 
     // Increment usage count
     await db.query(
-      'UPDATE custom_emoji SET usage_count = usage_count + 1 WHERE id = $1',
-      [emojiId]
+      'UPDATE custom_emoji SET usage_count = usage_count + 1 WHERE id = $1 AND app_id = $2',
+      [emojiId, auth.appId]
     );
 
     return c.json({ success: true });
@@ -293,6 +352,26 @@ emojiRoutes.get(
   async (c) => {
     const auth = c.get('auth');
     const emojiId = c.req.param('id');
+
+    const emojiResult = await db.query(
+      'SELECT created_by, workspace_id FROM custom_emoji WHERE id = $1 AND app_id = $2',
+      [emojiId, auth.appId]
+    );
+
+    if (emojiResult.rows.length === 0) {
+      return c.json({ error: { message: 'Emoji not found' } }, 404);
+    }
+
+    const workspaceAccess = await requireWorkspaceMemberRole(auth.appId, auth.userId!, emojiResult.rows[0].workspace_id);
+    if (!workspaceAccess.ok) {
+      return c.json({ error: { message: 'Not a member of this workspace', code: 'FORBIDDEN' } }, 403);
+    }
+    if (
+      emojiResult.rows[0].created_by !== auth.userId
+      && !isPrivilegedWorkspaceRole(workspaceAccess.role)
+    ) {
+      return c.json({ error: { message: 'Permission denied', code: 'FORBIDDEN' } }, 403);
+    }
 
     // Total usage count
     const totalResult = await db.query(
@@ -359,6 +438,11 @@ emojiRoutes.get(
       return c.json({ error: { message: 'q and workspaceId are required' } }, 400);
     }
 
+    const workspaceAccess = await requireWorkspaceMemberRole(auth.appId, auth.userId!, workspaceId);
+    if (!workspaceAccess.ok) {
+      return c.json({ error: { message: 'Not a member of this workspace', code: 'FORBIDDEN' } }, 403);
+    }
+
     const result = await db.query(
       `SELECT *
        FROM custom_emoji
@@ -375,7 +459,7 @@ emojiRoutes.get(
         id: row.id,
         workspaceId: row.workspace_id,
         name: row.name,
-        imageUrl: row.image_url,
+        imageUrl: emojiImageUrl(c.req.url, { appId: auth.appId, userId: auth.userId! }, row),
         category: row.category,
         usageCount: row.usage_count,
       })),

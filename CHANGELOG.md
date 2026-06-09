@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+# [2.0.8] - 2026-06-09
+
+## Production Hardening
+
+### Added
+- Client-owned token broker with broker credential authentication, scoped token minting, replay protection, mandatory broker audit records, membership freshness checks, and no browser refresh-token return.
+- Deny-by-default route guard for broker-scoped runtime tokens, with explicit chat runtime allowlisting.
+- Explicit `chat:read` and `chat:write` scope enforcement for thread and poll routes.
+- Durable realtime event outbox, token revocation/session tracking, private media URL controls, data lifecycle policy support, search indexing outbox, backup/restore drill tooling, and production readiness checks.
+- Tenant context middleware and database hardening migrations through `V014`, including RLS fixes and runtime role grants.
+- Operational scripts for health sweeps, object manifests, PostgreSQL backups, restore drills, restored-upload reconciliation, and compose chaos checks.
+- Seeded Playwright coverage for the React chat runtime and realtime browser flows.
+
+### Changed
+- Strengthened production configuration defaults, Docker/Flyway setup, Centrifugo configuration, rate-limit readiness, structured logging, metrics, and deployment documentation.
+- Updated API, React, React Native, Next.js, integration, and Impact Idol examples for the hardened auth/runtime model.
+- Upgraded API/runtime dependencies and raised the package runtime baseline to Node.js 20.
+
+### Fixed
+- Broker-scoped tokens can no longer reach broader authenticated management routes by default.
+- Broker membership sync now rejects external tenant reassignment before mutating user or channel membership state.
+- Broker origin mismatches are denied and audited.
+- Least-privilege database runtime roles receive the required sequence/function execution grants for message and thread writes.
+- Production Redis TLS/readiness behavior now fails closed and is reflected in readiness checks.
+
+### Verification
+- API focused broker/security suite passed: 9 files, 98 tests.
+- API typecheck passed.
+- Full API hardening sweep passed during the P0 run: 206 tests passed, 7 skipped.
+- API build passed.
+- Live LAN seeded React UI Playwright validation passed against `http://192.168.68.113:5173`.
+
+### Deployment Notes
+- Live deployments should apply migrations through `V014` before broker-native validation.
+- Follow-up runbooks remain for broker runtime role credentials/IAM mapping and validation of `NOT VALID` constraints.
+
+---
+
 # [2.0.1] - 2026-01-22
 
 ## 🔔 Push Notifications Enhancement

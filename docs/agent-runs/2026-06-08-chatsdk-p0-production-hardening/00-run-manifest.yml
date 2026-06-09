@@ -1,0 +1,50 @@
+run_id: 2026-06-08-chatsdk-p0-production-hardening
+objective: Autonomously implement ChatSDK P0 production hardening gates for safe Vouch multi-tenant beta readiness.
+status: completed
+started_at: 2026-06-08
+source_workspace: /Users/pushkar/chatsdk
+governing_specs:
+  - docs/features/chatsdk-production-hardening/PRODUCTION_STURDINESS_SPEC.md
+  - docs/features/chatsdk-production-hardening/PRODUCTION_STURDINESS_TEST_PLAN.md
+  - docs/features/chatsdk-production-hardening/MULTI_TENANT_ARCHITECTURE_SPEC.md
+  - docs/product-memory/decisions/chatsdk-production-hardening.md
+artifacts:
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/00-run-manifest.yml
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/01-run-plan.md
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/02-milestone-1-tenant-rls-log.md
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/03-milestone-2-token-revocation-log.md
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/04-milestone-3-private-media-log.md
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/05-milestone-4-rate-limits-log.md
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/06-milestone-5-data-lifecycle-log.md
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/07-milestone-6-observability-log.md
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/08-milestone-7-backup-restore-chaos-log.md
+  - docs/agent-runs/2026-06-08-chatsdk-p0-production-hardening/09-final-security-code-review-log.md
+agents:
+  - name: Ampere
+    id: 019ea7d2-9a39-7a00-961d-e88011e65228
+    lane: shared-DB tenant isolation/RLS
+    status: analysis complete
+  - name: Russell
+    id: 019ea7d2-b70a-7e03-871b-17df8fcfe7b3
+    lane: token broker/revocation/demo kill
+    status: analysis complete
+  - name: Parfit
+    id: 019ea7d2-cdf3-7c52-b7ee-07344d3d7265
+    lane: seeded tests/Playwright/chaos strategy
+    status: analysis complete
+review_policy:
+  after_each_milestone:
+    - GPT-5.5 high adversarial review
+    - Antigravity review via agy
+    - fix all critical/high findings before proceeding
+notes:
+  - This run follows the stricter post-adversarial P0 gates: shared-DB RLS/context guardrails, token revocation, demo broker shutdown, private media, rate limits, data policy, observability alerts, backup reconciliation, and chaos coverage.
+  - Milestone 1 completed request-scoped DB tenant context, V006/V007 RLS migrations, app-scoped channel_seq/webhook_delivery/templates, outbox/webhook worker system context, GPT-5.5 high review fixes, Antigravity review fixes, and non-owner real-Postgres RLS integration verification.
+  - Milestone 2 completed centralized token issuance/verification, V008 token session/revocation schema, app-scoped realtime subjects, production-disabled API-key/legacy token brokers, user-token revocation, membership ejection, GPT-5.5 high review fixes, and compose/migration verification.
+  - Milestone 3 completed private media hardening: private bucket policy removal, app-scoped object keys, mediaToken browser rendering, metadata validation, canonical tokenless realtime attachments, custom emoji proxying, V009 media key backfill, GPT-5.5 high/Antigravity review fixes, full API/build/migration verification.
+  - Milestone 4 completed Redis-backed rate limits and abuse controls: production-enabled Redis-required limiter defaults, fail-closed Redis-required behavior, app/user/channel/IP/key budgets, pre-auth token/API-key limits, channel/message/thread/upload/search/realtime coverage, request-long tenant transaction removal, GPT-5.5 high/Antigravity review fixes, full API/build verification.
+  - Milestone 5 completed data lifecycle hardening: V010 lifecycle schema/RLS, legal-hold protected soft delete/hard purge, durable storage purge ledger and worker, user anonymization/device-token cleanup, encrypted scoped exports with deletion/upload-key redaction, search hydration against Postgres, production V010 forced-RLS guard, GPT-5.5 high/Antigravity review fixes, full API/build/migration verification.
+  - Milestone 6 completed production observability and alert-ready readiness: request IDs/traceparent/log context, bounded route labels, upload/search/realtime/lifecycle metrics, search task failure metrics, readiness checks for storage/Centrifugo/outbox/lifecycle/search/Inngest/schema, strict queue thresholds, GPT-5.5 xhigh review fixes, Antigravity no-output retries, full API/build verification.
+  - Milestone 7 completed backup/restore reconciliation and chaos/restart hardening: backup/restore scripts and runbook, object manifests, restore reconciliation/audit tables, purged-object replay enforcement, search index outbox with transactional enqueue and stale claim recovery, Meilisearch outage readiness behavior, compose/test restart hardening, GPT-5.5 xhigh review fixes, Antigravity no-output retries, full API/build/migration verification.
+  - Final comprehensive security/code review sweep completed after GPT-5.5 xhigh review fixes for Redis TLS/readiness and separated Flyway/runtime DB role grants. Fresh Flyway replay now reaches V013, API typecheck/build/full tests pass, and no remaining critical/high blockers were found by the narrow final GPT-5.5 xhigh re-review.
+  - Remaining sign-off work is deployed seeded validation and opt-in live chaos execution against the intended local/Proxmox stack.

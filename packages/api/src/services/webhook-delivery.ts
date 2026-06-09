@@ -6,6 +6,10 @@
  * - Retry logic with exponential backoff
  * - Failure tracking
  * - Auto-disable after consecutive failures
+ *
+ * All DB operations run inside system context because the webhook worker
+ * operates cross-tenant (C-1 fix). Without system context, RLS policies
+ * would return zero rows for every query and silently break delivery.
  */
 
 import { db } from './database';
@@ -32,6 +36,14 @@ const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1 second
 const MAX_CONSECUTIVE_FAILURES = 10;
 
+async function withSystemContext<T>(fn: () => Promise<T>): Promise<T> {
+  const runner = db.withSystemContext?.bind(db);
+  if (typeof runner === 'function') {
+    return runner(fn);
+  }
+  return fn();
+}
+
 /**
  * Send webhook event to all subscribed webhooks
  */
@@ -40,14 +52,16 @@ export async function deliverWebhookEvent(
   eventType: string,
   data: any
 ): Promise<void> {
-  // Get all enabled webhooks subscribed to this event
-  const result = await db.query(
-    `SELECT *
-     FROM webhook
-     WHERE app_id = $1
-       AND enabled = true
-       AND events @> $2::jsonb`,
-    [appId, JSON.stringify([eventType])]
+  // Get all enabled webhooks subscribed to this event (system context for RLS)
+  const result = await withSystemContext(() =>
+    db.query(
+      `SELECT *
+       FROM webhook
+       WHERE app_id = $1
+         AND enabled = true
+         AND events @> $2::jsonb`,
+      [appId, JSON.stringify([eventType])]
+    )
   );
 
   const webhooks = result.rows as Webhook[];
@@ -102,6 +116,7 @@ async function deliverToWebhook(
       if (response.ok) {
         // Success - log delivery
         await logDelivery(
+          webhook.app_id,
           webhook.id,
           eventType,
           true,
@@ -111,9 +126,11 @@ async function deliverToWebhook(
         );
 
         // Reset failure count on success
-        await db.query(
-          'UPDATE webhook SET failure_count = 0 WHERE id = $1',
-          [webhook.id]
+        await withSystemContext(() =>
+          db.query(
+            'UPDATE webhook SET failure_count = 0 WHERE id = $1 AND app_id = $2',
+            [webhook.id, webhook.app_id]
+          )
         );
 
         return;
@@ -140,6 +157,7 @@ async function deliverToWebhook(
 
   // All retries failed - log failure
   await logDelivery(
+    webhook.app_id,
     webhook.id,
     eventType,
     false,
@@ -149,24 +167,28 @@ async function deliverToWebhook(
   );
 
   // Increment failure count
-  const failureResult = await db.query(
-    `UPDATE webhook
-     SET failure_count = failure_count + 1,
-         last_failure_at = NOW()
-     WHERE id = $1
-     RETURNING failure_count`,
-    [webhook.id]
+  const failureResult = await withSystemContext(() =>
+    db.query(
+      `UPDATE webhook
+       SET failure_count = failure_count + 1,
+           last_failure_at = NOW()
+       WHERE id = $1 AND app_id = $2
+       RETURNING failure_count`,
+      [webhook.id, webhook.app_id]
+    )
   );
 
   const failureCount = failureResult.rows[0]?.failure_count || 0;
 
   // Auto-disable after consecutive failures
   if (failureCount >= MAX_CONSECUTIVE_FAILURES) {
-    await db.query(
-      `UPDATE webhook
-       SET enabled = false
-       WHERE id = $1`,
-      [webhook.id]
+    await withSystemContext(() =>
+      db.query(
+        `UPDATE webhook
+         SET enabled = false
+         WHERE id = $1 AND app_id = $2`,
+        [webhook.id, webhook.app_id]
+      )
     );
 
     console.warn(
@@ -179,6 +201,7 @@ async function deliverToWebhook(
  * Log webhook delivery attempt
  */
 async function logDelivery(
+  appId: string,
   webhookId: string,
   event: string,
   success: boolean,
@@ -186,11 +209,13 @@ async function logDelivery(
   errorMessage: string | null,
   retryCount: number
 ): Promise<void> {
-  await db.query(
-    `INSERT INTO webhook_delivery
-     (webhook_id, event, success, status_code, error_message, retry_count)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [webhookId, event, success, statusCode, errorMessage, retryCount]
+  await withSystemContext(() =>
+    db.query(
+      `INSERT INTO webhook_delivery
+       (app_id, webhook_id, event, success, status_code, error_message, retry_count)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [appId, webhookId, event, success, statusCode, errorMessage, retryCount]
+    )
   );
 }
 
@@ -207,13 +232,15 @@ function sleep(ms: number): Promise<void> {
 export async function retryWebhookDelivery(
   deliveryId: string
 ): Promise<{ success: boolean; error?: string }> {
-  // Get delivery record
-  const deliveryResult = await db.query(
-    `SELECT d.*, w.*
-     FROM webhook_delivery d
-     JOIN webhook w ON d.webhook_id = w.id
-     WHERE d.id = $1`,
-    [deliveryId]
+  // Get delivery record (M-1 fix: system context for cross-tenant join)
+  const deliveryResult = await withSystemContext(() =>
+    db.query(
+      `SELECT d.*, w.*
+       FROM webhook_delivery d
+       JOIN webhook w ON d.webhook_id = w.id AND d.app_id = w.app_id
+       WHERE d.id = $1`,
+      [deliveryId]
+    )
   );
 
   if (deliveryResult.rows.length === 0) {

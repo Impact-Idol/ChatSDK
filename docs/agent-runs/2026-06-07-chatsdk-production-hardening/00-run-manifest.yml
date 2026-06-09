@@ -1,0 +1,53 @@
+run_id: 2026-06-07-chatsdk-production-hardening
+objective: Evaluate Impact-Idol/ChatSDK for Vouch production use and produce a comprehensive hardening/install spec.
+status: completed
+source_repo: Impact-Idol/ChatSDK
+source_commit: 3036bf68cbe7d2f35b4e1dd14e0fe973dfcac0ae
+local_source_path: /tmp/impact-idol-chatsdk
+artifacts:
+  - docs/features/chatsdk-production-hardening/SPEC.md
+  - docs/features/chatsdk-production-hardening/TEST_PLAN.md
+  - docs/features/chatsdk-production-hardening/PRODUCTION_STURDINESS_SPEC.md
+  - docs/features/chatsdk-production-hardening/PRODUCTION_STURDINESS_TEST_PLAN.md
+  - docs/features/chatsdk-production-hardening/MULTI_TENANT_ARCHITECTURE_SPEC.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/01-review-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/02-proxmox-install-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/03-milestone-1-foundation-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/04-milestone-2-auth-boundary-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/05-milestone-3-tenant-membership-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/06-milestone-4-client-sdk-auth-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/07-milestone-5-private-data-auth-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/08-milestone-6-realtime-subscription-auth-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/09-milestone-7-operations-readiness-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/10-milestone-8-realtime-outbox-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/11-milestone-9-durable-realtime-routes-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/12-milestone-10-seeded-e2e-and-rollback-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/13-milestone-11-security-config-dependency-sweep-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/14-milestone-12-demo-search-ingest-storage-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/15-milestone-13-production-sturdiness-spec-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/16-milestone-14-multi-tenant-architecture-spec-log.md
+  - docs/agent-runs/2026-06-07-chatsdk-production-hardening/17-milestone-15-adversarial-spec-review-log.md
+  - docs/product-memory/decisions/chatsdk-production-hardening.md
+agents:
+  - name: Nash
+    id: 019ea4dd-eb98-7961-bd91-fec2890e0e14
+    lane: security/auth/tenant isolation
+    status: completed
+  - name: Ramanujan
+    id: 019ea4de-01ef-77b1-aa99-9abe8bb100a2
+    lane: backend/data/realtime reliability
+    status: completed
+  - name: Erdos
+    id: 019ea4de-1561-7820-8de5-525f0601f769
+    lane: SDK/client/product install surface
+    status: completed
+checks:
+  graphify_query: completed
+  npm_api_typecheck: failed_baseline
+  npm_api_tests: failed_baseline
+  npm_production_audit: failed_baseline
+notes:
+  - Milestone 12 added live demo/search/Inngest/storage follow-up changes in the ChatSDK workspace and LXC deployment.
+  - Milestone 13 added production sturdiness specs and validation plan for Vouch token brokering, private media, abuse controls, data policy, observability, backup/restore, and chaos testing.
+  - Milestone 14 added multi-tenant architecture and RLS guidance for shared-stack, separate-app client isolation.
+  - Milestone 15 ran GPT-5.5 xhigh and Antigravity adversarial spec reviews, then tightened P0 gates around RLS, revocation, demo broker shutdown, private media, rate limits, retention/export, alerts, backup reconciliation, and chaos coverage.

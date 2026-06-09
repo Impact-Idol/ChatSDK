@@ -62,10 +62,10 @@ Create `src/contexts/ChatContext.tsx`:
 ```typescript
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { ChatSDK } from '@chatsdk/core';
-import type { Message, ConnectionState } from '@chatsdk/core';
+import type { ChatClient, Message, ConnectionState } from '@chatsdk/core';
 
 interface ChatContextType {
-  sdk: ChatSDK | null;
+  sdk: ChatClient | null;
   messages: Message[];
   connectionState: ConnectionState;
   sendMessage: (text: string) => Promise<void>;
@@ -74,48 +74,29 @@ interface ChatContextType {
 const ChatContext = createContext<ChatContextType | null>(null);
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [sdk, setSDK] = useState<ChatSDK | null>(null);
+  const [sdk, setSDK] = useState<ChatClient | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [connectionState, setConnectionState] = useState<ConnectionState>('DISCONNECTED');
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
   useEffect(() => {
     const initChat = async () => {
-      // Create SDK instance
-      const chatSDK = new ChatSDK({
+      const chatSDK = await ChatSDK.connect({
+        tokenProvider: async () => {
+          const response = await fetch('/api/chatsdk-token', { method: 'POST' });
+          if (!response.ok) throw new Error('Failed to get ChatSDK token');
+          return response.json();
+        },
+        userId: 'user-123', // Replace with actual user ID
         apiUrl: 'http://localhost:5500',
         wsUrl: 'ws://localhost:8001/connection/websocket',
-
-        // Auto-refresh tokens
-        onTokenRefresh: (tokens) => {
-          console.log('Tokens refreshed!');
-          localStorage.setItem('chatTokens', JSON.stringify(tokens));
-        },
-
-        // Connection state changes
-        onConnectionStateChange: (state) => {
-          console.log('Connection state:', state);
-          setConnectionState(state);
-        },
       });
 
-      // Listen for new messages
-      chatSDK.onMessage((message) => {
+      chatSDK.on('message.new', (message) => {
         setMessages((prev) => [...prev, message]);
       });
-
-      // Load stored tokens
-      const storedTokens = localStorage.getItem('chatTokens');
-      if (storedTokens) {
-        const tokens = JSON.parse(storedTokens);
-
-        // Connect with stored tokens
-        await chatSDK.connect({
-          userID: 'user-123', // Replace with actual user ID
-          token: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          expiresAt: tokens.expiresAt,
-        });
-      }
+      chatSDK.on('connection.state_changed', ({ state }) => {
+        setConnectionState(state);
+      });
 
       setSDK(chatSDK);
     };

@@ -15,13 +15,39 @@ export type RootStackParamList = {
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const API_URL = 'https://your-chatsdk-api.com';
+const WS_URL = 'wss://your-chatsdk-api.com/connection/websocket';
+const TOKEN_URL = 'https://your-app.com/api/chatsdk-token';
 
 // Initialize client
 const client = new ChatClient({
-  apiKey: 'your-api-key',
-  apiUrl: 'http://localhost:5500',
+  apiUrl: API_URL,
+  wsUrl: WS_URL,
+  tokenProvider: () => fetchToken('demo-user', 'Demo User'),
   debug: true,
 });
+
+async function fetchToken(userId: string, displayName: string) {
+  const response = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, displayName }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch ChatSDK token');
+  }
+
+  const data = await response.json();
+  const expiresIn = typeof data.expiresIn === 'number' ? data.expiresIn : 900;
+
+  return {
+    token: data.token,
+    wsToken: data.wsToken ?? data._internal?.wsToken ?? data.token,
+    refreshToken: data.refreshToken,
+    expiresIn,
+  };
+}
 
 export default function App() {
   const [connected, setConnected] = useState(false);
@@ -32,8 +58,7 @@ export default function App() {
     const connect = async () => {
       try {
         await client.connectUser(
-          { id: 'demo-user', name: 'Demo User' },
-          'demo-token'
+          { id: 'demo-user', name: 'Demo User' }
         );
         setConnected(true);
       } catch (err: any) {

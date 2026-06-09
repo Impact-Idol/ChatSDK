@@ -8,7 +8,18 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { v7 as uuidv7 } from 'uuid';
 import { db } from '../services/database';
-import { requireUser } from '../middleware/auth';
+import { requireScope, requireUser } from '../middleware/auth';
+import { getChannelAccess, isChannelMember, isWorkspaceMember } from '../services/authorization';
+import { centrifugo } from '../services/centrifugo';
+import {
+  chatChannel,
+  enqueueDomainRealtimeEvent,
+  triggerRealtimeOutboxDrainSafely,
+  userChannel,
+} from '../services/realtime-events';
+import { realtimeUserSubject } from '../services/tokens';
+import { RATE_LIMIT_POLICIES, rateLimitUser } from '../services/rate-limit';
+import { createDataExport } from '../services/data-lifecycle';
 
 export const channelRoutes = new Hono();
 
@@ -49,6 +60,9 @@ const createChannelSchema = z.object({
 channelRoutes.post(
   '/',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation),
   zValidator('json', createChannelSchema),
   async (c) => {
     const auth = c.get('auth');
@@ -76,6 +90,42 @@ channelRoutes.post(
       // Return existing channel
       const channelId = existingChannel.rows[0].id;
       return c.redirect(`/api/channels/${channelId}`, 303);
+    }
+
+    if (body.workspaceId) {
+      const workspaceAccess = await db.query(
+        `SELECT w.id
+         FROM workspace w
+         JOIN workspace_member wm
+           ON wm.app_id = w.app_id
+          AND wm.workspace_id = w.id
+          AND wm.user_id = $3
+         WHERE w.id = $1 AND w.app_id = $2`,
+        [body.workspaceId, auth.appId, auth.userId]
+      );
+
+      if (workspaceAccess.rows.length === 0) {
+        return c.json({ error: { message: 'Workspace not found or no access' } }, 404);
+      }
+
+      const targetWorkspaceMembers = await db.query(
+        `SELECT user_id FROM workspace_member
+         WHERE app_id = $1 AND workspace_id = $2 AND user_id = ANY($3)`,
+        [auth.appId, body.workspaceId, body.memberIds]
+      );
+      const workspaceMemberIds = new Set(targetWorkspaceMembers.rows.map((row) => row.user_id));
+      const nonWorkspaceMemberIds = body.memberIds.filter(
+        (memberId) => memberId !== auth.userId && !workspaceMemberIds.has(memberId)
+      );
+
+      if (nonWorkspaceMemberIds.length > 0) {
+        return c.json({
+          error: {
+            message: 'All channel members must belong to the workspace',
+            code: 'FORBIDDEN',
+          },
+        }, 403);
+      }
     }
 
     // Create channel in transaction (uses ON CONFLICT for atomic idempotency)
@@ -128,19 +178,45 @@ channelRoutes.post(
 
       // Initialize channel sequence
       await client.query(
-        `INSERT INTO channel_seq (channel_id, current_seq) VALUES ($1, 0)`,
-        [channelId]
+        `INSERT INTO channel_seq (channel_id, app_id, current_seq) VALUES ($1, $2, 0)`,
+        [channelId, auth.appId]
       );
 
       // Update workspace channel_count if associated with a workspace
       if (body.workspaceId) {
         await client.query(
-          `UPDATE workspace SET channel_count = channel_count + 1 WHERE id = $1`,
-          [body.workspaceId]
+          `UPDATE workspace SET channel_count = channel_count + 1
+           WHERE id = $1 AND app_id = $2`,
+          [body.workspaceId, auth.appId]
         );
       }
 
-      return channelResult.rows[0];
+      const channel = channelResult.rows[0];
+      let userIds = [...new Set([auth.userId!, ...body.memberIds])];
+      if (body.type === 'public' || body.type === 'team') {
+        const visibleUsers = body.workspaceId
+          ? await client.query(
+            `SELECT user_id FROM workspace_member
+             WHERE app_id = $1 AND workspace_id = $2`,
+            [auth.appId, body.workspaceId]
+          )
+          : await client.query(
+            `SELECT id AS user_id FROM app_user WHERE app_id = $1`,
+            [auth.appId]
+          );
+        userIds = [...new Set([...userIds, ...visibleUsers.rows.map((row) => row.user_id)])];
+      }
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'channel',
+        aggregateId: channelId,
+        eventType: 'channel.created',
+        channels: userIds.map((userId) => userChannel(auth.appId, userId)),
+        payload: { channel: formatChannel(channel) },
+        idempotencyKey: `channel.created:${auth.appId}:${channelId}`,
+      });
+
+      return channel;
     });
 
     // Idempotency key conflict — return existing channel (200)
@@ -152,13 +228,7 @@ channelRoutes.post(
       return c.json(formatChannel(existing.rows[0]), 200);
     }
 
-    // Broadcast channel created event
-    try {
-      const { centrifugo } = await import('../services/centrifugo');
-      await centrifugo.publishChannelCreated(auth.appId, formatChannel(result));
-    } catch (error) {
-      console.error('Failed to broadcast channel.created event:', error);
-    }
+    triggerRealtimeOutboxDrainSafely();
 
     return c.json(formatChannel(result), 201);
   }
@@ -168,7 +238,7 @@ channelRoutes.post(
  * Get total unread count across all channels
  * GET /api/channels/unread-count
  */
-channelRoutes.get('/unread-count', requireUser, async (c) => {
+channelRoutes.get('/unread-count', requireUser, requireScope('chat:read'), rateLimitUser(RATE_LIMIT_POLICIES.channelRead), async (c) => {
   const auth = c.get('auth');
 
   const result = await db.query(
@@ -190,7 +260,7 @@ channelRoutes.get('/unread-count', requireUser, async (c) => {
  * - All channels the user is a member of
  * - All public/team channels (visible to everyone in the app)
  */
-channelRoutes.get('/', requireUser, async (c) => {
+channelRoutes.get('/', requireUser, requireScope('chat:read'), rateLimitUser(RATE_LIMIT_POLICIES.channelRead), async (c) => {
   const auth = c.get('auth');
 
   // Safe parsing with NaN fallback
@@ -203,6 +273,10 @@ channelRoutes.get('/', requireUser, async (c) => {
   const type = c.req.query('type');
   const workspaceId = c.req.query('workspaceId');
 
+  if (workspaceId && !(await isWorkspaceMember(auth.appId, auth.userId!, workspaceId))) {
+    return c.json({ error: { message: 'Not a member of this workspace' } }, 403);
+  }
+
   // Query combines:
   // 1. Channels where user is a member (with their membership data)
   // 2. Public/team channels user is NOT a member of (visible to discover)
@@ -212,7 +286,10 @@ channelRoutes.get('/', requireUser, async (c) => {
   let innerWhere = `c.app_id = $1
       AND (
         cm.user_id IS NOT NULL  -- User is a member
-        OR c.type IN ('public', 'team')  -- Or it's a public channel
+        OR (
+          c.type IN ('public', 'team')
+          AND (c.workspace_id IS NULL OR wm.user_id IS NOT NULL)
+        )
       )`;
 
   if (type) {
@@ -230,6 +307,7 @@ channelRoutes.get('/', requireUser, async (c) => {
       SELECT DISTINCT ON (c.id) c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.starred, cm.role
       FROM channel c
       LEFT JOIN channel_member cm ON c.id = cm.channel_id AND cm.app_id = c.app_id AND cm.user_id = $2
+      LEFT JOIN workspace_member wm ON wm.workspace_id = c.workspace_id AND wm.app_id = c.app_id AND wm.user_id = $2
       WHERE ${innerWhere}
       ORDER BY c.id
     ) sub
@@ -287,12 +365,53 @@ channelRoutes.get('/', requireUser, async (c) => {
 });
 
 /**
+ * Export channel chat data.
+ * POST /api/channels/:channelId/export
+ */
+channelRoutes.post(
+  '/:channelId/export',
+  requireUser,
+  requireScope('chat:read'),
+  rateLimitUser(RATE_LIMIT_POLICIES.exportCreate, (c) => ({ channelId: c.req.param('channelId') })),
+  async (c) => {
+    const auth = c.get('auth');
+    const channelId = c.req.param('channelId');
+
+    if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+      return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+    }
+
+    const result = await createDataExport({
+      appId: auth.appId,
+      requestedBy: auth.userId!,
+      scopeType: 'channel',
+      scopeId: channelId,
+    });
+
+    return c.json(result, 201);
+  }
+);
+
+/**
  * Get channel by ID
  * GET /api/channels/:channelId
  */
-channelRoutes.get('/:channelId', requireUser, async (c) => {
+channelRoutes.get(
+  '/:channelId',
+  requireUser,
+  requireScope('chat:read'),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelRead, (c) => ({ channelId: c.req.param('channelId') })),
+  async (c) => {
   const auth = c.get('auth');
   const channelId = c.req.param('channelId');
+
+  const access = await getChannelAccess(auth.appId, auth.userId!, channelId);
+  if (!access.exists) {
+    return c.json({ error: { message: 'Channel not found' } }, 404);
+  }
+  if (!access.isMember && !access.isPublic) {
+    return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+  }
 
   const result = await db.query(
     `SELECT c.*, cm.last_read_seq, cm.unread_count, cm.muted, cm.starred, cm.role
@@ -318,20 +437,21 @@ channelRoutes.get('/:channelId', requireUser, async (c) => {
     [channelId, auth.appId]
   );
 
-  return c.json({
-    ...formatChannel(channel),
-    members: membersResult.rows.map((m) => ({
-      userId: m.user_id,
-      role: m.role,
-      joinedAt: m.joined_at,
-      user: {
-        id: m.user_id,
-        name: m.name,
-        image: m.image_url,
-      },
-    })),
-  });
-});
+    return c.json({
+      ...formatChannel(channel),
+      members: membersResult.rows.map((m) => ({
+        userId: m.user_id,
+        role: m.role,
+        joinedAt: m.joined_at,
+        user: {
+          id: m.user_id,
+          name: m.name,
+          image: m.image_url,
+        },
+      })),
+    });
+  }
+);
 
 const updateChannelSchema = z.object({
   name: z.string().optional(),
@@ -346,6 +466,9 @@ const updateChannelSchema = z.object({
 channelRoutes.patch(
   '/:channelId',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation, (c) => ({ channelId: c.req.param('channelId') })),
   zValidator('json', updateChannelSchema),
   async (c) => {
     const auth = c.get('auth');
@@ -368,26 +491,32 @@ channelRoutes.patch(
       return c.json({ error: { message: 'Permission denied' } }, 403);
     }
 
-    const result = await db.query(
-      `UPDATE channel
-       SET name = COALESCE($3, name),
-           image_url = COALESCE($4, image_url),
-           config = COALESCE($5, config),
-           updated_at = NOW()
-       WHERE app_id = $1 AND id = $2
-       RETURNING *`,
-      [auth.appId, channelId, body.name, body.image, body.config]
-    );
+    const updatedChannel = await db.transaction(async (client) => {
+      const result = await client.query(
+        `UPDATE channel
+         SET name = COALESCE($3, name),
+             image_url = COALESCE($4, image_url),
+             config = COALESCE($5, config),
+             updated_at = NOW()
+         WHERE app_id = $1 AND id = $2
+         RETURNING *`,
+        [auth.appId, channelId, body.name, body.image, body.config]
+      );
 
-    const updatedChannel = formatChannel(result.rows[0]);
+      const channel = formatChannel(result.rows[0]);
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'channel',
+        aggregateId: channelId,
+        eventType: 'channel.updated',
+        channels: [chatChannel(auth.appId, channelId)],
+        payload: { channel },
+      });
 
-    // Broadcast channel updated event
-    try {
-      const { centrifugo } = await import('../services/centrifugo');
-      await centrifugo.publishChannelUpdated(auth.appId, channelId, updatedChannel);
-    } catch (error) {
-      console.error('Failed to broadcast channel.updated event:', error);
-    }
+      return channel;
+    });
+
+    triggerRealtimeOutboxDrainSafely();
 
     return c.json(updatedChannel);
   }
@@ -397,7 +526,13 @@ channelRoutes.patch(
  * Delete channel
  * DELETE /api/channels/:channelId
  */
-channelRoutes.delete('/:channelId', requireUser, async (c) => {
+channelRoutes.delete(
+  '/:channelId',
+  requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation, (c) => ({ channelId: c.req.param('channelId') })),
+  async (c) => {
   const auth = c.get('auth');
   const channelId = c.req.param('channelId');
 
@@ -416,27 +551,45 @@ channelRoutes.delete('/:channelId', requireUser, async (c) => {
     return c.json({ error: { message: 'Only owner can delete channel' } }, 403);
   }
 
-  await db.query(
-    'DELETE FROM channel WHERE app_id = $1 AND id = $2',
-    [auth.appId, channelId]
-  );
+  await db.transaction(async (client) => {
+    const memberResult = await client.query(
+      `SELECT user_id FROM channel_member
+       WHERE channel_id = $1 AND app_id = $2`,
+      [channelId, auth.appId]
+    );
 
-  // Broadcast channel deleted event
-  try {
-    const { centrifugo } = await import('../services/centrifugo');
-    await centrifugo.publishChannelDeleted(auth.appId, channelId);
-  } catch (error) {
-    console.error('Failed to broadcast channel.deleted event:', error);
+    await client.query(
+      'DELETE FROM channel WHERE app_id = $1 AND id = $2',
+      [auth.appId, channelId]
+    );
+
+    await enqueueDomainRealtimeEvent(client, {
+      appId: auth.appId,
+      aggregateType: 'channel',
+      aggregateId: channelId,
+      eventType: 'channel.deleted',
+      channels: memberResult.rows.map((row) => userChannel(auth.appId, row.user_id)),
+      payload: { channelId },
+      idempotencyKey: `channel.deleted:${auth.appId}:${channelId}`,
+    });
+  });
+
+  triggerRealtimeOutboxDrainSafely();
+
+    return c.json({ success: true });
   }
-
-  return c.json({ success: true });
-});
+);
 
 /**
  * Get channel members
  * GET /api/channels/:channelId/members
  */
-channelRoutes.get('/:channelId/members', requireUser, async (c) => {
+channelRoutes.get(
+  '/:channelId/members',
+  requireUser,
+  requireScope('chat:read'),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelRead, (c) => ({ channelId: c.req.param('channelId') })),
+  async (c) => {
   const auth = c.get('auth');
   const channelId = c.req.param('channelId');
 
@@ -461,17 +614,18 @@ channelRoutes.get('/:channelId/members', requireUser, async (c) => {
     [channelId, auth.appId]
   );
 
-  return c.json({
-    members: membersResult.rows.map((m) => ({
-      id: m.user_id,
-      name: m.name,
-      image: m.image_url,
-      email: m.email,
-      role: m.role,
-      joinedAt: m.joined_at,
-    })),
-  });
-});
+    return c.json({
+      members: membersResult.rows.map((m) => ({
+        id: m.user_id,
+        name: m.name,
+        image: m.image_url,
+        email: m.email,
+        role: m.role,
+        joinedAt: m.joined_at,
+      })),
+    });
+  }
+);
 
 /**
  * Add member(s) to channel
@@ -481,6 +635,9 @@ channelRoutes.get('/:channelId/members', requireUser, async (c) => {
 channelRoutes.post(
   '/:channelId/members',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation, (c) => ({ channelId: c.req.param('channelId') })),
   zValidator(
     'json',
     z.object({
@@ -518,33 +675,77 @@ channelRoutes.post(
       return c.json({ error: { message: 'Permission denied' } }, 403);
     }
 
-    // Add members (batch insert)
-    for (const userId of userIdsToAdd) {
-      await db.query(
-        `INSERT INTO channel_member (channel_id, app_id, user_id, role)
-         VALUES ($1, $2, $3, 'member')
-         ON CONFLICT DO NOTHING`,
-        [channelId, auth.appId, userId]
-      );
+    const channelResult = await db.query(
+      `SELECT workspace_id FROM channel WHERE id = $1 AND app_id = $2`,
+      [channelId, auth.appId]
+    );
+    if (channelResult.rows.length === 0) {
+      return c.json({ error: { message: 'Channel not found' } }, 404);
+    }
 
-      // Broadcast channel member joined event for each user
-      try {
-        const { centrifugo } = await import('../services/centrifugo');
-        await centrifugo.publishChannelMemberJoined(auth.appId, channelId, userId);
-      } catch (error) {
-        console.error('Failed to broadcast channel.member_joined event:', error);
+    const workspaceId = channelResult.rows[0].workspace_id;
+    if (workspaceId) {
+      const targetWorkspaceMembers = await db.query(
+        `SELECT user_id FROM workspace_member
+         WHERE app_id = $1 AND workspace_id = $2 AND user_id = ANY($3)`,
+        [auth.appId, workspaceId, userIdsToAdd]
+      );
+      const workspaceMemberIds = new Set(targetWorkspaceMembers.rows.map((row) => row.user_id));
+      const nonWorkspaceMemberIds = userIdsToAdd.filter((userId) => !workspaceMemberIds.has(userId));
+
+      if (nonWorkspaceMemberIds.length > 0) {
+        return c.json({
+          error: {
+            message: 'All channel members must belong to the workspace',
+            code: 'FORBIDDEN',
+          },
+        }, 403);
       }
     }
 
-    // Update member count
-    await db.query(
-      `UPDATE channel SET member_count = (
-        SELECT COUNT(*) FROM channel_member WHERE channel_id = $1
-       ) WHERE id = $1`,
-      [channelId]
-    );
+    const added = await db.transaction(async (client) => {
+      const addedUserIds: string[] = [];
 
-    return c.json({ success: true, addedCount: userIdsToAdd.length });
+      for (const userId of userIdsToAdd) {
+        const insertResult = await client.query(
+          `INSERT INTO channel_member (channel_id, app_id, user_id, role)
+           VALUES ($1, $2, $3, 'member')
+           ON CONFLICT DO NOTHING
+           RETURNING user_id`,
+          [channelId, auth.appId, userId]
+        );
+
+        if (insertResult.rows.length === 0) {
+          continue;
+        }
+
+        addedUserIds.push(userId);
+        await enqueueDomainRealtimeEvent(client, {
+          appId: auth.appId,
+          aggregateType: 'channel_member',
+          aggregateId: channelId,
+          eventType: 'channel.member_joined',
+          channels: [
+            chatChannel(auth.appId, channelId),
+            userChannel(auth.appId, userId),
+          ],
+          payload: { channelId, userId },
+        });
+      }
+
+      await client.query(
+        `UPDATE channel SET member_count = (
+          SELECT COUNT(*) FROM channel_member WHERE channel_id = $1 AND app_id = $2
+        ) WHERE id = $1 AND app_id = $2`,
+        [channelId, auth.appId]
+      );
+
+      return addedUserIds;
+    });
+
+    triggerRealtimeOutboxDrainSafely();
+
+    return c.json({ success: true, addedCount: added.length });
   }
 );
 
@@ -565,6 +766,9 @@ const updateChannelMemberRoleSchema = z.object({
 channelRoutes.patch(
   '/:channelId/members/:userId',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation, (c) => ({ channelId: c.req.param('channelId') })),
   zValidator('json', updateChannelMemberRoleSchema),
   async (c) => {
     const auth = c.get('auth');
@@ -604,6 +808,11 @@ channelRoutes.patch(
       return c.json({ error: { message: 'Member not found' } }, 404);
     }
 
+    const targetRole = targetResult.rows[0].role;
+    if ((ROLE_LEVEL[targetRole] ?? 0) >= (ROLE_LEVEL[callerRole] ?? 0) && targetUserId !== auth.userId) {
+      return c.json({ error: { message: 'Cannot modify a member with equal or higher role' } }, 403);
+    }
+
     // Update role
     await db.query(
       `UPDATE channel_member SET role = $4
@@ -619,10 +828,26 @@ channelRoutes.patch(
  * Remove member from channel
  * DELETE /api/channels/:channelId/members/:userId
  */
-channelRoutes.delete('/:channelId/members/:userId', requireUser, async (c) => {
+channelRoutes.delete(
+  '/:channelId/members/:userId',
+  requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation, (c) => ({ channelId: c.req.param('channelId') })),
+  async (c) => {
   const auth = c.get('auth');
   const channelId = c.req.param('channelId');
   const userId = c.req.param('userId');
+
+  const targetResult = await db.query(
+    `SELECT role FROM channel_member
+     WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+    [channelId, auth.appId, userId]
+  );
+
+  if (targetResult.rows.length === 0) {
+    return c.json({ error: { message: 'Member not found' } }, 404);
+  }
 
   // Check permission (can remove self, or admin can remove others)
   if (userId !== auth.userId) {
@@ -640,33 +865,65 @@ channelRoutes.delete('/:channelId/members/:userId', requireUser, async (c) => {
     if (!['owner', 'admin', 'moderator'].includes(role)) {
       return c.json({ error: { message: 'Permission denied' } }, 403);
     }
+
+    const targetRole = targetResult.rows[0].role;
+    if ((ROLE_LEVEL[targetRole] ?? 0) >= (ROLE_LEVEL[role] ?? 0)) {
+      return c.json({ error: { message: 'Cannot remove a member with equal or higher role' } }, 403);
+    }
   }
 
-  // Remove member
-  await db.query(
-    `DELETE FROM channel_member
-     WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
-    [channelId, auth.appId, userId]
-  );
+  const deleteResult = await db.transaction(async (client) => {
+    const result = await client.query(
+      `DELETE FROM channel_member
+       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+      [channelId, auth.appId, userId]
+    );
 
-  // Update member count
-  await db.query(
-    `UPDATE channel SET member_count = (
-      SELECT COUNT(*) FROM channel_member WHERE channel_id = $1
-     ) WHERE id = $1`,
-    [channelId]
-  );
+    if (result.rowCount === 0) {
+      return result;
+    }
 
-  // Broadcast channel member left event
-  try {
-    const { centrifugo } = await import('../services/centrifugo');
-    await centrifugo.publishChannelMemberLeft(auth.appId, channelId, userId);
-  } catch (error) {
-    console.error('Failed to broadcast channel.member_left event:', error);
-  }
+    await client.query(
+      `UPDATE channel SET member_count = (
+        SELECT COUNT(*) FROM channel_member WHERE channel_id = $1 AND app_id = $2
+      ) WHERE id = $1 AND app_id = $2`,
+      [channelId, auth.appId]
+    );
 
-  return c.json({ success: true });
-});
+    await enqueueDomainRealtimeEvent(client, {
+      appId: auth.appId,
+      aggregateType: 'channel_member',
+      aggregateId: channelId,
+      eventType: 'channel.member_left',
+      channels: [
+        chatChannel(auth.appId, channelId),
+        userChannel(auth.appId, userId),
+      ],
+      payload: { channelId, userId },
+    });
+
+    return result;
+  });
+
+	  if (deleteResult.rowCount === 0) {
+	    return c.json({ error: { message: 'Member not found' } }, 404);
+	  }
+
+	  unsubscribeRemovedChannelMember(auth.appId, channelId, userId);
+
+	  triggerRealtimeOutboxDrainSafely();
+
+	    return c.json({ success: true });
+	  }
+	);
+
+function unsubscribeRemovedChannelMember(appId: string, channelId: string, userId: string): void {
+  centrifugo
+    .unsubscribe(chatChannel(appId, channelId), realtimeUserSubject(appId, userId))
+    .catch((error) => {
+      console.warn('[Channels] Failed to unsubscribe removed channel member:', error);
+    });
+}
 
 /**
  * Send typing indicator
@@ -675,16 +932,27 @@ channelRoutes.delete('/:channelId/members/:userId', requireUser, async (c) => {
 channelRoutes.post(
   '/:channelId/typing',
   requireUser,
+  requireScope('typing:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.typing, (c) => ({ channelId: c.req.param('channelId') })),
   zValidator('json', z.object({ typing: z.boolean() })),
   async (c) => {
     const auth = c.get('auth');
     const channelId = c.req.param('channelId');
     const { typing } = c.req.valid('json');
 
+    if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+      return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+    }
+
     // Import here to avoid circular dependency
     const { centrifugo } = await import('../services/centrifugo');
 
-    await centrifugo.publishTyping(auth.appId, channelId, auth.user!, typing);
+    try {
+      await centrifugo.publishTyping(auth.appId, channelId, auth.user!, typing);
+    } catch (error) {
+      console.warn('Failed to publish ephemeral typing event:', error);
+    }
 
     return c.json({ success: true });
   }
@@ -697,15 +965,22 @@ channelRoutes.post(
 channelRoutes.post(
   '/:channelId/read',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation, (c) => ({ channelId: c.req.param('channelId') })),
   zValidator('json', z.object({ messageId: z.string().optional() }).optional()),
   async (c) => {
     const auth = c.get('auth');
     const channelId = c.req.param('channelId');
 
+    if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+      return c.json({ error: { message: 'Not a member of this channel' } }, 403);
+    }
+
     // Get current max seq
     const seqResult = await db.query(
-      'SELECT current_seq FROM channel_seq WHERE channel_id = $1',
-      [channelId]
+      'SELECT current_seq FROM channel_seq WHERE channel_id = $1 AND app_id = $2',
+      [channelId, auth.appId]
     );
 
     if (seqResult.rows.length === 0) {
@@ -714,27 +989,50 @@ channelRoutes.post(
 
     const maxSeq = seqResult.rows[0].current_seq;
 
-    // Update read state
-    await db.query(
-      `UPDATE channel_member
-       SET last_read_seq = $4, unread_count = 0
-       WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
-      [channelId, auth.appId, auth.userId, maxSeq]
-    );
+    const totalUnread = await db.transaction(async (client) => {
+      await client.query(
+        `UPDATE channel_member
+         SET last_read_seq = $4, unread_count = 0
+         WHERE channel_id = $1 AND app_id = $2 AND user_id = $3`,
+        [channelId, auth.appId, auth.userId, maxSeq]
+      );
 
-    // Get new total unread count for this user
-    const totalResult = await db.query(
-      `SELECT COALESCE(SUM(unread_count), 0) as total FROM channel_member
-       WHERE app_id = $1 AND user_id = $2`,
-      [auth.appId, auth.userId]
-    );
-    const totalUnread = parseInt(totalResult.rows[0].total, 10);
+      const totalResult = await client.query(
+        `SELECT COALESCE(SUM(unread_count), 0) as total FROM channel_member
+         WHERE app_id = $1 AND user_id = $2`,
+        [auth.appId, auth.userId]
+      );
+      const totalUnread = parseInt(totalResult.rows[0].total, 10);
 
-    // Publish read receipt and unread count updates
-    const { centrifugo } = await import('../services/centrifugo');
-    await centrifugo.publishReadReceipt(auth.appId, channelId, auth.userId!, maxSeq);
-    await centrifugo.publishUnreadCount(auth.appId, auth.userId!, channelId, 0);
-    await centrifugo.publishTotalUnreadCount(auth.appId, auth.userId!, totalUnread);
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'read_state',
+        aggregateId: channelId,
+        eventType: 'read.updated',
+        channels: [chatChannel(auth.appId, channelId)],
+        payload: { channelId, userId: auth.userId, lastReadSeq: maxSeq },
+      });
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'channel_member',
+        aggregateId: channelId,
+        eventType: 'channel.unread_changed',
+        channels: [userChannel(auth.appId, auth.userId!)],
+        payload: { channelId, count: 0 },
+      });
+      await enqueueDomainRealtimeEvent(client, {
+        appId: auth.appId,
+        aggregateType: 'user_unread',
+        aggregateId: auth.userId!,
+        eventType: 'channel.total_unread_changed',
+        channels: [userChannel(auth.appId, auth.userId!)],
+        payload: { count: totalUnread },
+      });
+
+      return totalUnread;
+    });
+
+    triggerRealtimeOutboxDrainSafely();
 
     return c.json({ success: true, lastReadSeq: maxSeq });
   }
@@ -747,6 +1045,9 @@ channelRoutes.post(
 channelRoutes.patch(
   '/:channelId/star',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation, (c) => ({ channelId: c.req.param('channelId') })),
   zValidator('json', z.object({ starred: z.boolean() })),
   async (c) => {
     const auth = c.get('auth');
@@ -783,6 +1084,9 @@ channelRoutes.patch(
 channelRoutes.patch(
   '/:channelId/mute',
   requireUser,
+  requireScope('chat:write'),
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation, (c) => ({ channelId: c.req.param('channelId') })),
   zValidator('json', z.object({ muted: z.boolean() })),
   async (c) => {
     const auth = c.get('auth');

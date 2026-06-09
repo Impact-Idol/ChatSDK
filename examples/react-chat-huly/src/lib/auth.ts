@@ -50,20 +50,14 @@ export const DEMO_USERS: DemoUser[] = [
 export async function generateChatTokens(user: DemoUser): Promise<ChatTokens> {
   const config = getApiConfig();
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  // Add API key if configured
-  if (config.apiKey) {
-    headers['X-API-Key'] = config.apiKey;
-  }
-
-  const response = await fetch(`${config.apiUrl}/tokens`, {
+  const response = await fetch(config.tokenUrl, {
     method: 'POST',
-    headers,
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
       userId: user.id,
+      displayName: user.name,
       name: user.name,
       image: user.image,
     }),
@@ -74,7 +68,13 @@ export async function generateChatTokens(user: DemoUser): Promise<ChatTokens> {
     throw new Error(`Failed to generate tokens: ${error.error?.message || response.statusText}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  return {
+    token: data.token,
+    wsToken: data.wsToken ?? data._internal?.wsToken ?? data.token,
+    user: data.user ?? user,
+    expiresIn: data.expiresIn ?? 900,
+  };
 }
 
 /**

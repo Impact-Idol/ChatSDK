@@ -247,29 +247,16 @@ import { ChatClient } from '@chatsdk/core';
 import { ChatProvider } from '@chatsdk/react';
 
 function App() {
-  const [chatTokens, setChatTokens] = useState(null);
-
-  useEffect(() => {
-    // Fetch tokens from YOUR backend
-    async function initChat() {
-      const response = await fetch('/api/auth/chat-token', {
-        credentials: 'include' // Include your auth cookies
-      });
-      const tokens = await response.json();
-      setChatTokens(tokens);
-    }
-
-    initChat();
-  }, []);
-
-  if (!chatTokens) return <div>Loading chat...</div>;
-
   return (
     <ChatProvider
       apiUrl="https://your-chatsdk-instance.com/api"
       wsUrl="wss://your-chatsdk-instance.com/ws"
-      token={chatTokens.token}
-      wsToken={chatTokens.wsToken}
+      tokenProvider={() =>
+        fetch('/api/auth/chat-token', {
+          method: 'POST',
+          credentials: 'include'
+        }).then((response) => response.json())
+      }
     >
       <YourChatUI />
     </ChatProvider>

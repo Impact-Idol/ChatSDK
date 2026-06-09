@@ -52,10 +52,11 @@ templatesRoutes.post(
 
     const result = await db.query(
       `INSERT INTO workspace_template
-       (name, description, category, icon, config, channels, roles, settings, is_public, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (app_id, name, description, category, icon, config, channels, roles, settings, is_public, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
+        auth.appId,
         body.name,
         body.description || null,
         body.category || null,
@@ -101,9 +102,10 @@ templatesRoutes.get(
     const isPublic = c.req.query('isPublic');
     const sortBy = c.req.query('sortBy') || 'created_at'; // created_at, usage_count
 
-    let query = 'SELECT * FROM workspace_template WHERE 1=1';
-    const params: any[] = [];
-    let paramCount = 1;
+    const auth = c.get('auth');
+    let query = 'SELECT * FROM workspace_template WHERE (app_id = $1 OR (app_id IS NULL AND is_public = true))';
+    const params: any[] = [auth.appId];
+    let paramCount = 2;
 
     if (category) {
       query += ` AND category = $${paramCount++}`;
@@ -156,8 +158,8 @@ templatesRoutes.get(
     const templateId = c.req.param('id');
 
     const result = await db.query(
-      'SELECT * FROM workspace_template WHERE id = $1',
-      [templateId]
+      'SELECT * FROM workspace_template WHERE id = $1 AND (app_id = $2 OR (app_id IS NULL AND is_public = true))',
+      [templateId, c.get('auth').appId]
     );
 
     if (result.rows.length === 0) {
@@ -199,8 +201,8 @@ templatesRoutes.post(
 
     // Get template
     const templateResult = await db.query(
-      'SELECT * FROM workspace_template WHERE id = $1',
-      [body.templateId]
+      'SELECT * FROM workspace_template WHERE id = $1 AND (app_id = $2 OR (app_id IS NULL AND is_public = true))',
+      [body.templateId, auth.appId]
     );
 
     if (templateResult.rows.length === 0) {
@@ -271,8 +273,8 @@ templatesRoutes.post(
 
     // Increment template usage count
     await db.query(
-      'UPDATE workspace_template SET usage_count = usage_count + 1 WHERE id = $1',
-      [body.templateId]
+      'UPDATE workspace_template SET usage_count = usage_count + 1 WHERE id = $1 AND (app_id = $2 OR (app_id IS NULL AND is_public = true))',
+      [body.templateId, auth.appId]
     );
 
     return c.json({
@@ -356,9 +358,9 @@ templatesRoutes.patch(
     const result = await db.query(
       `UPDATE workspace_template
        SET ${updates.join(', ')}
-       WHERE id = $${paramCount}
+       WHERE id = $${paramCount} AND app_id = $${paramCount + 1}
        RETURNING *`,
-      values
+      [...values, auth.appId]
     );
 
     if (result.rows.length === 0) {
@@ -387,11 +389,12 @@ templatesRoutes.delete(
   '/:id',
   requireUser,
   async (c) => {
+    const auth = c.get('auth');
     const templateId = c.req.param('id');
 
     const result = await db.query(
-      'DELETE FROM workspace_template WHERE id = $1 RETURNING id',
-      [templateId]
+      'DELETE FROM workspace_template WHERE id = $1 AND app_id = $2 RETURNING id',
+      [templateId, auth.appId]
     );
 
     if (result.rows.length === 0) {

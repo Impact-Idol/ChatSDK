@@ -69,10 +69,10 @@ Create `src/services/chatService.ts`:
 import { ChatSDK } from '@chatsdk/core';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Tokens } from '@chatsdk/core';
+import type { ChatClient, ChatTokenSet } from '@chatsdk/core';
 
 class ChatService {
-  private sdk: ChatSDK | null = null;
+  private sdk: ChatClient | null = null;
   private messageListeners: ((message: any) => void)[] = [];
 
   async initialize(userID: string) {
@@ -83,50 +83,23 @@ class ChatService {
       throw new Error('No authentication tokens found. Please login first.');
     }
 
-    // Create SDK instance
-    this.sdk = new ChatSDK({
-      apiUrl: 'https://your-api.com', // Replace with your backend URL
+    const connectedClient = await ChatSDK.connect({
+      tokenProvider: async () => tokens,
+      userId: userID,
+      apiUrl: 'https://your-api.com',
       wsUrl: 'wss://your-api.com/ws',
-
-      // Auto-refresh tokens (proactive, 5 min before expiry)
-      onTokenRefresh: async (newTokens) => {
-        console.log('✅ Tokens auto-refreshed!');
-        await this.saveTokens(newTokens);
-      },
-
-      // Handle refresh errors
-      onRefreshError: async (error) => {
-        console.error('Token refresh failed:', error);
-        // Clear invalid tokens and redirect to login
-        await this.clearTokens();
-        // TODO: Navigate to login screen
-      },
-
-      // Connection state changes
-      onConnectionStateChange: (state) => {
-        console.log('Connection state:', state);
-        // TODO: Update UI connection indicator
-      },
     });
 
-    // Listen for incoming messages
-    this.sdk.onMessage((message) => {
+    this.sdk = connectedClient;
+    this.sdk.on('message.new', (message) => {
       this.messageListeners.forEach((listener) => listener(message));
-    });
-
-    // Connect to WebSocket
-    await this.sdk.connect({
-      userID,
-      token: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
     });
 
     return this.sdk;
   }
 
   // Token management
-  private async saveTokens(tokens: Tokens) {
+  private async saveTokens(tokens: ChatTokenSet) {
     try {
       // Use SecureStore for sensitive tokens
       await SecureStore.setItemAsync('chatTokens', JSON.stringify(tokens));
@@ -137,7 +110,7 @@ class ChatService {
     }
   }
 
-  private async loadTokens(): Promise<Tokens | null> {
+  private async loadTokens(): Promise<ChatTokenSet | null> {
     try {
       const stored = await SecureStore.getItemAsync('chatTokens');
       return stored ? JSON.parse(stored) : null;
