@@ -17,6 +17,26 @@ interface ChatRoomProps {
   onOpenThread?: (message: Message, channelId: string) => void;
 }
 
+function getMemberId(member: NonNullable<Channel['members']>[number]) {
+  return member.user_id ?? (member as unknown as { id?: string }).id ?? member.user?.id;
+}
+
+function getMemberName(member: NonNullable<Channel['members']>[number]) {
+  return member.user?.name ?? (member as unknown as { name?: string }).name ?? getMemberId(member);
+}
+
+function getChannelDisplayName(channel: Channel, currentUserId?: string) {
+  if (channel.name) return channel.name;
+
+  if (channel.type === 'messaging') {
+    const otherMember = channel.members?.find((member) => getMemberId(member) !== currentUserId);
+    const otherName = otherMember ? getMemberName(otherMember) : null;
+    return otherName || 'Direct message';
+  }
+
+  return 'Unnamed channel';
+}
+
 export function ChatRoom({ channel, onOpenThread }: ChatRoomProps) {
   const client = useChatClient();
   const { messages, loading, hasMore, loadMore, sendMessage, addReaction, removeReaction } = useMessages(channel.id);
@@ -152,12 +172,12 @@ export function ChatRoom({ channel, onOpenThread }: ChatRoomProps) {
   };
 
   return (
-    <div className="chat-area">
+    <div className={`chat-area ${showMemberList ? 'members-open' : ''}`}>
       {/* Header */}
       <div className="chat-header">
         <div className="header-left">
           <div className="channel-title">
-            <h2># {channel.name || 'Unnamed Channel'}</h2>
+            <h2>{channel.type === 'messaging' ? '' : '# '}{getChannelDisplayName(channel, client.user?.id)}</h2>
             {channel.description && (
               <p className="channel-description">{channel.description}</p>
             )}

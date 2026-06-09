@@ -92,6 +92,18 @@ channelRoutes.post(
       return c.redirect(`/api/channels/${channelId}`, 303);
     }
 
+    if (body.type === 'messaging') {
+      const targetUserId = body.memberIds[0];
+      const targetUser = await db.query(
+        'SELECT id FROM app_user WHERE app_id = $1 AND id = $2',
+        [auth.appId, targetUserId]
+      );
+
+      if (targetUser.rows.length === 0) {
+        return c.json({ error: { message: 'User not found' } }, 404);
+      }
+    }
+
     if (body.workspaceId) {
       const workspaceAccess = await db.query(
         `SELECT w.id

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useChatContext } from '@chatsdk/react';
 
 interface CreateChannelModalProps {
@@ -6,13 +6,10 @@ interface CreateChannelModalProps {
   onChannelCreated: () => void;
 }
 
-// Demo users for DM selection
-const DEMO_USERS = [
-  { id: 'user-2', name: 'Bob Smith' },
-  { id: 'user-3', name: 'Carol Williams' },
-  { id: 'demo-user-2', name: 'Alice Johnson' },
-  { id: 'demo-user-3', name: 'Bob Smith (Demo)' },
-];
+interface DemoUser {
+  id: string;
+  name: string;
+}
 
 export function CreateChannelModal({ onClose, onChannelCreated }: CreateChannelModalProps) {
   const { client } = useChatContext();
@@ -20,9 +17,50 @@ export function CreateChannelModal({ onClose, onChannelCreated }: CreateChannelM
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState(DEMO_USERS[0]?.id || '');
+  const [users, setUsers] = useState<DemoUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!client || channelType !== 'messaging') return;
+
+    let cancelled = false;
+
+    async function loadUsers() {
+      setLoadingUsers(true);
+      setError(null);
+
+      try {
+        const result = await client!.fetch<{ users: DemoUser[] }>('/api/users?limit=100');
+        if (cancelled) return;
+
+        const otherUsers = result.users.filter((user) => user.id !== client!.user?.id);
+        setUsers(otherUsers);
+        setSelectedUserId((current) =>
+          current && otherUsers.some((user) => user.id === current)
+            ? current
+            : otherUsers[0]?.id ?? ''
+        );
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Load users error:', err);
+          setError(err instanceof Error ? err.message : 'Failed to load users');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingUsers(false);
+        }
+      }
+    }
+
+    loadUsers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, channelType]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,15 +83,24 @@ export function CreateChannelModal({ onClose, onChannelCreated }: CreateChannelM
         throw new Error('User not authenticated. Please refresh the page.');
       }
 
-      await client.fetch('/api/channels', {
-        method: 'POST',
-        body: JSON.stringify({
-          type: channelType, // 'group' or 'messaging'
-          name: channelType === 'group' ? name.trim() : undefined,
-          memberIds: channelType === 'messaging' ? [selectedUserId] : [],
-          description: channelType === 'group' && isPrivate ? 'Private channel' : undefined,
-        }),
-      });
+      if (channelType === 'messaging') {
+        await client.createChannel({
+          type: 'messaging',
+          memberIds: [selectedUserId],
+        });
+      } else {
+        await client.fetch('/api/channels', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'group',
+            name: name.trim(),
+            memberIds: [],
+            description: description.trim() || undefined,
+            config: { private: isPrivate },
+            idempotencyKey: `demo-group:${client.user!.id}:${name.trim().toLowerCase()}`,
+          }),
+        });
+      }
 
       onChannelCreated();
       onClose();
@@ -176,15 +223,20 @@ export function CreateChannelModal({ onClose, onChannelCreated }: CreateChannelM
                 value={selectedUserId}
                 onChange={(e) => setSelectedUserId(e.target.value)}
                 className="user-select"
+                disabled={loadingUsers || users.length === 0}
               >
-                {DEMO_USERS.map((user) => (
+                {users.map((user) => (
                   <option key={user.id} value={user.id}>
                     {user.name}
                   </option>
                 ))}
               </select>
               <p className="help-text">
-                Start a direct message with this user
+                {loadingUsers
+                  ? 'Loading users...'
+                  : users.length === 0
+                    ? 'No other users are available for a direct message'
+                    : 'Start a direct message with this user'}
               </p>
             </div>
           )}
@@ -196,7 +248,11 @@ export function CreateChannelModal({ onClose, onChannelCreated }: CreateChannelM
             <button
               type="submit"
               className="btn-primary"
-              disabled={creating || (channelType === 'group' && !name.trim())}
+              disabled={
+                creating ||
+                (channelType === 'group' && !name.trim()) ||
+                (channelType === 'messaging' && (!selectedUserId || loadingUsers))
+              }
             >
               {creating ? 'Creating...' : channelType === 'group' ? 'Create Channel' : 'Create DM'}
             </button>
