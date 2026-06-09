@@ -90,11 +90,12 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
     mockQuery.mockReset();
   });
 
-  it('AC1: should update workspace member role successfully with API key auth', async () => {
+  it('AC1: should update workspace member role successfully with owner bearer auth', async () => {
     const token = await generateToken(OWNER_USER_ID, TEST_APP_ID);
 
+    let workspaceMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -103,9 +104,12 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
       if (sql.includes('SELECT 1 FROM workspace WHERE id')) {
         return { rows: [{ '?column?': 1 }] };
       }
-      // Target member exists (with API key auth, permission check is skipped,
-      // so the only workspace_member query is for the target user)
+      // First call: caller permission check, Second call: target member check
       if (sql.includes('SELECT role FROM workspace_member')) {
+        workspaceMemberQueryCount++;
+        if (workspaceMemberQueryCount === 1) {
+          return { rows: [{ role: 'owner' }] };
+        }
         return { rows: [{ role: 'member' }] };
       }
       // Update role
@@ -120,7 +124,6 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
       'PATCH',
       token,
       { role: 'admin' },
-      TEST_API_KEY,
     );
 
     expect(res.status).toBe(200);
@@ -129,11 +132,11 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
     expect(data.role).toBe('admin');
   });
 
-  it('AC3: API key auth bypasses per-user permission checks for workspace role update', async () => {
+  it('AC3: mixed API key and bearer headers do not bypass workspace role checks', async () => {
     const token = await generateToken(MEMBER_USER_ID, TEST_APP_ID);
 
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -152,8 +155,6 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
       return { rows: [] };
     });
 
-    // With API key auth, even a member-role user can update roles
-    // because isAppLevelAuth() bypasses per-user permission checks
     const res = await makeRequest(
       `/api/workspaces/${TEST_WORKSPACE_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
@@ -162,14 +163,55 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
       TEST_API_KEY,
     );
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    expect(mockQuery.mock.calls.some((call: any[]) => String(call[0]).includes('UPDATE workspace_member SET role'))).toBe(false);
+  });
+
+  it('does not allow workspace admins to promote members to owner', async () => {
+    const token = await generateToken(ADMIN_USER_ID, TEST_APP_ID);
+
+    let workspaceMemberQueryCount = 0;
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id, name, image_url FROM app_user')) {
+        return { rows: [{ id: ADMIN_USER_ID, name: 'Admin', image_url: null }] };
+      }
+      if (sql.includes('SELECT 1 FROM workspace WHERE id')) {
+        return { rows: [{ '?column?': 1 }] };
+      }
+      if (sql.includes('SELECT role FROM workspace_member')) {
+        workspaceMemberQueryCount++;
+        if (workspaceMemberQueryCount === 1) {
+          return { rows: [{ role: 'admin' }] };
+        }
+        return { rows: [{ role: 'member' }] };
+      }
+      if (sql.includes('UPDATE workspace_member SET role')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+
+    const res = await makeRequest(
+      `/api/workspaces/${TEST_WORKSPACE_ID}/members/${TARGET_USER_ID}`,
+      'PATCH',
+      token,
+      { role: 'owner' },
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toBe('Only owners can grant owner role');
+    expect(mockQuery.mock.calls.some((call: any[]) => String(call[0]).includes('UPDATE workspace_member SET role'))).toBe(false);
   });
 
   it('AC5: should not allow demoting the last owner', async () => {
     const token = await generateToken(OWNER_USER_ID, TEST_APP_ID);
 
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -197,8 +239,7 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
       `/api/workspaces/${TEST_WORKSPACE_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'member' },
-      TEST_API_KEY,
+      { role: 'member' }
     );
 
     expect(res.status).toBe(400);
@@ -209,8 +250,9 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
   it('AC6: should return 404 if the target member does not exist', async () => {
     const token = await generateToken(OWNER_USER_ID, TEST_APP_ID);
 
+    let workspaceMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -219,13 +261,12 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
       if (sql.includes('SELECT 1 FROM workspace WHERE id')) {
         return { rows: [{ '?column?': 1 }] };
       }
-      // Target member does not exist
-      if (sql.includes('SELECT role FROM workspace_member') && sql.includes('user_id = $3')) {
-        return { rows: [] };
-      }
-      // Caller is owner
       if (sql.includes('SELECT role FROM workspace_member')) {
-        return { rows: [{ role: 'owner' }] };
+        workspaceMemberQueryCount++;
+        if (workspaceMemberQueryCount === 1) {
+          return { rows: [{ role: 'owner' }] };
+        }
+        return { rows: [] };
       }
       return { rows: [] };
     });
@@ -234,22 +275,17 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
       `/api/workspaces/${TEST_WORKSPACE_ID}/members/nonexistent-user`,
       'PATCH',
       token,
-      { role: 'admin' },
-      TEST_API_KEY,
+      { role: 'admin' }
     );
 
     expect(res.status).toBe(404);
   });
 
-  // Note: Workspace role hierarchy enforcement is not needed because
-  // isAppLevelAuth() always returns true (API key is mandatory for all requests),
-  // which bypasses per-user permission checks. Hierarchy is enforced on channels only.
-
   it('should validate role value', async () => {
     const token = await generateToken(OWNER_USER_ID, TEST_APP_ID);
 
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -263,7 +299,6 @@ describe('PATCH /api/workspaces/:id/members/:userId', () => {
       'PATCH',
       token,
       { role: 'superadmin' }, // Invalid role
-      TEST_API_KEY,
     );
 
     expect(res.status).toBe(400);
@@ -284,7 +319,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -309,8 +344,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'moderator' },
-      TEST_API_KEY,
+      { role: 'moderator' }
     );
 
     expect(res.status).toBe(200);
@@ -323,7 +357,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
     const token = await generateToken(MEMBER_USER_ID, TEST_APP_ID);
 
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -340,8 +374,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'moderator' },
-      TEST_API_KEY,
+      { role: 'moderator' }
     );
 
     expect(res.status).toBe(403);
@@ -354,7 +387,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -374,8 +407,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'owner' },
-      TEST_API_KEY,
+      { role: 'owner' }
     );
 
     expect(res.status).toBe(403);
@@ -386,7 +418,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -406,8 +438,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'admin' },
-      TEST_API_KEY,
+      { role: 'admin' }
     );
 
     expect(res.status).toBe(403);
@@ -418,7 +449,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -441,8 +472,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'moderator' },
-      TEST_API_KEY,
+      { role: 'moderator' }
     );
 
     expect(res.status).toBe(200);
@@ -453,7 +483,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -476,8 +506,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'member' },
-      TEST_API_KEY,
+      { role: 'member' }
     );
 
     expect(res.status).toBe(200);
@@ -488,7 +517,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -508,11 +537,47 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'owner' },
-      TEST_API_KEY,
+      { role: 'owner' }
     );
 
     expect(res.status).toBe(403);
+  });
+
+  it('should prevent admin from demoting an owner', async () => {
+    const token = await generateToken(ADMIN_USER_ID, TEST_APP_ID);
+
+    let channelMemberQueryCount = 0;
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id, name, image_url FROM app_user')) {
+        return { rows: [{ id: ADMIN_USER_ID, name: 'Admin', image_url: null }] };
+      }
+      if (sql.includes('SELECT role FROM channel_member')) {
+        channelMemberQueryCount++;
+        if (channelMemberQueryCount === 1) {
+          return { rows: [{ role: 'admin' }] };
+        }
+        return { rows: [{ role: 'owner' }] };
+      }
+      if (sql.includes('UPDATE channel_member SET role')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+
+    const res = await makeRequest(
+      `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
+      'PATCH',
+      token,
+      { role: 'member' }
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toBe('Cannot modify a member with equal or higher role');
+    expect(mockQuery.mock.calls.some((call: any[]) => String(call[0]).includes('UPDATE channel_member SET role'))).toBe(false);
   });
 
   it('should allow admin to assign admin, moderator, or member role', async () => {
@@ -521,7 +586,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -544,8 +609,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/${TARGET_USER_ID}`,
       'PATCH',
       token,
-      { role: 'moderator' },
-      TEST_API_KEY,
+      { role: 'moderator' }
     );
 
     expect(res.status).toBe(200);
@@ -556,7 +620,7 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
       if (sql.includes('SELECT id, name, image_url FROM app_user')) {
@@ -577,10 +641,55 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
       `/api/channels/${TEST_CHANNEL_ID}/members/nonexistent-user`,
       'PATCH',
       token,
-      { role: 'moderator' },
-      TEST_API_KEY,
+      { role: 'moderator' }
     );
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe('DELETE /api/channels/:channelId/members/:userId', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+  });
+
+  it('should prevent admin from removing a channel owner', async () => {
+    const token = await generateToken(ADMIN_USER_ID, TEST_APP_ID);
+
+    let channelMemberQueryCount = 0;
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id, name, image_url FROM app_user')) {
+        return { rows: [{ id: ADMIN_USER_ID, name: 'Admin', image_url: null }] };
+      }
+      if (sql.includes('SELECT role FROM channel_member')) {
+        channelMemberQueryCount++;
+        if (channelMemberQueryCount === 1) {
+          return { rows: [{ role: 'owner' }] };
+        }
+        return { rows: [{ role: 'admin' }] };
+      }
+      if (sql.includes('DELETE FROM channel_member')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+
+    const res = await app.request(
+      `/api/channels/${TEST_CHANNEL_ID}/members/${OWNER_USER_ID}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toBe('Cannot remove a member with equal or higher role');
+    expect(mockQuery.mock.calls.some((call: any[]) => String(call[0]).includes('DELETE FROM channel_member'))).toBe(false);
   });
 });

@@ -5,7 +5,6 @@ import { api } from '../services/api';
 import { handleApiError } from '../utils/errorHandler';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5500';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
@@ -45,7 +44,7 @@ export default function Dashboard() {
 
   if (loading || !dashboardData) {
     return (
-      <ChatProvider apiKey={API_KEY} apiUrl={API_URL}>
+      <ChatProvider apiUrl={API_URL}>
         <div className="loading-container">
           <div className="spinner"></div>
         </div>
@@ -54,7 +53,7 @@ export default function Dashboard() {
   }
 
   return (
-    <ChatProvider apiKey={API_KEY} apiUrl={API_URL}>
+    <ChatProvider apiUrl={API_URL}>
       <DashboardComponent
         stats={dashboardData.stats}
         messageChart={dashboardData.messageChart}

@@ -3,7 +3,7 @@
  * Exports client and all functions
  */
 
-export { inngest } from './client';
+export { inngest, inngestConfigured, sendInngestEvent } from './client';
 export { notificationFunctions } from './functions/notifications';
 export { generateLinkPreview } from './functions/link-preview';
 

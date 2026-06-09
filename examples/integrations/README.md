@@ -38,7 +38,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
-  const response = await fetch(`${process.env.CHATSDK_API_URL}/tokens`, {
+  const response = await fetch(`${process.env.CHATSDK_API_URL}/api/auth/connect`, {
     method: 'POST',
     headers: {
       'X-API-Key': process.env.CHATSDK_API_KEY!,
@@ -46,8 +46,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     },
     body: JSON.stringify({
       userId: session.user.id || session.user.email,
-      name: session.user.name,
-      image: session.user.image,
+      displayName: session.user.name,
+      avatar: session.user.image,
     }),
   });
 
@@ -127,7 +127,7 @@ const checkJwt = auth({
 });
 
 router.post('/api/chatsdk/token', checkJwt, async (req, res) => {
-  const response = await fetch(`${process.env.CHATSDK_API_URL}/tokens`, {
+  const response = await fetch(`${process.env.CHATSDK_API_URL}/api/auth/connect`, {
     method: 'POST',
     headers: {
       'X-API-Key': process.env.CHATSDK_API_KEY,
@@ -135,7 +135,7 @@ router.post('/api/chatsdk/token', checkJwt, async (req, res) => {
     },
     body: JSON.stringify({
       userId: req.auth.sub,
-      name: req.auth.name,
+      displayName: req.auth.name,
     }),
   });
 
@@ -218,7 +218,7 @@ ChatSDK hooks use tokens automatically
 # After running bootstrap.mjs, check:
 cat ../credentials/app-*.json
 
-# Use the "apiKey" field
+# Use the "apiKey" field only on your backend token route
 ```
 
 ---
@@ -231,9 +231,9 @@ cat ../credentials/app-*.json
 **Fix:**
 ```bash
 # Test token endpoint
-curl -X POST http://localhost:5500/tokens \
+curl -X POST http://localhost:5500/api/auth/connect \
   -H "X-API-Key: your-api-key" \
-  -d '{"userId": "test", "name": "Test"}'
+  -d '{"userId": "test", "displayName": "Test"}'
 ```
 
 ### "Not authenticated"

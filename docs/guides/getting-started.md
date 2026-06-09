@@ -5,8 +5,7 @@ This guide will help you integrate ChatSDK into your application.
 ## Prerequisites
 
 - Node.js 18+
-- A ChatSDK API key
-- Backend server running (see [Server Setup](./server-setup.md))
+- Backend server running with a chat token endpoint (see [Server Setup](./server-setup.md))
 
 ## Installation
 
@@ -43,12 +42,19 @@ dependencies: [
 ## Initialize the Client
 
 ```typescript
-import { ChatClient } from '@chatsdk/core';
+import { createChatClient } from '@chatsdk/core';
 
-const client = new ChatClient({
-  apiKey: 'your-api-key',
+const client = createChatClient({
   apiUrl: 'https://api.your-server.com',
   wsUrl: 'wss://ws.your-server.com/connection/websocket',
+  tokenProvider: async (user) => {
+    const response = await fetch('/api/chat-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user?.id }),
+    });
+    return response.json();
+  },
   debug: true, // Enable for development
   enableOfflineSupport: true,
 });
@@ -58,7 +64,8 @@ const client = new ChatClient({
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `apiKey` | string | required | Your API key |
+| `tokenProvider` | function | required for browser clients | Fetches chat tokens from your backend |
+| `apiKey` | string | optional, deprecated | Server/app API key for legacy server-side clients only |
 | `apiUrl` | string | `http://localhost:5500` | API server URL |
 | `wsUrl` | string | `ws://localhost:8000/connection/websocket` | WebSocket URL |
 | `debug` | boolean | `false` | Enable debug logging |
@@ -67,24 +74,15 @@ const client = new ChatClient({
 
 ## Connect a User
 
-Users must be authenticated before using the SDK. Get a JWT token from your backend:
+Users must be authenticated before using the SDK. With `tokenProvider`, the SDK gets chat tokens from your backend when connecting:
 
 ```typescript
-// Get token from your backend
-const response = await fetch('/api/auth/chat-token', {
-  method: 'POST',
-  headers: { 'Authorization': `Bearer ${yourAuthToken}` },
-});
-const { token } = await response.json();
-
-// Connect with the token
 const user = await client.connectUser(
   {
     id: 'user-123',
     name: 'Alice Johnson',
     image: 'https://example.com/alice.jpg',
-  },
-  token
+  }
 );
 
 console.log('Connected as:', user.name);

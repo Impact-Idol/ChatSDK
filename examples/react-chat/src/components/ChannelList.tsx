@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useChannels, useSearch } from '@chatsdk/react';
+import { useChannels, useChatContext } from '@chatsdk/react';
 import type { Channel } from '@chatsdk/core';
 import { CreateChannelModal } from './CreateChannelModal';
 
@@ -10,7 +10,28 @@ interface ChannelListProps {
 
 type FilterType = 'all' | 'unread' | 'direct' | 'groups';
 
+function getMemberId(member: NonNullable<Channel['members']>[number]) {
+  return member.user_id ?? (member as unknown as { id?: string }).id ?? member.user?.id;
+}
+
+function getMemberName(member: NonNullable<Channel['members']>[number]) {
+  return member.user?.name ?? (member as unknown as { name?: string }).name ?? getMemberId(member);
+}
+
+function getChannelDisplayName(channel: Channel, currentUserId?: string) {
+  if (channel.name) return channel.name;
+
+  if (channel.type === 'messaging') {
+    const otherMember = channel.members?.find((member) => getMemberId(member) !== currentUserId);
+    const otherName = otherMember ? getMemberName(otherMember) : null;
+    return otherName || 'Direct message';
+  }
+
+  return 'Unnamed channel';
+}
+
 export function ChannelList({ selectedId, onSelect }: ChannelListProps) {
+  const { client } = useChatContext();
   const { channels, loading, error, refresh } = useChannels();
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
@@ -23,7 +44,7 @@ export function ChannelList({ selectedId, onSelect }: ChannelListProps) {
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       result = result.filter((c) =>
-        c.name?.toLowerCase().includes(query) ||
+        getChannelDisplayName(c, client?.user?.id).toLowerCase().includes(query) ||
         c.description?.toLowerCase().includes(query)
       );
     }
@@ -171,7 +192,7 @@ export function ChannelList({ selectedId, onSelect }: ChannelListProps) {
             </div>
             <div className="channel-info">
               <div className="channel-name-row">
-                <span className="channel-name">{channel.name || 'Unnamed'}</span>
+                <span className="channel-name">{getChannelDisplayName(channel, client?.user?.id)}</span>
                 <span className="channel-time">{formatLastMessage(channel)}</span>
               </div>
               {channel.last_message && (

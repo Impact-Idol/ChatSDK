@@ -16,8 +16,9 @@ import React, {
 import {
   ChatClient,
   createChatClient,
-  ConnectionState,
-  type ChatClientOptions,
+  type ChatTokenSet,
+  type ChatTokenProvider,
+  type ConnectionState,
   type User,
 } from '@chatsdk/core';
 
@@ -28,7 +29,7 @@ interface ChatContextValue {
   isConnected: boolean;
   isConnecting: boolean;
   reconnectIn: number | null;
-  connectUser: (user: { id: string; name?: string; image?: string }, token: string | { token: string; wsToken: string }) => Promise<User>;
+  connectUser: (user: { id: string; name?: string; image?: string }, token?: string | ChatTokenSet) => Promise<User>;
   disconnect: () => Promise<void>;
 }
 
@@ -36,7 +37,13 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 
 export interface ChatProviderProps {
   children: ReactNode;
-  apiKey: string;
+  client?: ChatClient;
+  /**
+   * Ignored in browser clients. Use tokenProvider instead.
+   * @deprecated ChatProvider is a client component and never sends app API keys.
+   */
+  apiKey?: string;
+  tokenProvider?: ChatTokenProvider;
   apiUrl?: string;
   wsUrl?: string;
   debug?: boolean;
@@ -47,21 +54,23 @@ export interface ChatProviderProps {
  *
  * @example
  * ```tsx
- * <ChatProvider apiKey="your-api-key">
+ * <ChatProvider tokenProvider={() => fetch('/api/chat-token').then((res) => res.json())}>
  *   <App />
  * </ChatProvider>
  * ```
  */
 export function ChatProvider({
   children,
-  apiKey,
+  client: providedClient,
+  apiKey: _apiKey,
+  tokenProvider,
   apiUrl,
   wsUrl,
   debug,
 }: ChatProviderProps) {
   const [client] = useState(() =>
-    createChatClient({
-      apiKey,
+    providedClient ?? createChatClient({
+      tokenProvider,
       apiUrl,
       wsUrl,
       debug,
@@ -69,28 +78,28 @@ export function ChatProvider({
   );
 
   const [user, setUser] = useState<User | null>(null);
-  const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [reconnectIn, setReconnectIn] = useState<number | null>(null);
 
   // Set up connection state listeners
   useEffect(() => {
     const unsubConnecting = client.on('connection.connecting', () => {
-      setConnectionState(ConnectionState.CONNECTING);
+      setConnectionState('connecting');
     });
 
     const unsubConnected = client.on('connection.connected', () => {
-      setConnectionState(ConnectionState.CONNECTED);
+      setConnectionState('connected');
       setReconnectIn(null);
     });
 
     const unsubDisconnected = client.on('connection.disconnected', () => {
-      setConnectionState(ConnectionState.DISCONNECTED);
+      setConnectionState('disconnected');
       setReconnectIn(null);
       setUser(null);
     });
 
     const unsubReconnecting = client.on('connection.reconnecting', (data) => {
-      setConnectionState(ConnectionState.RECONNECTING);
+      setConnectionState('reconnecting');
       setReconnectIn(data.reconnectIn ?? null);
     });
 
@@ -103,7 +112,7 @@ export function ChatProvider({
   }, [client]);
 
   const connectUser = useCallback(
-    async (userData: { id: string; name?: string; image?: string }, token: string | { token: string; wsToken: string }) => {
+    async (userData: { id: string; name?: string; image?: string }, token?: string | ChatTokenSet) => {
       const connectedUser = await client.connectUser(userData, token);
       setUser(connectedUser);
       return connectedUser;
@@ -121,8 +130,8 @@ export function ChatProvider({
       client,
       user,
       connectionState,
-      isConnected: connectionState === ConnectionState.CONNECTED,
-      isConnecting: connectionState === ConnectionState.CONNECTING || connectionState === ConnectionState.RECONNECTING,
+      isConnected: connectionState === 'connected',
+      isConnecting: connectionState === 'connecting' || connectionState === 'reconnecting',
       reconnectIn,
       connectUser,
       disconnect,

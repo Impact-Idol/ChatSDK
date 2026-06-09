@@ -2,12 +2,12 @@
  * ChatSDK Configuration for Next.js
  *
  * This module provides a centralized configuration that works with
- * Next.js environment variables (NEXT_PUBLIC_*).
+ * Next.js public environment variables.
  */
 
 export interface ChatConfig {
   apiUrl: string;
-  apiKey: string;
+  tokenUrl: string;
   wsUrl: string;
   appId: string;
 }
@@ -18,7 +18,7 @@ export interface ChatConfig {
 export function getChatConfig(): ChatConfig {
   return {
     apiUrl: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5500',
-    apiKey: process.env.NEXT_PUBLIC_API_KEY || '',
+    tokenUrl: process.env.NEXT_PUBLIC_CHATSDK_TOKEN_URL || '/api/chatsdk-token',
     wsUrl: process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8001/connection/websocket',
     appId: process.env.NEXT_PUBLIC_APP_ID || 'default',
   };
@@ -34,8 +34,8 @@ export function validateConfig(config: ChatConfig): { valid: boolean; errors: st
     errors.push('NEXT_PUBLIC_API_URL is not set');
   }
 
-  if (!config.apiKey) {
-    errors.push('NEXT_PUBLIC_API_KEY is not set');
+  if (!config.tokenUrl) {
+    errors.push('NEXT_PUBLIC_CHATSDK_TOKEN_URL is not set');
   }
 
   return {

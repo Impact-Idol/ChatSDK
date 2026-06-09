@@ -8,6 +8,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { requireUser } from '../middleware/auth';
 import { db } from '../services/database';
+import { isChannelMember } from '../services/authorization';
 
 export const mentionRoutes = new Hono();
 
@@ -28,10 +29,11 @@ mentionRoutes.get('/', requireUser, async (c) => {
            ch.name as channel_name, ch.type as channel_type,
            um.flags
     FROM mention m
-    JOIN message msg ON m.message_id = msg.id
+    JOIN message msg ON m.app_id = msg.app_id AND m.message_id = msg.id
     JOIN app_user mentioner ON m.app_id = mentioner.app_id AND m.mentioner_user_id = mentioner.id
-    JOIN channel ch ON msg.channel_id = ch.id
-    LEFT JOIN user_message um ON um.message_id = msg.id AND um.user_id = $2
+    JOIN channel ch ON msg.app_id = ch.app_id AND msg.channel_id = ch.id
+    JOIN channel_member cm ON cm.app_id = msg.app_id AND cm.channel_id = msg.channel_id AND cm.user_id = $2
+    LEFT JOIN user_message um ON um.app_id = msg.app_id AND um.message_id = msg.id AND um.user_id = $2
     WHERE m.app_id = $1 AND m.mentioned_user_id = $2
   `;
 
@@ -87,8 +89,9 @@ mentionRoutes.get('/unread-count', requireUser, async (c) => {
   const result = await db.query(
     `SELECT COUNT(*) as count
      FROM mention m
-     JOIN message msg ON m.message_id = msg.id
-     LEFT JOIN user_message um ON um.message_id = msg.id AND um.user_id = $2
+     JOIN message msg ON m.app_id = msg.app_id AND m.message_id = msg.id
+     JOIN channel_member cm ON cm.app_id = msg.app_id AND cm.channel_id = msg.channel_id AND cm.user_id = $2
+     LEFT JOIN user_message um ON um.app_id = msg.app_id AND um.message_id = msg.id AND um.user_id = $2
      WHERE m.app_id = $1
        AND m.mentioned_user_id = $2
        AND (um.flags IS NULL OR (um.flags & 1) = 0)`,
@@ -116,6 +119,10 @@ mentionRoutes.get('/search', requireUser, async (c) => {
   let params: any[];
 
   if (channelId) {
+    if (!(await isChannelMember(auth.appId, auth.userId!, channelId))) {
+      return c.json({ error: { message: 'Not a member of this channel', code: 'FORBIDDEN' } }, 403);
+    }
+
     // Search within channel members only
     sqlQuery = `
       SELECT u.id, u.name, u.image_url as image

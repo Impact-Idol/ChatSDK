@@ -1,0 +1,44 @@
+{
+  "admin": false,
+  "client_insecure": false,
+  "debug": false,
+  "log_level": "info",
+  "health": true,
+  "history_size": 100,
+  "history_ttl": "24h",
+  "presence": true,
+  "join_leave": true,
+  "force_push_join_leave": true,
+  "namespaces": [
+    {
+      "name": "chat",
+      "history_size": 100,
+      "history_ttl": "24h",
+      "presence": true,
+      "join_leave": true,
+      "force_push_join_leave": true
+    },
+    {
+      "name": "presence",
+      "presence": true,
+      "join_leave": true,
+      "force_push_join_leave": true
+    },
+    {
+      "name": "user"
+    },
+    {
+      "name": "workspace",
+      "history_size": 100,
+      "history_ttl": "24h"
+    },
+    {
+      "name": "app",
+      "history_size": 100,
+      "history_ttl": "24h"
+    }
+  ],
+  "http_api": {
+    "enabled": true
+  }
+}

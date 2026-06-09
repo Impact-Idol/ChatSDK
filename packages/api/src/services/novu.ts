@@ -426,7 +426,9 @@ export async function getPreferences(userId: string) {
 
   try {
     const client = getNovu();
-    return client.subscribers.preferences.list(getTenantSubscriberId(userId));
+    return client.subscribers.preferences.list({
+      subscriberId: getTenantSubscriberId(userId),
+    });
   } catch (error) {
     console.error('[ChatSDK Novu] Failed to get preferences:', error instanceof Error ? error.message : error);
     return null;

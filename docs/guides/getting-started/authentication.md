@@ -144,27 +144,20 @@ function App() {
           'Authorization': `Bearer ${yourAuthToken}`,
         },
       });
-      const { accessToken, refreshToken, expiresAt } = await response.json();
-
-      // 2. Initialize ChatSDK with automatic token refresh
-      const chatSDK = new ChatSDK({
+      // 2. Connect with a browser-safe token provider
+      const chatSDK = await ChatSDK.connect({
+        tokenProvider: async () => {
+          const tokenResponse = await fetch('/api/chat/token', {
+            headers: {
+              'Authorization': `Bearer ${yourAuthToken}`,
+            },
+          });
+          if (!tokenResponse.ok) throw new Error('Failed to get chat token');
+          return tokenResponse.json();
+        },
+        userId: 'user-123',
         apiUrl: 'http://localhost:5500',
         wsUrl: 'ws://localhost:8001/connection/websocket',
-
-        // Token refresh callback (saves new tokens)
-        onTokenRefresh: (tokens) => {
-          console.log('✅ Tokens auto-refreshed!');
-          // Save to localStorage or secure storage
-          localStorage.setItem('chatTokens', JSON.stringify(tokens));
-        },
-      });
-
-      // 3. Connect with tokens
-      await chatSDK.connect({
-        userID: 'user-123',
-        token: accessToken,
-        refreshToken: refreshToken,
-        expiresAt: expiresAt,
       });
 
       setSDK(chatSDK);
@@ -188,26 +181,14 @@ const initChat = async () => {
   const response = await fetch('https://yourapi.com/chat/token', {
     headers: { 'Authorization': `Bearer ${authToken}` },
   });
-  const { accessToken, refreshToken, expiresAt } = await response.json();
+  const tokens = await response.json();
 
-  // 2. Initialize ChatSDK
-  const sdk = new ChatSDK({
+  // 2. Connect with a token provider
+  const sdk = await ChatSDK.connect({
+    tokenProvider: async () => tokens,
+    userId: user.id,
     apiUrl: 'https://your-chatsdk-api.com',
     wsUrl: 'wss://your-chatsdk-api.com/ws',
-
-    // Auto-refresh callback
-    onTokenRefresh: async (tokens) => {
-      // Save to secure storage
-      await AsyncStorage.setItem('chatTokens', JSON.stringify(tokens));
-    },
-  });
-
-  // 3. Connect
-  await sdk.connect({
-    userID: user.id,
-    token: accessToken,
-    refreshToken: refreshToken,
-    expiresAt: expiresAt,
   });
 
   return sdk;
@@ -250,33 +231,21 @@ Token Created
 
 **Default (recommended for mobile):**
 ```typescript
-const sdk = new ChatSDK({
+const sdk = await ChatSDK.connect({
+  tokenProvider,
+  userId: user.id,
   apiUrl: 'https://api.yourdomain.com',
   wsUrl: 'wss://api.yourdomain.com/ws',
-
-  // Refresh 5 minutes before expiration (default)
-  refreshBufferMs: 5 * 60 * 1000,
-
-  // Save refreshed tokens
-  onTokenRefresh: (tokens) => {
-    saveTokensSecurely(tokens);
-  },
-
-  // Handle refresh errors
-  onRefreshError: (error) => {
-    console.error('Token refresh failed:', error);
-    // Redirect to login
-    redirectToLogin();
-  },
 });
 ```
 
 **Custom Buffer (e.g., refresh 10 min early):**
 ```typescript
-const sdk = new ChatSDK({
+const sdk = await ChatSDK.connect({
+  tokenProvider,
+  userId: user.id,
   apiUrl: '...',
   wsUrl: '...',
-  refreshBufferMs: 10 * 60 * 1000, // 10 minutes
 });
 ```
 
@@ -303,11 +272,9 @@ const loadTokens = (): Tokens | null => {
 useEffect(() => {
   const tokens = loadTokens();
   if (tokens) {
-    sdk.connect({
-      userID: user.id,
-      token: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
+    ChatSDK.connect({
+      tokenProvider: async () => tokens,
+      userId: user.id,
     });
   }
 }, []);

@@ -23,7 +23,7 @@ import {
 
 export default function SettingsScreen() {
   const user = useCurrentUser();
-  const connectionState = useConnectionState();
+  const { state: connectionState } = useConnectionState();
   const { isOnline, setOnline, setOffline } = usePresence();
 
   const handleLogout = async () => {

@@ -13,14 +13,15 @@ const sdk = await ChatSDK.connect({
 });
 
 // ✅ GOOD: Generate token from your backend
-const response = await fetch('/api/chat/token', {
-  headers: { Authorization: `Bearer ${yourAuthToken}` },
-});
-const { token } = await response.json();
-
 const sdk = await ChatSDK.connect({
   apiUrl: '...',
-  token: token, // ✓ Secure!
+  tokenProvider: async () => {
+    const response = await fetch('/api/chat/token', {
+      headers: { Authorization: `Bearer ${yourAuthToken}` },
+    });
+    if (!response.ok) throw new Error('Failed to get chat token');
+    return response.json();
+  }, // ✓ Secure!
 });
 ```
 

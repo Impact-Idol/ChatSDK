@@ -55,18 +55,67 @@ export interface Reaction {
   users: string[];
 }
 
+export interface ChatTokens {
+  token: string;
+  wsToken: string;
+  expiresIn?: number;
+  expiresAt?: number;
+}
+
+let cachedTokens: ChatTokens | null = null;
+let tokenPromise: Promise<ChatTokens> | null = null;
+
+export async function getChatTokens(
+  userId = 'demo-user-1',
+  displayName = 'Demo User'
+): Promise<ChatTokens> {
+  if (cachedTokens?.expiresAt && cachedTokens.expiresAt - Date.now() > 60000) {
+    return cachedTokens;
+  }
+
+  if (!tokenPromise) {
+    const config = getChatConfig();
+    tokenPromise = fetch(config.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, displayName }),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error('Failed to get ChatSDK token');
+        }
+
+        const data = await response.json();
+        const expiresIn = typeof data.expiresIn === 'number' ? data.expiresIn : 900;
+        cachedTokens = {
+          token: data.token,
+          wsToken: data.wsToken ?? data._internal?.wsToken ?? data.token,
+          expiresIn,
+          expiresAt: Date.now() + expiresIn * 1000,
+        };
+        return cachedTokens;
+      })
+      .finally(() => {
+        tokenPromise = null;
+      });
+  }
+
+  return tokenPromise;
+}
+
 // API functions
 async function apiFetch<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const config = getChatConfig();
+  const tokens = await getChatTokens();
 
   const response = await fetch(`${config.apiUrl}${endpoint}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': config.apiKey,
+      Authorization: `Bearer ${tokens.token}`,
       ...options.headers,
     },
   });
@@ -139,21 +188,6 @@ export async function sendMessage(
 
 // Auth API
 export async function getWsToken(userId: string): Promise<string> {
-  const config = getChatConfig();
-
-  const response = await fetch(`${config.apiUrl}/api/auth/ws-token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': config.apiKey,
-    },
-    body: JSON.stringify({ userId, appId: config.appId }),
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to get WebSocket token');
-  }
-
-  const data = await response.json();
-  return data.token;
+  const tokens = await getChatTokens(userId);
+  return tokens.wsToken;
 }

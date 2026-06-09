@@ -3,31 +3,86 @@
  * MinIO S3-compatible object storage for file uploads
  */
 
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  HeadBucketCommand,
+  CreateBucketCommand,
+  PutBucketPolicyCommand,
+  DeleteBucketPolicyCommand,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { createHash } from 'crypto';
+import { randomBytes } from 'crypto';
+import { Readable } from 'node:stream';
+import { config } from '../config/defaults.js';
 
-// Support both MINIO_* (dev) and S3_* (prod) environment variables
-const S3_ENDPOINT = process.env.S3_ENDPOINT || process.env.MINIO_ENDPOINT || 'http://localhost:9002';
-const S3_REGION = process.env.S3_REGION || 'us-east-1';
-const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY || process.env.MINIO_ACCESS_KEY || 'chatsdk';
-const S3_SECRET_KEY = process.env.S3_SECRET_KEY || process.env.MINIO_SECRET_KEY || 'chatsdk_dev_123';
-const S3_BUCKET = process.env.S3_BUCKET || process.env.MINIO_BUCKET || 'chatsdk';
-const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL || process.env.MINIO_PUBLIC_URL || 'http://localhost:9002';
+const S3_ENDPOINT = config.s3.endpoint;
+const S3_REGION = config.s3.region;
+const S3_ACCESS_KEY = config.s3.accessKeyId;
+const S3_SECRET_KEY = config.s3.secretAccessKey;
+const S3_BUCKET = config.s3.bucket;
+const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL || process.env.MINIO_PUBLIC_URL || S3_ENDPOINT;
+const storageConfigured = Boolean(
+  S3_ENDPOINT && S3_REGION && S3_ACCESS_KEY && S3_SECRET_KEY && S3_BUCKET
+);
 
 // Determine if we need to force path style (required for MinIO, not for AWS S3)
-const isMinIO = S3_ENDPOINT.includes('localhost') || S3_ENDPOINT.includes('minio');
+const forcePathStyle = config.s3.forcePathStyle
+  || S3_ENDPOINT.includes('localhost')
+  || S3_ENDPOINT.includes('minio');
 
-// Initialize S3 client (compatible with AWS S3, MinIO, DigitalOcean Spaces, Cloudflare R2, etc.)
-const s3Client = new S3Client({
-  endpoint: S3_ENDPOINT,
-  region: S3_REGION,
-  credentials: {
+let s3Client: S3Client | null = null;
+
+function getS3Client(): S3Client {
+  if (!storageConfigured) {
+    throw new Error('Storage is not configured');
+  }
+
+  if (!s3Client) {
+    s3Client = new S3Client({
+      endpoint: S3_ENDPOINT,
+      region: S3_REGION,
+      credentials: {
+        accessKeyId: S3_ACCESS_KEY,
+        secretAccessKey: S3_SECRET_KEY,
+      },
+      forcePathStyle,
+    });
+  }
+
+  return s3Client;
+}
+
+export function getStorageConfig() {
+  return {
+    configured: storageConfigured,
+    endpoint: S3_ENDPOINT,
+    region: S3_REGION,
     accessKeyId: S3_ACCESS_KEY,
     secretAccessKey: S3_SECRET_KEY,
-  },
-  forcePathStyle: isMinIO, // Required for MinIO and some S3-compatible services
-});
+    bucket: S3_BUCKET,
+    publicUrl: S3_PUBLIC_URL,
+    forcePathStyle,
+    allowPublicRead: config.s3.allowPublicRead,
+  };
+}
+
+export async function checkStorageHealth(): Promise<{ status: 'ok' | 'error'; message?: string }> {
+  if (!storageConfigured) {
+    return { status: 'error', message: 'Storage is not configured' };
+  }
+
+  try {
+    await getS3Client().send(new HeadBucketCommand({ Bucket: S3_BUCKET }));
+    return { status: 'ok' };
+  } catch (error) {
+    console.warn('Storage health check failed:', error);
+    return { status: 'error', message: 'Storage bucket unavailable' };
+  }
+}
 
 export interface UploadedFile {
   key: string;
@@ -44,6 +99,7 @@ export interface UploadedFile {
 export interface UploadOptions {
   contentType: string;
   filename: string;
+  appId: string;
   channelId: string;
   userId: string;
   metadata?: Record<string, string>;
@@ -57,10 +113,10 @@ function generateKey(options: UploadOptions): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
-  const hash = createHash('md5').update(`${Date.now()}-${options.filename}`).digest('hex').slice(0, 8);
-  const ext = options.filename.split('.').pop() || '';
+  const nonce = randomBytes(16).toString('hex');
+  const ext = options.filename.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
 
-  return `channels/${options.channelId}/${year}/${month}/${day}/${hash}.${ext}`;
+  return `apps/${options.appId}/channels/${options.channelId}/${year}/${month}/${day}/${nonce}.${ext}`;
 }
 
 /**
@@ -72,7 +128,7 @@ export async function uploadFile(
 ): Promise<UploadedFile> {
   const key = generateKey(options);
 
-  await s3Client.send(
+  await getS3Client().send(
     new PutObjectCommand({
       Bucket: S3_BUCKET,
       Key: key,
@@ -80,6 +136,7 @@ export async function uploadFile(
       ContentType: options.contentType,
       Metadata: {
         'original-filename': options.filename,
+        'app-id': options.appId,
         'uploaded-by': options.userId,
         'channel-id': options.channelId,
         ...options.metadata,
@@ -102,8 +159,19 @@ export async function uploadFile(
 export async function getPresignedUploadUrl(
   options: UploadOptions,
   expiresIn = 3600
-): Promise<{ key: string; uploadUrl: string; publicUrl: string }> {
+): Promise<{
+  key: string;
+  uploadUrl: string;
+  publicUrl: string;
+  headers: Record<string, string>;
+}> {
   const key = generateKey(options);
+  const headers = {
+    'Content-Type': options.contentType,
+    'x-amz-meta-app-id': options.appId,
+    'x-amz-meta-uploaded-by': options.userId,
+    'x-amz-meta-channel-id': options.channelId,
+  };
 
   const command = new PutObjectCommand({
     Bucket: S3_BUCKET,
@@ -111,17 +179,19 @@ export async function getPresignedUploadUrl(
     ContentType: options.contentType,
     Metadata: {
       'original-filename': options.filename,
+      'app-id': options.appId,
       'uploaded-by': options.userId,
       'channel-id': options.channelId,
     },
   });
 
-  const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn });
+  const uploadUrl = await getSignedUrl(getS3Client(), command, { expiresIn });
 
   return {
     key,
     uploadUrl,
     publicUrl: `${S3_PUBLIC_URL}/${S3_BUCKET}/${key}`,
+    headers,
   };
 }
 
@@ -137,14 +207,47 @@ export async function getPresignedDownloadUrl(
     Key: key,
   });
 
-  return getSignedUrl(s3Client, command, { expiresIn });
+  return getSignedUrl(getS3Client(), command, { expiresIn });
+}
+
+export async function getFileObject(key: string): Promise<{
+  body: BodyInit;
+  contentType: string;
+  contentLength?: number;
+  metadata: Record<string, string>;
+} | null> {
+  try {
+    const response = await getS3Client().send(
+      new GetObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: key,
+      })
+    );
+
+    if (!response.Body) {
+      return null;
+    }
+
+    const body = response.Body instanceof Readable
+      ? (Readable.toWeb(response.Body) as BodyInit)
+      : (response.Body as BodyInit);
+
+    return {
+      body,
+      contentType: response.ContentType || 'application/octet-stream',
+      contentLength: response.ContentLength,
+      metadata: response.Metadata || {},
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Delete a file from storage
  */
 export async function deleteFile(key: string): Promise<void> {
-  await s3Client.send(
+  await getS3Client().send(
     new DeleteObjectCommand({
       Bucket: S3_BUCKET,
       Key: key,
@@ -157,7 +260,7 @@ export async function deleteFile(key: string): Promise<void> {
  */
 export async function fileExists(key: string): Promise<boolean> {
   try {
-    await s3Client.send(
+    await getS3Client().send(
       new HeadObjectCommand({
         Bucket: S3_BUCKET,
         Key: key,
@@ -179,7 +282,7 @@ export async function getFileMetadata(key: string): Promise<{
   metadata: Record<string, string>;
 } | null> {
   try {
-    const response = await s3Client.send(
+    const response = await getS3Client().send(
       new HeadObjectCommand({
         Bucket: S3_BUCKET,
         Key: key,
@@ -201,43 +304,69 @@ export async function getFileMetadata(key: string): Promise<{
  * Initialize storage (create bucket if needed)
  */
 export async function initStorage(): Promise<void> {
-  const { CreateBucketCommand, HeadBucketCommand, PutBucketPolicyCommand } = await import('@aws-sdk/client-s3');
+  if (!storageConfigured) {
+    throw new Error('Storage is not configured');
+  }
 
   try {
     // Check if bucket exists
-    await s3Client.send(new HeadBucketCommand({ Bucket: S3_BUCKET }));
+    await getS3Client().send(new HeadBucketCommand({ Bucket: S3_BUCKET }));
     console.log(`Storage bucket "${S3_BUCKET}" exists`);
+    await enforceBucketPolicyMode();
   } catch (error: any) {
     if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
       // Create bucket
-      await s3Client.send(new CreateBucketCommand({ Bucket: S3_BUCKET }));
+      await getS3Client().send(new CreateBucketCommand({ Bucket: S3_BUCKET }));
       console.log(`Created storage bucket "${S3_BUCKET}"`);
-
-      // Set bucket policy for public read access (only for MinIO/self-hosted S3)
-      if (isMinIO) {
-        const policy = {
-          Version: '2012-10-17',
-          Statement: [
-            {
-              Effect: 'Allow',
-              Principal: '*',
-              Action: ['s3:GetObject'],
-              Resource: [`arn:aws:s3:::${S3_BUCKET}/*`],
-            },
-          ],
-        };
-
-        await s3Client.send(
-          new PutBucketPolicyCommand({
-            Bucket: S3_BUCKET,
-            Policy: JSON.stringify(policy),
-          })
-        );
-        console.log('Set bucket policy for public read access');
-      }
+      await enforceBucketPolicyMode();
     } else {
       console.warn('Failed to check storage bucket:', error);
+      throw error;
     }
+  }
+}
+
+async function enforceBucketPolicyMode(): Promise<void> {
+  if (config.s3.allowPublicRead) {
+    const policy = {
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Principal: '*',
+          Action: ['s3:GetObject'],
+          Resource: [`arn:aws:s3:::${S3_BUCKET}/*`],
+        },
+      ],
+    };
+
+    await getS3Client().send(
+      new PutBucketPolicyCommand({
+        Bucket: S3_BUCKET,
+        Policy: JSON.stringify(policy),
+      })
+    );
+    console.warn('Set storage bucket policy for public read access because S3_ALLOW_PUBLIC_READ is enabled');
+    return;
+  }
+
+  try {
+    await getS3Client().send(new DeleteBucketPolicyCommand({ Bucket: S3_BUCKET }));
+    console.log('Removed storage bucket policy for private media mode');
+  } catch (error: any) {
+    if (
+      error.name === 'NoSuchBucketPolicy'
+      || error.name === 'NotFound'
+      || error.$metadata?.httpStatusCode === 404
+    ) {
+      return;
+    }
+
+    if (config.isProduction) {
+      throw error;
+    }
+
+    console.warn('Could not remove storage bucket policy in private media mode:', error);
   }
 }
 

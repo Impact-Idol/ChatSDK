@@ -8,6 +8,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { db } from '../services/database';
 import { requireUser } from '../middleware/auth';
+import { isAppAdmin } from '../services/authorization';
 
 export const enrollmentRoutes = new Hono();
 
@@ -39,6 +40,10 @@ enrollmentRoutes.post(
   async (c) => {
     const auth = c.get('auth');
     const body = c.req.valid('json');
+
+    if (!(await isAppAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Enrollment rule management requires admin access' } }, 403);
+    }
 
     // Validate workspace if specified
     if (body.workspaceId) {
@@ -110,6 +115,10 @@ enrollmentRoutes.get(
     const channelId = c.req.query('channelId');
     const enabled = c.req.query('enabled');
 
+    if (!(await isAppAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Enrollment rules require admin access' } }, 403);
+    }
+
     let query = `
       SELECT r.*, u.name as created_by_name
       FROM enrollment_rule r
@@ -168,6 +177,10 @@ enrollmentRoutes.get(
     const auth = c.get('auth');
     const ruleId = c.req.param('id');
 
+    if (!(await isAppAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Enrollment rules require admin access' } }, 403);
+    }
+
     const result = await db.query(
       `SELECT r.*, u.name as created_by_name
        FROM enrollment_rule r
@@ -211,6 +224,10 @@ enrollmentRoutes.patch(
     const auth = c.get('auth');
     const ruleId = c.req.param('id');
     const body = c.req.valid('json');
+
+    if (!(await isAppAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Enrollment rule management requires admin access' } }, 403);
+    }
 
     const updates = [];
     const values = [];
@@ -279,6 +296,10 @@ enrollmentRoutes.delete(
     const auth = c.get('auth');
     const ruleId = c.req.param('id');
 
+    if (!(await isAppAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Enrollment rule management requires admin access' } }, 403);
+    }
+
     const result = await db.query(
       'DELETE FROM enrollment_rule WHERE id = $1 AND app_id = $2 RETURNING id',
       [ruleId, auth.appId]
@@ -303,6 +324,10 @@ enrollmentRoutes.post(
   async (c) => {
     const auth = c.get('auth');
     const { userId } = c.req.valid('json');
+
+    if (!(await isAppAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Enrollment execution requires admin access' } }, 403);
+    }
 
     // Get user data
     const userResult = await db.query(
@@ -391,13 +416,17 @@ enrollmentRoutes.get(
     const limit = parseInt(c.req.query('limit') || '50', 10);
     const offset = parseInt(c.req.query('offset') || '0', 10);
 
+    if (!(await isAppAdmin(auth.appId, auth.userId!))) {
+      return c.json({ error: { message: 'Enrollment history requires admin access' } }, 403);
+    }
+
     let query = `
       SELECT
         ee.*,
         er.rule_type,
         u.name as user_name
       FROM enrollment_execution ee
-      JOIN enrollment_rule er ON ee.rule_id = er.id
+      JOIN enrollment_rule er ON ee.rule_id = er.id AND ee.app_id = er.app_id
       LEFT JOIN app_user u ON ee.user_id = u.id AND ee.app_id = u.app_id
       WHERE ee.app_id = $1
     `;
@@ -476,6 +505,26 @@ function evaluateConditions(conditions: any, user: any): boolean {
 async function executeActions(actions: any, userId: string, appId: string): Promise<void> {
   // Add to channel
   if (actions.add_to_channel) {
+    const channelResult = await db.query(
+      'SELECT id, workspace_id FROM channel WHERE id = $1 AND app_id = $2',
+      [actions.add_to_channel, appId]
+    );
+    if (channelResult.rows.length === 0) {
+      throw new Error('Enrollment channel target not found');
+    }
+
+    const workspaceId = channelResult.rows[0].workspace_id;
+    if (workspaceId) {
+      const workspaceMemberResult = await db.query(
+        `SELECT 1 FROM workspace_member
+         WHERE app_id = $1 AND workspace_id = $2 AND user_id = $3`,
+        [appId, workspaceId, userId]
+      );
+      if (workspaceMemberResult.rows.length === 0) {
+        throw new Error('Enrollment user is not a member of the target channel workspace');
+      }
+    }
+
     await db.query(
       `INSERT INTO channel_member (channel_id, app_id, user_id, role)
        VALUES ($1, $2, $3, 'member')
@@ -486,6 +535,14 @@ async function executeActions(actions: any, userId: string, appId: string): Prom
 
   // Add to workspace
   if (actions.add_to_workspace) {
+    const workspaceResult = await db.query(
+      'SELECT id FROM workspace WHERE id = $1 AND app_id = $2',
+      [actions.add_to_workspace, appId]
+    );
+    if (workspaceResult.rows.length === 0) {
+      throw new Error('Enrollment workspace target not found');
+    }
+
     await db.query(
       `INSERT INTO workspace_member (workspace_id, app_id, user_id, role)
        VALUES ($1, $2, $3, 'member')

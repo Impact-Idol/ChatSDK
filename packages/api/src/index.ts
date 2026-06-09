@@ -12,10 +12,12 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { prettyJSON } from 'hono/pretty-json';
 import { timing } from 'hono/timing';
+import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { authMiddleware } from './middleware/auth';
+import { authMiddleware, brokerScopedRouteGuard } from './middleware/auth';
+import { tenantContextMiddleware } from './middleware/tenant-context';
 import { authRoutes } from './routes/auth';
 import { channelRoutes } from './routes/channels';
 import { messageRoutes } from './routes/messages';
@@ -37,17 +39,22 @@ import { supervisionRoutes } from './routes/supervision';
 import { enrollmentRoutes } from './routes/enrollment';
 import { templatesRoutes } from './routes/templates';
 import { emojiRoutes } from './routes/emoji';
+import { realtimeRoutes } from './routes/realtime';
+import { serverRoutes } from './routes/server';
 import { webhooksRoutes } from './routes/webhooks';
-import { metricsRoutes } from './routes/metrics';
+import { assertLifecycleSchemaReady, metricsRoutes } from './routes/metrics';
 import { metricsMiddleware } from './middleware/metrics';
 import { db, initDB } from './services/database';
 import { initCentrifugo } from './services/centrifugo';
 import { initNovu } from './services/novu';
 import { initStorage } from './services/storage';
-import { initSearch } from './services/search';
+import { initSearch, startSearchIndexOutboxWorker } from './services/search';
+import { startRealtimeOutboxWorker } from './services/realtime-outbox';
+import { startDataLifecyclePurgeWorker } from './services/data-lifecycle';
 import { inngest, allFunctions } from './inngest';
 import { serve as inngestServe } from 'inngest/hono';
 import { config, validateProductionConfig, printConfigSummary } from './config/defaults';
+import { applyRateLimit, getClientIp, RATE_LIMIT_POLICIES } from './services/rate-limit';
 
 // Create Hono app
 const app = new Hono();
@@ -60,51 +67,21 @@ app.use('*', metricsMiddleware);
 
 // Manual CORS middleware
 app.use('*', async (c, next) => {
-  // Read allowed origins from environment variable or use defaults
-  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || '';
-
-  // Default origins for development
-  const defaultOrigins = [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:3002',
-    'http://localhost:4500',
-    'http://localhost:5173',
-    'http://localhost:5175',
-    'http://localhost:6007',
-    'http://localhost:6001',
-    'http://localhost:5500',
-    'http://localhost:5502'
-  ];
-
-  // Parse allowed origins from env (comma-separated)
-  let allowedOrigins = defaultOrigins;
-  if (allowedOriginsEnv) {
-    if (allowedOriginsEnv === '*') {
-      // Allow all origins (development only!)
-      allowedOrigins = ['*'];
-    } else {
-      // Parse comma-separated list
-      allowedOrigins = allowedOriginsEnv.split(',').map((origin) => origin.trim());
-    }
-  }
-
   const origin = c.req.header('Origin');
 
   // Handle wildcard or specific origin
-  if (allowedOrigins.includes('*')) {
-    // Allow all origins (development mode)
+  if (config.cors.allowAllOrigins) {
     c.header('Access-Control-Allow-Origin', origin || '*');
     c.header('Access-Control-Allow-Credentials', 'true');
     c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Request-ID, traceparent');
     c.header('Access-Control-Max-Age', '86400'); // 24 hours
-  } else if (origin && allowedOrigins.includes(origin)) {
+  } else if (origin && config.cors.origins.includes(origin)) {
     // Allow specific origin
     c.header('Access-Control-Allow-Origin', origin);
     c.header('Access-Control-Allow-Credentials', 'true');
     c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+    c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Request-ID, traceparent');
     c.header('Access-Control-Max-Age', '86400'); // 24 hours
   }
 
@@ -114,6 +91,7 @@ app.use('*', async (c, next) => {
     if (!c.res.headers.get('Access-Control-Allow-Origin')) {
       // Origin not allowed, but still need to respond
       c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+      c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Request-ID, traceparent');
     }
     return c.body(null, 204);
   }
@@ -127,14 +105,17 @@ app.route('/', metricsRoutes);
 // Public routes
 app.route('/api/auth', authRoutes); // ChatSDK 2.0 simplified authentication
 app.route('/tokens', tokenRoutes); // Legacy token endpoint (backward compatibility)
+if (config.auth.enableServerMint || config.usesLocalDefaults) {
+  app.route('/api/server', serverRoutes); // Server-to-server broker routes
+}
 
 // Admin routes (uses own authentication middleware)
 app.route('/admin', adminRoutes);
 
 // Inngest webhook handler with development mode guard
 app.use('/api/inngest', async (c, next) => {
-  const eventKey = process.env.INNGEST_EVENT_KEY || '';
-  const signingKey = process.env.INNGEST_SIGNING_KEY || '';
+  const eventKey = config.inngest.eventKey || '';
+  const signingKey = config.inngest.signingKey || '';
 
   // Check if using test/dummy keys (development mode)
   if (eventKey.includes('test_') || signingKey.includes('test_')) {
@@ -151,13 +132,28 @@ app.use('/api/inngest', async (c, next) => {
 app.on(['GET', 'POST', 'PUT'], '/api/inngest', inngestServe({ client: inngest, functions: allFunctions }));
 
 // Protected routes
+app.use('/api/*', async (c, next) => {
+  const authHeader = c.req.header('Authorization');
+  const apiKey = c.req.header('X-API-Key');
+  if (apiKey && !authHeader?.startsWith('Bearer ')) {
+    const limited = await applyRateLimit(c, RATE_LIMIT_POLICIES.apiKeyAuth, {
+      appId: 'public',
+      ip: getClientIp(c),
+    });
+    if (limited) return limited;
+  }
+  await next();
+});
 app.use('/api/*', authMiddleware);
+app.use('/api/*', brokerScopedRouteGuard);
+app.use('/api/*', tenantContextMiddleware);
 app.route('/api/users', userRoutes);
 app.route('/api/channels', channelRoutes);
 app.route('/api/devices', deviceRoutes);
 app.route('/api/uploads', uploadRoutes);
 app.route('/api/search', searchRoutes);
 app.route('/api/presence', presenceRoutes);
+app.route('/api/realtime', realtimeRoutes);
 app.route('/api/webpush', webPushRoutes);
 app.route('/api/workspaces', workspaceRoutes);
 app.route('/api/moderation', moderationRoutes);
@@ -188,17 +184,23 @@ function getErrorHint(status: number, message: string): string | undefined {
   const msg = message.toLowerCase();
 
   if (status === 401) {
+    if (msg.includes('missing authorization')) {
+      return 'Include Authorization: Bearer <token> for user API routes, or X-API-Key for token broker/server routes';
+    }
     if (msg.includes('missing api key')) {
-      return 'Include the X-API-Key header with your API key';
+      return 'Include the X-API-Key header only when calling token broker or server routes';
     }
     if (msg.includes('invalid api key')) {
       return 'Check that your API key is correct and active';
     }
-    if (msg.includes('missing token') || msg.includes('user authentication required')) {
-      return 'Call POST /api/tokens first to get a user token, then include it as "Authorization: Bearer <token>"';
+    if (msg.includes('missing token') || msg.includes('user authentication required') || msg.includes('token app not found') || msg.includes('token user not found')) {
+      return 'Call POST /api/auth/connect or POST /tokens from your server to get a user token, then include it as "Authorization: Bearer <token>"';
     }
     if (msg.includes('token expired')) {
-      return 'Your token has expired. Call POST /api/tokens/refresh or POST /api/tokens to get a new one';
+      return 'Your token has expired. Call POST /api/auth/refresh or POST /tokens/refresh to get a new one';
+    }
+    if (msg.includes('invalid token type')) {
+      return 'Use an access token for user API routes. Refresh tokens must be exchanged through POST /api/auth/refresh or POST /tokens/refresh.';
     }
     if (msg.includes('invalid token')) {
       return 'The token is malformed or was signed with a different secret. Ensure CENTRIFUGO_TOKEN_SECRET matches between API and client';
@@ -223,6 +225,7 @@ function getErrorHint(status: number, message: string): string | undefined {
 
 // Error handling
 app.onError((err, c) => {
+  const requestId = c.get('requestId');
   // Check if it's an HTTPException with a specific status code
   if (err instanceof HTTPException) {
     const status = err.status;
@@ -235,13 +238,14 @@ app.onError((err, c) => {
 
     const hint = getErrorHint(status, message);
 
-    console.error(`API Error [${status}]:`, message);
+    console.error(`API Error [${status}] request_id=${requestId ?? 'unknown'}:`, message);
     return c.json(
       {
         error: {
           message,
           code,
           ...(hint && { hint }),
+          ...(requestId && { requestId }),
         },
       },
       status
@@ -249,13 +253,14 @@ app.onError((err, c) => {
   }
 
   // For unexpected errors, log full stack and return 500
-  console.error('API Error [500]:', err);
+  console.error(`API Error [500] request_id=${requestId ?? 'unknown'}:`, err);
   return c.json(
     {
       error: {
         message: 'Internal Server Error',
         code: 'INTERNAL_ERROR',
         hint: 'This is an unexpected error. Check server logs for details.',
+        ...(requestId && { requestId }),
       },
     },
     500
@@ -266,10 +271,12 @@ app.onError((err, c) => {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const reactAppPath = path.resolve(__dirname, '../../../examples/react-chat/dist');
 
-app.use('/*', serveStatic({ root: reactAppPath }));
+if (existsSync(reactAppPath)) {
+  app.use('/*', serveStatic({ root: reactAppPath }));
 
-// SPA fallback - serve index.html for non-API routes
-app.get('*', serveStatic({ path: reactAppPath + '/index.html' }));
+  // SPA fallback - serve index.html for non-API routes
+  app.get('*', serveStatic({ path: reactAppPath + '/index.html' }));
+}
 
 // 404 handler for API routes (this won't be reached due to SPA fallback)
 app.notFound((c) => {
@@ -298,6 +305,10 @@ async function main() {
     // Initialize database connection
     await initDB();
     console.log('✅ Database connected');
+    if (config.isProduction || process.env.REQUIRE_FLYWAY_HISTORY === 'true') {
+      await assertLifecycleSchemaReady();
+      console.log('✅ Lifecycle schema/RLS verified');
+    }
 
     // Log latest migration version (Flyway)
     try {
@@ -320,6 +331,8 @@ async function main() {
     // Initialize Centrifugo client
     await initCentrifugo();
     console.log('✅ Centrifugo connected');
+    startRealtimeOutboxWorker();
+    console.log('✅ Realtime outbox worker started');
 
     // Initialize Novu client (optional - for push notifications)
     await initNovu();
@@ -328,9 +341,12 @@ async function main() {
     // Initialize MinIO storage
     await initStorage();
     console.log('✅ Storage initialized');
+    startDataLifecyclePurgeWorker();
+    console.log('✅ Data lifecycle purge worker started');
 
     // Initialize Meilisearch
     await initSearch();
+    startSearchIndexOutboxWorker();
     console.log('✅ Search initialized');
 
     // Start HTTP server
@@ -349,6 +365,8 @@ async function main() {
   }
 }
 
-main();
+if (process.env.NODE_ENV !== 'test') {
+  main();
+}
 
 export { app };

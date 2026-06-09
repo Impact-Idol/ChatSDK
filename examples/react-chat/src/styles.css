@@ -85,6 +85,47 @@ body {
   background: var(--surface-hover);
 }
 
+.demo-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.demo-user-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: white;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.demo-user-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.demo-user-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-user-id {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .main-content {
   flex: 1;
   display: flex;
@@ -385,6 +426,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  transition: margin-right var(--transition);
+}
+
+.chat-area.members-open .messages-container,
+.chat-area.members-open .typing-indicator,
+.chat-area.members-open .composer {
+  margin-right: 240px;
 }
 
 .message {

@@ -186,7 +186,7 @@ class Profiler {
       }))
       .sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg)); // Sort by avg desc
 
-    console.log('📊 ChatSDK Performance Report');
+    console.log('ChatSDK Performance Report');
     console.table(data);
   }
 
@@ -265,8 +265,8 @@ if (typeof window !== 'undefined') {
 
     if (debugMode) {
       profiler.setEnabled(true);
-      console.log('📊 ChatSDK Profiler Enabled');
-      console.log('💡 Tip: Use profiler.report() to see performance stats');
+      console.log('ChatSDK Profiler Enabled');
+      console.log('Tip: Use profiler.report() to see performance stats');
 
       // Expose profiler globally for debugging
       (window as any).__CHATSDK_PROFILER__ = profiler;

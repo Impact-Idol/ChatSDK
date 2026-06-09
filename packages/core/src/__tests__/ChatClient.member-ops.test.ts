@@ -9,28 +9,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock centrifuge before import
 vi.mock('centrifuge', () => ({
-  Centrifuge: vi.fn().mockImplementation(() => ({
-    connect: vi.fn(),
-    disconnect: vi.fn(),
-    on: vi.fn(),
-    state: 'connected',
-    newSubscription: vi.fn().mockReturnValue({
+  Centrifuge: vi.fn().mockImplementation(function Centrifuge() {
+    return {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
       on: vi.fn(),
-      subscribe: vi.fn(),
-      unsubscribe: vi.fn(),
-    }),
-    getSubscription: vi.fn().mockReturnValue(null),
-  })),
+      state: 'connected',
+      newSubscription: vi.fn().mockReturnValue({
+        on: vi.fn(),
+        subscribe: vi.fn(),
+        unsubscribe: vi.fn(),
+      }),
+      getSubscription: vi.fn().mockReturnValue(null),
+    };
+  }),
 }));
 
 // Mock IndexedDB storage
 vi.mock('../storage/IndexedDBStorage', () => ({
-  IndexedDBStorage: vi.fn().mockImplementation(() => ({
-    get: vi.fn(),
-    set: vi.fn(),
-    delete: vi.fn(),
-    clear: vi.fn(),
-  })),
+  IndexedDBStorage: vi.fn().mockImplementation(function IndexedDBStorage() {
+    return {
+      get: vi.fn(),
+      set: vi.fn(),
+      delete: vi.fn(),
+      clear: vi.fn(),
+    };
+  }),
 }));
 
 import { ChatClient } from '../client/ChatClient';
@@ -39,12 +43,13 @@ import { ChatClient } from '../client/ChatClient';
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-function createClient() {
+function createClient(options: Partial<ConstructorParameters<typeof ChatClient>[0]> = {}) {
   return new ChatClient({
     apiKey: 'test-key',
     apiUrl: 'http://localhost:5500',
     wsUrl: 'ws://localhost:8000/connection/websocket',
     debug: false,
+    ...options,
   });
 }
 
@@ -158,6 +163,49 @@ describe('ChatClient Member Operations (Part 5)', () => {
         'http://localhost:5500/api/channels/ch-1/members/user-1',
         expect.objectContaining({ method: 'DELETE' }),
       );
+    });
+  });
+
+  describe('auth headers', () => {
+    it('sends bearer-only requests when no apiKey is configured', async () => {
+      client = createClient({ apiKey: undefined });
+      (client as any).token = 'test-token';
+      mockFetchResponse({ channels: [] });
+
+      await client.fetch('/api/channels');
+
+      const headers = mockFetch.mock.calls[0][1]?.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer test-token');
+      expect(headers['X-API-Key']).toBeUndefined();
+    });
+
+    it('keeps legacy apiKey header only when explicitly configured', async () => {
+      mockFetchResponse({ channels: [] });
+
+      await client.fetch('/api/channels');
+
+      const headers = mockFetch.mock.calls[0][1]?.headers as Record<string, string>;
+      expect(headers.Authorization).toBe('Bearer test-token');
+      expect(headers['X-API-Key']).toBe('test-key');
+    });
+
+    it('can connect with tokenProvider and no apiKey', async () => {
+      const tokenProvider = vi.fn().mockResolvedValue({
+        token: 'api-token',
+        wsToken: 'ws-token',
+      });
+      client = createClient({
+        apiKey: undefined,
+        tokenProvider,
+        enableOfflineSupport: false,
+      });
+
+      const user = await client.connectUser({ id: 'user-1', name: 'User One' });
+
+      expect(user.id).toBe('user-1');
+      expect(tokenProvider).toHaveBeenCalledWith({ id: 'user-1', name: 'User One' });
+      expect((client as any).token).toBe('api-token');
+      expect((client as any).wsToken).toBe('ws-token');
     });
   });
 });

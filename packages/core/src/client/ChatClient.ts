@@ -35,7 +35,9 @@
  *
  * @example Connection state handling
  * ```typescript
- * const client = createChatClient({ apiKey: 'your-key' });
+ * const client = createChatClient({
+ *   tokenProvider: () => fetch('/api/chat-token').then((res) => res.json()),
+ * });
  *
  * client.on('connection.connected', () => {
  *   console.log('Connected!');
@@ -78,6 +80,8 @@ import type {
   MessageWithSeq,
   EventMap,
   EventCallback,
+  ChatTokenProvider,
+  ChatTokenSet,
 } from '../types';
 import {
   ChannelSchema,
@@ -97,12 +101,22 @@ import { OfflineQueue } from '../offline/OfflineQueue';
 import { IndexedDBStorage } from '../storage/IndexedDBStorage';
 
 export interface ChatClientConfig {
-  apiKey: string;
+  /**
+   * Server/app API key. Prefer tokenProvider for browser clients.
+   * @deprecated Browser clients should use bearer tokens from tokenProvider instead.
+   */
+  apiKey?: string;
+  tokenProvider?: ChatTokenProvider;
   apiUrl?: string;
   wsUrl?: string;
   debug?: boolean;
   enableOfflineSupport?: boolean;
   reconnectIntervals?: number[];
+}
+
+interface SubscriptionTokenResponse {
+  token: string;
+  expiresIn?: number;
 }
 
 const DEFAULT_CONFIG: Partial<ChatClientConfig> = {
@@ -112,6 +126,13 @@ const DEFAULT_CONFIG: Partial<ChatClientConfig> = {
   enableOfflineSupport: true,
   reconnectIntervals: [1000, 2000, 4000, 8000, 16000],
 };
+
+function isClientRuntime(): boolean {
+  return (
+    (typeof window !== 'undefined' && typeof document !== 'undefined') ||
+    (typeof navigator !== 'undefined' && navigator.product === 'ReactNative')
+  );
+}
 
 enum SubscriptionState {
   PENDING = 'pending',
@@ -130,6 +151,8 @@ export class ChatClient {
   private connectionState: ConnectionState = 'disconnected';
   private token: string | null = null;      // API token for REST calls
   private wsToken: string | null = null;    // WebSocket token for Centrifugo
+  private tokenExpiresAt: number | null = null;
+  private refreshToken: string | null = null;
   private appId: string | null = null;      // App ID extracted from wsToken
   private apiCircuitBreaker: CircuitBreaker; // Circuit breaker for API requests
   private wsCircuitBreaker: CircuitBreaker;  // Circuit breaker for WebSocket
@@ -138,6 +161,10 @@ export class ChatClient {
   private reconnectAttempt = 0; // Tracks reconnect attempts for reconnectIn calculation
 
   constructor(options: ChatClientOptions) {
+    if (options.apiKey && isClientRuntime()) {
+      throw new Error('ChatClient apiKey is server-only. Browser and mobile clients must use tokenProvider.');
+    }
+
     // Filter out undefined values from options to avoid overwriting defaults
     const filteredOptions = Object.fromEntries(
       Object.entries(options).filter(([, v]) => v !== undefined)
@@ -265,32 +292,12 @@ export class ChatClient {
    */
   async connectUser(
     user: ConnectUserOptions,
-    tokenOrTokens: string | { token: string; wsToken: string }
+    tokenOrTokens?: string | ChatTokenSet
   ): Promise<User> {
     this.log('connection', 'Connecting user...', { userId: user.id });
 
-    // Handle both token formats for backwards compatibility
-    if (typeof tokenOrTokens === 'string') {
-      // Legacy: single token used for both
-      this.token = tokenOrTokens;
-      this.wsToken = tokenOrTokens;
-      this.log('connection', 'Using single token for API and WebSocket');
-    } else {
-      // New: separate tokens
-      this.token = tokenOrTokens.token;
-      this.wsToken = tokenOrTokens.wsToken;
-      this.log('connection', 'Using separate tokens for API and WebSocket');
-    }
-
-    // Extract app_id from wsToken for channel namespacing
-    if (this.wsToken) {
-      this.appId = this.extractAppIdFromToken(this.wsToken);
-      if (!this.appId) {
-        this.log('error', 'Failed to extract app_id from wsToken - multi-tenant isolation may not work');
-      } else {
-        this.log('connection', 'Extracted app_id from token', { appId: this.appId });
-      }
-    }
+    const tokenSet = await this.resolveConnectionTokens(user, tokenOrTokens);
+    this.applyConnectionTokens(tokenSet);
 
     this.currentUser = {
       id: user.id,
@@ -312,7 +319,9 @@ export class ChatClient {
         token: this.wsToken!,
         debug: this.config.debug,
         getToken: async () => {
-          // Token refresh callback - implement token refresh logic
+          if (this.config.tokenProvider && this.currentUser) {
+            await this.refreshConnectionTokens();
+          }
           return this.wsToken!;
         },
       });
@@ -382,6 +391,8 @@ export class ChatClient {
 
     this.currentUser = null;
     this.token = null;
+    this.tokenExpiresAt = null;
+    this.refreshToken = null;
     this.setConnectionState('disconnected');
     this.eventBus.emit('connection.disconnected', { reason: 'user_disconnect' });
 
@@ -540,7 +551,9 @@ export class ChatClient {
           return;
         }
 
-        subscription = this.centrifuge!.newSubscription(channelName);
+        subscription = this.centrifuge!.newSubscription(channelName, {
+          getToken: async () => this.getSubscriptionToken(channelName),
+        });
 
         // Handle incoming messages
         subscription.on('publication', (ctx: PublicationContext) => {
@@ -691,11 +704,112 @@ export class ChatClient {
         });
         break;
 
+      case 'channel.created':
+        this.eventBus.emit('channel.created', {
+          channel: data.payload.channel,
+        });
+        break;
+
+      case 'channel.deleted':
+        this.eventBus.emit('channel.deleted', {
+          channelId: data.payload.channelId,
+        });
+        break;
+
+      case 'channel.member_joined':
+        this.eventBus.emit('channel.member_joined', {
+          channelId: data.payload.channelId,
+          userId: data.payload.userId,
+        });
+        break;
+
+      case 'channel.member_left':
+        this.eventBus.emit('channel.member_left', {
+          channelId: data.payload.channelId,
+          userId: data.payload.userId,
+        });
+        break;
+
+      case 'workspace.created':
+        this.eventBus.emit('workspace.created', {
+          workspace: data.payload.workspace,
+        });
+        break;
+
+      case 'workspace.updated':
+        this.eventBus.emit('workspace.updated', {
+          workspace: data.payload.workspace,
+        });
+        break;
+
+      case 'workspace.deleted':
+        this.eventBus.emit('workspace.deleted', {
+          workspaceId: data.payload.workspaceId,
+        });
+        break;
+
+      case 'workspace.member_joined':
+        this.eventBus.emit('workspace.member_joined', {
+          workspaceId: data.payload.workspaceId,
+          userId: data.payload.userId,
+        });
+        break;
+
+      case 'channel.unread_changed':
+        this.eventBus.emit('channel.unread_changed', {
+          channelId: data.payload.channelId,
+          count: data.payload.count,
+        });
+        break;
+
+      case 'channel.total_unread_changed':
+        this.eventBus.emit('channel.total_unread_changed', {
+          count: data.payload.count,
+        });
+        break;
+
       case 'read.updated':
         this.eventBus.emit('read.updated', {
           channelId: data.payload.channelId,
           userId: data.payload.userId,
           lastReadSeq: data.payload.lastReadSeq,
+        });
+        break;
+
+      case 'read_receipt':
+        this.eventBus.emit('read_receipt', {
+          channelId: data.payload.channelId,
+          userId: data.payload.userId,
+          userName: data.payload.userName,
+          messageId: data.payload.messageId,
+          readAt: data.payload.readAt,
+        });
+        break;
+
+      case 'poll.created':
+        this.eventBus.emit('poll.created', {
+          channelId: data.payload.channelId,
+          messageId: data.payload.messageId,
+          poll: data.payload.poll,
+        });
+        break;
+
+      case 'poll.voted':
+        this.eventBus.emit('poll.voted', {
+          channelId: data.payload.channelId,
+          pollId: data.payload.pollId,
+          userId: data.payload.userId,
+          optionIds: data.payload.optionIds,
+          totalVotes: data.payload.totalVotes,
+        });
+        break;
+
+      case 'poll.vote_removed':
+        this.eventBus.emit('poll.vote_removed', {
+          channelId: data.payload.channelId,
+          pollId: data.payload.pollId,
+          userId: data.payload.userId,
+          totalVotes: data.payload.totalVotes,
         });
         break;
 
@@ -796,12 +910,7 @@ export class ChatClient {
       hasToken: !!this.token,
     });
 
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      'X-API-Key': this.config.apiKey,
-      ...(this.token && { Authorization: `Bearer ${this.token}` }),
-      ...options?.headers,
-    };
+    await this.ensureFreshToken();
 
     // Deduplicate requests (especially important for POST/PUT/DELETE to prevent duplicates)
     // Only deduplicate mutation operations, not GET requests
@@ -816,11 +925,37 @@ export class ChatClient {
       return this.deduplicator.deduplicate(
         'api-request',
         dedupParams,
-        () => this.executeRequest<T>(url, headers, options)
+        () => this.executeRequestWithAuthRetry<T>(url, options)
       );
     }
 
-    return this.executeRequest<T>(url, headers, options);
+    return this.executeRequestWithAuthRetry<T>(url, options);
+  }
+
+  private buildHeaders(options?: RequestInit): HeadersInit {
+    return {
+      'Content-Type': 'application/json',
+      ...(this.config.apiKey && { 'X-API-Key': this.config.apiKey }),
+      ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      ...options?.headers,
+    };
+  }
+
+  private async executeRequestWithAuthRetry<T>(
+    url: string,
+    options?: RequestInit
+  ): Promise<T> {
+    try {
+      return await this.executeRequest<T>(url, this.buildHeaders(options), options);
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status !== 401 || !this.config.tokenProvider) {
+        throw error;
+      }
+
+      await this.refreshConnectionTokens();
+      return this.executeRequest<T>(url, this.buildHeaders(options), options);
+    }
   }
 
   /**
@@ -1163,6 +1298,84 @@ export class ChatClient {
   // ============================================================================
   // Private Utilities
   // ============================================================================
+
+  private async resolveConnectionTokens(
+    user?: ConnectUserOptions,
+    tokenOrTokens?: string | ChatTokenSet
+  ): Promise<string | ChatTokenSet> {
+    if (tokenOrTokens) {
+      return tokenOrTokens;
+    }
+
+    if (!this.config.tokenProvider) {
+      throw new Error('connectUser requires tokens or a tokenProvider');
+    }
+
+    return this.config.tokenProvider(user);
+  }
+
+  private applyConnectionTokens(tokenSet: string | ChatTokenSet): void {
+    if (typeof tokenSet === 'string') {
+      this.token = tokenSet;
+      this.wsToken = tokenSet;
+      this.tokenExpiresAt = null;
+      this.refreshToken = null;
+      this.log('connection', 'Using single token for API and WebSocket');
+    } else {
+      this.token = tokenSet.token;
+      this.wsToken = tokenSet.wsToken ?? this.wsToken ?? tokenSet.token;
+      this.tokenExpiresAt = tokenSet.expiresIn
+        ? Date.now() + tokenSet.expiresIn * 1000
+        : null;
+      this.refreshToken = tokenSet.refreshToken ?? null;
+      this.log('connection', 'Using separate tokens for API and WebSocket');
+    }
+
+    if (this.wsToken) {
+      this.appId = this.extractAppIdFromToken(this.wsToken);
+      if (!this.appId) {
+        this.log('error', 'Failed to extract app_id from wsToken - multi-tenant isolation may not work');
+      } else {
+        this.log('connection', 'Extracted app_id from token', { appId: this.appId });
+      }
+    }
+  }
+
+  private async ensureFreshToken(): Promise<void> {
+    if (!this.config.tokenProvider) {
+      return;
+    }
+
+    const shouldRefresh = !this.token
+      || (this.tokenExpiresAt !== null && this.tokenExpiresAt - Date.now() < 60000);
+
+    if (shouldRefresh) {
+      await this.refreshConnectionTokens();
+    }
+  }
+
+  private async refreshConnectionTokens(): Promise<void> {
+    if (!this.config.tokenProvider) {
+      throw new Error('Cannot refresh ChatSDK tokens without a tokenProvider');
+    }
+
+    const refreshed = await this.resolveConnectionTokens(this.currentUser ?? undefined);
+    this.applyConnectionTokens(refreshed);
+  }
+
+  private async getSubscriptionToken(channelName: string): Promise<string> {
+    await this.ensureFreshToken();
+
+    const response = await this.executeRequestWithAuthRetry<SubscriptionTokenResponse>(
+      `${this.config.apiUrl}/api/realtime/subscription-token`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ channel: channelName }),
+      }
+    );
+
+    return response.token;
+  }
 
   /**
    * Extract app_id from JWT token

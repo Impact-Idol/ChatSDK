@@ -8,6 +8,9 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { requireUser } from '../middleware/auth';
 import { db } from '../services/database';
+import { isChannelMember } from '../services/authorization';
+import { purgeStorageKeys, softDeleteMessage } from '../services/data-lifecycle';
+import { removeFromIndex } from '../services/search';
 
 export const moderationRoutes = new Hono();
 
@@ -31,7 +34,7 @@ moderationRoutes.post(
   zValidator('json', reportSchema),
   async (c) => {
     const auth = c.get('auth');
-    const messageId = c.req.param('messageId');
+    const messageId = c.req.param('messageId')!;
     const body = c.req.valid('json');
 
     // Verify message exists
@@ -47,6 +50,10 @@ moderationRoutes.post(
     }
 
     const message = messageCheck.rows[0];
+
+    if (!(await isChannelMember(auth.appId, auth.userId!, message.channel_id))) {
+      return c.json({ error: { message: 'Not a member of this channel', code: 'FORBIDDEN' } }, 403);
+    }
 
     // Don't allow reporting own messages
     if (message.user_id === auth.userId) {
@@ -120,9 +127,9 @@ moderationRoutes.get('/reports', requireUser, async (c) => {
       c.name as channel_name
     FROM message_report r
     JOIN app_user reporter ON r.app_id = reporter.app_id AND r.reporter_user_id = reporter.id
-    JOIN message m ON r.message_id = m.id
+    JOIN message m ON r.message_id = m.id AND r.app_id = m.app_id
     JOIN app_user author ON m.app_id = author.app_id AND m.user_id = author.id
-    JOIN channel c ON m.channel_id = c.id
+    JOIN channel c ON m.channel_id = c.id AND m.app_id = c.app_id
     WHERE r.app_id = $1
   `;
 
@@ -197,9 +204,9 @@ moderationRoutes.put(
 
     // Get report and message details
     const reportResult = await db.query(
-      `SELECT r.*, m.user_id as message_author_id, m.id as message_id
+      `SELECT r.*, m.user_id as message_author_id, m.id as message_id, m.channel_id
        FROM message_report r
-       JOIN message m ON r.message_id = m.id
+       JOIN message m ON r.message_id = m.id AND r.app_id = m.app_id
        WHERE r.id = $1 AND r.app_id = $2`,
       [reportId, auth.appId]
     );
@@ -218,11 +225,32 @@ moderationRoutes.put(
 
     switch (body.action) {
       case 'delete_message':
-        // Soft delete the message
-        await db.query(
-          `UPDATE message SET deleted_at = NOW() WHERE id = $1`,
-          [report.message_id]
-        );
+        {
+          let storageKeys: string[] = [];
+          try {
+            await db.transaction(async (client) => {
+              const deleted = await softDeleteMessage(client, {
+                appId: auth.appId,
+                channelId: report.channel_id,
+                messageId: report.message_id,
+                deletedBy: auth.userId!,
+                reason: 'moderation_delete',
+              });
+              storageKeys = deleted.storageKeys;
+            });
+          } catch (error) {
+            if (error instanceof Error && error.message === 'LEGAL_HOLD_ACTIVE') {
+              return c.json({ error: { message: 'Legal hold blocks deletion', code: 'LEGAL_HOLD_ACTIVE' } }, 423);
+            }
+            throw error;
+          }
+          void purgeStorageKeys(auth.appId, storageKeys).catch((err) => {
+            console.warn('Failed to purge moderation-deleted attachments:', err);
+          });
+          void removeFromIndex(report.message_id, auth.appId).catch((err) => {
+            console.warn('Failed to remove moderation-deleted message from search index:', err);
+          });
+        }
         break;
 
       case 'warn_user':
@@ -257,9 +285,9 @@ moderationRoutes.put(
     const updateResult = await db.query(
       `UPDATE message_report
        SET status = $1, reviewed_by = $2, reviewed_at = NOW(), action_taken = $3, admin_notes = $4
-       WHERE id = $5
+       WHERE id = $5 AND app_id = $6
        RETURNING *`,
-      [newStatus, auth.userId, body.action, body.adminNotes, reportId]
+      [newStatus, auth.userId, body.action, body.adminNotes, reportId, auth.appId]
     );
 
     const updatedReport = updateResult.rows[0];
@@ -308,9 +336,9 @@ moderationRoutes.get('/reports/:id', requireUser, async (c) => {
       c.name as channel_name
     FROM message_report r
     JOIN app_user reporter ON r.app_id = reporter.app_id AND r.reporter_user_id = reporter.id
-    JOIN message m ON r.message_id = m.id
+    JOIN message m ON r.message_id = m.id AND r.app_id = m.app_id
     JOIN app_user author ON m.app_id = author.app_id AND m.user_id = author.id
-    JOIN channel c ON m.channel_id = c.id
+    JOIN channel c ON m.channel_id = c.id AND m.app_id = c.app_id
     WHERE r.id = $1 AND r.app_id = $2`,
     [reportId, auth.appId]
   );

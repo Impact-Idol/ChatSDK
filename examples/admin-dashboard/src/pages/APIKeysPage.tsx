@@ -5,7 +5,6 @@ import { api } from '../services/api';
 import { handleApiError, showError, showSuccess } from '../utils/errorHandler';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5500';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 export default function APIKeysPage() {
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
@@ -94,7 +93,7 @@ export default function APIKeysPage() {
   };
 
   return (
-    <ChatProvider apiKey={API_KEY} apiUrl={API_URL}>
+    <ChatProvider apiUrl={API_URL}>
       <APIKeysManager
         apiKeys={apiKeys}
         loading={loading}

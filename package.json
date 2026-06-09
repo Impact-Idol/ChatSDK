@@ -12,6 +12,8 @@
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces",
     "test": "npm run test --workspaces",
+    "test:api:live": "npm run test:e2e --workspace=@chatsdk/api",
+    "test:playwright": "playwright test",
     "docs:api": "typedoc",
     "docs:dev": "cd docs && npm run dev",
     "docs:build": "cd docs && npm run build",
@@ -20,12 +22,21 @@
     "db:validate": "cd docker && docker compose run --rm flyway validate",
     "db:repair": "cd docker && docker compose run --rm flyway repair",
     "db:baseline": "cd docker && docker compose run --rm flyway baseline -baselineVersion=1",
-    "db:connect": "psql postgres://${DB_USER:-chatsdk}:${DB_PASSWORD:-changeme}@localhost:5432/chatsdk"
+    "db:connect": "psql postgres://${DB_USER:-chatsdk}:${DB_PASSWORD:-changeme}@localhost:5432/chatsdk",
+    "ops:backup:postgres": "bash scripts/ops/backup-postgres.sh",
+    "ops:backup:objects": "tsx scripts/ops/object-manifest.ts",
+    "ops:restore:drill": "bash scripts/ops/restore-drill-local.sh",
+    "ops:restore:reconcile": "tsx scripts/ops/reconcile-restored-uploads.ts",
+    "ops:chaos": "bash scripts/ops/chaos-compose.sh",
+    "ops:health": "bash scripts/ops/health-sweep.sh",
+    "test:ops:contract": "npm --workspace @chatsdk/api test -- --run tests/production-contract.test.ts tests/backup-restore.test.ts",
+    "test:chaos": "CHATSDK_CHAOS=1 playwright test tests/playwright/chat-chaos.spec.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "typescript": "^5.3.3"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }

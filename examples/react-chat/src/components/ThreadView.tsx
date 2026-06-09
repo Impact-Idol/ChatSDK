@@ -101,7 +101,7 @@ export function ThreadView({ channelId, parentMessage, onClose }: ThreadViewProp
               <div className="reply-content">
                 <div className="reply-header">
                   <span className="sender">{reply.user?.name}</span>
-                  <span className="time">{formatTime(reply.createdAt)}</span>
+                  <span className="time">{formatTime(reply.createdAt || reply.created_at)}</span>
                 </div>
                 <p className="text">{reply.text}</p>
                 {reply.status === 'sending' && (

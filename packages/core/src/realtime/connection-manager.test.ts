@@ -13,7 +13,9 @@ vi.mock('centrifuge', () => {
   };
 
   return {
-    Centrifuge: vi.fn(() => mockCentrifuge),
+    Centrifuge: vi.fn(function Centrifuge() {
+      return mockCentrifuge;
+    }),
   };
 });
 

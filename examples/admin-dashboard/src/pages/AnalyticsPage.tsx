@@ -5,7 +5,6 @@ import { api } from '../services/api';
 import { handleApiError } from '../utils/errorHandler';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5500';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 export default function AnalyticsPage() {
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
@@ -49,7 +48,7 @@ export default function AnalyticsPage() {
 
   if (!analyticsData) {
     return (
-      <ChatProvider apiKey={API_KEY} apiUrl={API_URL}>
+      <ChatProvider apiUrl={API_URL}>
         <div className="loading-container">
           <div className="spinner"></div>
         </div>
@@ -58,7 +57,7 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <ChatProvider apiKey={API_KEY} apiUrl={API_URL}>
+    <ChatProvider apiUrl={API_URL}>
       <AnalyticsDashboard data={analyticsData} loading={loading} />
     </ChatProvider>
   );

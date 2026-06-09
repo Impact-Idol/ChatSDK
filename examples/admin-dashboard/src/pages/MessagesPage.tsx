@@ -5,7 +5,6 @@ import { api } from '../services/api';
 import { handleApiError, showError, showSuccess } from '../utils/errorHandler';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5500';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 export default function MessagesPage() {
   const [reports, setReports] = useState<ReportedContent[]>([]);
@@ -88,7 +87,7 @@ export default function MessagesPage() {
   };
 
   return (
-    <ChatProvider apiKey={API_KEY} apiUrl={API_URL}>
+    <ChatProvider apiUrl={API_URL}>
       <ModerationQueue
         reports={reports}
         loading={loading}

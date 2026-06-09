@@ -385,17 +385,23 @@ describe('Performance Profiler', () => {
 
   describe('@Profile Decorator', () => {
     class TestClass {
-      @Profile('test.method')
       async testMethod(value: number): Promise<number> {
         await new Promise(resolve => setTimeout(resolve, 10));
         return value * 2;
       }
 
-      @Profile()
       async defaultLabel(): Promise<string> {
         return 'result';
       }
     }
+
+    const profiledMethod = Object.getOwnPropertyDescriptor(TestClass.prototype, 'testMethod')!;
+    Profile('test.method')(TestClass.prototype, 'testMethod', profiledMethod);
+    Object.defineProperty(TestClass.prototype, 'testMethod', profiledMethod);
+
+    const defaultLabelMethod = Object.getOwnPropertyDescriptor(TestClass.prototype, 'defaultLabel')!;
+    Profile()(TestClass.prototype, 'defaultLabel', defaultLabelMethod);
+    Object.defineProperty(TestClass.prototype, 'defaultLabel', defaultLabelMethod);
 
     it('should profile decorated method', async () => {
       profiler.clear();

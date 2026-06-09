@@ -54,7 +54,7 @@ npm run dev
 The production build uses environment variables from `.env.production`:
 
 - `VITE_API_URL` - API server URL (default: http://localhost:5500)
-- `VITE_API_KEY` - API authentication key
+- `VITE_CHATSDK_TOKEN_URL` - Backend token endpoint for user-scoped ChatSDK tokens
 
 These are embedded at build time by Vite.
 
@@ -196,7 +196,7 @@ docker compose -f docker/docker-compose.yml build react-chat
 ## Production Considerations
 
 ### Security
-- Update `VITE_API_KEY` in `.env.production` for production
+- Keep the ChatSDK API key on a backend token endpoint; do not publish it through Vite env vars
 - Use HTTPS in production (add SSL termination)
 - Update nginx security headers as needed
 - Enable rate limiting for API endpoints

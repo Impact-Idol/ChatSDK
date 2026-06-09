@@ -105,6 +105,12 @@ CREATE TABLE message (
   status VARCHAR(20) DEFAULT 'sent',  -- sending, sent, delivered, read, failed
   shadowed BOOLEAN DEFAULT FALSE,
   deleted_at TIMESTAMPTZ,
+  deleted_by VARCHAR(255),
+  delete_reason TEXT,
+  hard_deleted_at TIMESTAMPTZ,
+  purge_after TIMESTAMPTZ,
+  legal_hold_until TIMESTAMPTZ,
+  legal_hold_reason TEXT,
   edited_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
 
@@ -200,8 +206,11 @@ CREATE TABLE upload (
   height INT,
   duration_ms INT,
   thumbnail_url TEXT,
+  thumbnail_storage_key TEXT,
   blurhash VARCHAR(50),
   status VARCHAR(20) DEFAULT 'pending',  -- pending, completed, failed
+  purged_at TIMESTAMPTZ,
+  purge_reason TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   FOREIGN KEY (app_id, user_id) REFERENCES app_user(app_id, id) ON DELETE CASCADE
@@ -209,6 +218,10 @@ CREATE TABLE upload (
 
 CREATE INDEX idx_upload_channel ON upload (channel_id, created_at DESC);
 CREATE INDEX idx_upload_user ON upload (app_id, user_id, created_at DESC);
+CREATE INDEX idx_upload_storage_key ON upload (app_id, storage_key);
+CREATE INDEX idx_upload_thumbnail_storage_key
+  ON upload (app_id, thumbnail_storage_key)
+  WHERE thumbnail_storage_key IS NOT NULL;
 
 -- Audit log (for compliance)
 CREATE TABLE audit_log (
@@ -225,6 +238,196 @@ CREATE TABLE audit_log (
 );
 
 CREATE INDEX idx_audit_log_app_time ON audit_log (app_id, created_at DESC);
+
+-- Data lifecycle purge ledger
+CREATE TABLE data_purge_ledger (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_id UUID NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+  resource_type VARCHAR(50) NOT NULL,
+  resource_id VARCHAR(255) NOT NULL,
+  storage_key TEXT,
+  status VARCHAR(20) NOT NULL DEFAULT 'completed',
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_data_purge_ledger_app_time ON data_purge_ledger (app_id, created_at DESC);
+CREATE INDEX idx_data_purge_ledger_resource ON data_purge_ledger (app_id, resource_type, resource_id);
+CREATE INDEX idx_data_purge_ledger_pending_storage
+  ON data_purge_ledger (app_id, status, storage_key)
+  WHERE status = 'pending' AND storage_key IS NOT NULL;
+
+-- Backup/restore drill metadata
+CREATE TABLE backup_drill (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id TEXT NOT NULL UNIQUE,
+  source_environment TEXT NOT NULL,
+  restore_target TEXT NOT NULL,
+  backup_timestamp TIMESTAMPTZ NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ,
+  postgres_backup_path TEXT NOT NULL,
+  object_manifest_path TEXT NOT NULL,
+  object_manifest_sha256 TEXT,
+  migration_version TEXT NOT NULL,
+  postgres_rpo_seconds INTEGER,
+  restore_rto_seconds INTEGER,
+  status TEXT NOT NULL CHECK (status IN ('running', 'passed', 'failed')),
+  playwright_result TEXT NOT NULL DEFAULT 'skipped' CHECK (playwright_result IN ('passed', 'failed', 'skipped')),
+  report JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE backup_object_manifest (
+  drill_id UUID NOT NULL REFERENCES backup_drill(id) ON DELETE CASCADE,
+  app_id UUID NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+  storage_key TEXT NOT NULL,
+  size_bytes BIGINT,
+  checksum_sha256 TEXT,
+  etag TEXT,
+  last_modified TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (drill_id, storage_key)
+);
+
+CREATE INDEX idx_backup_object_manifest_app
+  ON backup_object_manifest (drill_id, app_id, storage_key);
+
+CREATE TABLE backup_restore_gap (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  drill_id UUID NOT NULL REFERENCES backup_drill(id) ON DELETE CASCADE,
+  app_id UUID NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+  upload_id UUID,
+  storage_key TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (
+    kind IN (
+      'missing_primary',
+      'missing_thumbnail',
+      'purged_object_restored',
+      'upload_references_purged_object',
+      'rejected_purge_key_present',
+      'checksum_mismatch',
+      'cross_app_object'
+    )
+  ),
+  action TEXT NOT NULL CHECK (action IN ('tombstone_upload', 'clear_thumbnail', 'delete_object', 'report_only')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_backup_restore_gap_drill_app
+  ON backup_restore_gap (drill_id, app_id, kind);
+
+CREATE TABLE search_index_outbox (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_id UUID NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+  message_id UUID NOT NULL,
+  operation TEXT NOT NULL CHECK (operation IN ('index', 'update', 'delete')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_search_index_outbox_due
+  ON search_index_outbox (next_attempt_at, created_at)
+  WHERE status IN ('pending', 'failed');
+
+CREATE INDEX idx_search_index_outbox_stale_processing
+  ON search_index_outbox (locked_at, created_at)
+  WHERE status = 'processing';
+
+CREATE INDEX idx_search_index_outbox_app_status
+  ON search_index_outbox (app_id, status, created_at);
+
+CREATE UNIQUE INDEX idx_search_index_outbox_unique_active
+  ON search_index_outbox (app_id, message_id, operation)
+  WHERE status IN ('pending', 'processing', 'failed');
+
+ALTER TABLE backup_drill ENABLE ROW LEVEL SECURITY;
+ALTER TABLE backup_drill FORCE ROW LEVEL SECURITY;
+ALTER TABLE backup_object_manifest ENABLE ROW LEVEL SECURITY;
+ALTER TABLE backup_object_manifest FORCE ROW LEVEL SECURITY;
+ALTER TABLE backup_restore_gap ENABLE ROW LEVEL SECURITY;
+ALTER TABLE backup_restore_gap FORCE ROW LEVEL SECURITY;
+ALTER TABLE search_index_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE search_index_outbox FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY backup_drill_system_only ON backup_drill
+  USING (current_setting('app.system_context', true) = 'true')
+  WITH CHECK (current_setting('app.system_context', true) = 'true');
+
+CREATE POLICY backup_object_manifest_system_only ON backup_object_manifest
+  USING (current_setting('app.system_context', true) = 'true')
+  WITH CHECK (current_setting('app.system_context', true) = 'true');
+
+CREATE POLICY backup_restore_gap_system_only ON backup_restore_gap
+  USING (current_setting('app.system_context', true) = 'true')
+  WITH CHECK (current_setting('app.system_context', true) = 'true');
+
+CREATE POLICY search_index_outbox_app_or_system ON search_index_outbox
+  USING (
+    current_setting('app.system_context', true) = 'true'
+    OR app_id::text = current_setting('app.current_app_id', true)
+  )
+  WITH CHECK (
+    current_setting('app.system_context', true) = 'true'
+    OR app_id::text = current_setting('app.current_app_id', true)
+  );
+
+-- Data export manifests and short-lived JSON artifacts
+CREATE TABLE data_export (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_id UUID NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+  requested_by VARCHAR(255),
+  scope_type VARCHAR(50) NOT NULL,
+  scope_id VARCHAR(255),
+  status VARCHAR(20) NOT NULL DEFAULT 'completed',
+  manifest JSONB NOT NULL,
+  artifact JSONB NOT NULL,
+  checksum VARCHAR(64) NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_data_export_app_time ON data_export (app_id, created_at DESC);
+
+-- Durable realtime outbox
+CREATE TABLE event_outbox (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  app_id UUID NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+  aggregate_type VARCHAR(50) NOT NULL,
+  aggregate_id VARCHAR(255) NOT NULL,
+  event_type VARCHAR(100) NOT NULL,
+  channels TEXT[] NOT NULL,
+  payload JSONB NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  attempts INT NOT NULL DEFAULT 0,
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_at TIMESTAMPTZ,
+  published_at TIMESTAMPTZ,
+  last_error TEXT,
+  idempotency_key VARCHAR(255),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT event_outbox_status_check
+    CHECK (status IN ('pending', 'processing', 'published', 'failed'))
+);
+
+CREATE INDEX idx_event_outbox_due
+  ON event_outbox (next_attempt_at, created_at)
+  WHERE status IN ('pending', 'failed');
+
+CREATE INDEX idx_event_outbox_app_status
+  ON event_outbox (app_id, status, created_at);
+
+CREATE UNIQUE INDEX idx_event_outbox_idempotency_key
+  ON event_outbox (idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
 
 -- Function to increment channel sequence and return new value
 CREATE OR REPLACE FUNCTION next_channel_seq(p_channel_id UUID)
@@ -591,6 +794,7 @@ CREATE TABLE custom_emoji (
   workspace_id UUID REFERENCES workspace(id) ON DELETE CASCADE,
   name VARCHAR(50) NOT NULL,  -- :emoji_name:
   image_url TEXT NOT NULL,
+  image_storage_key TEXT,
   category VARCHAR(50),  -- custom, brand, team
   created_by VARCHAR(255),
   usage_count INT DEFAULT 0,
@@ -601,6 +805,9 @@ CREATE TABLE custom_emoji (
 
 CREATE INDEX idx_emoji_workspace ON custom_emoji (workspace_id, category);
 CREATE INDEX idx_emoji_usage ON custom_emoji (app_id, usage_count DESC);
+CREATE INDEX idx_custom_emoji_image_storage_key
+  ON custom_emoji (app_id, image_storage_key)
+  WHERE image_storage_key IS NOT NULL;
 
 -- Emoji usage tracking (for analytics)
 CREATE TABLE emoji_usage (

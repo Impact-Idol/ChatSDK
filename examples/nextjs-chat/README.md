@@ -30,9 +30,10 @@ Edit `.env.local` with your configuration:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:5500
-NEXT_PUBLIC_API_KEY=your-api-key-here
 NEXT_PUBLIC_WS_URL=ws://localhost:8001/connection/websocket
 NEXT_PUBLIC_APP_ID=default
+CHATSDK_API_KEY=your-server-side-api-key
+CHATSDK_API_URL=http://localhost:5500
 ```
 
 ### 3. Start Development Server

@@ -4,6 +4,7 @@
  */
 
 import { Inngest } from 'inngest';
+import { config } from '../config/defaults';
 
 // Define event types for type safety
 export type ChatEvents = {
@@ -77,5 +78,15 @@ export type ChatEvents = {
 // Create Inngest client
 export const inngest = new Inngest({
   id: 'chatsdk',
-  eventKey: process.env.INNGEST_EVENT_KEY,
+  eventKey: config.inngest.eventKey || undefined,
 });
+
+export const inngestConfigured = Boolean(config.inngest.eventKey && config.inngest.signingKey);
+
+export async function sendInngestEvent(event: Parameters<typeof inngest.send>[0]) {
+  if (!inngestConfigured) {
+    return { skipped: true as const, reason: 'Inngest not configured' };
+  }
+
+  return inngest.send(event);
+}

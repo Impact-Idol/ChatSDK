@@ -10,19 +10,20 @@ import { View, ActivityIndicator } from 'react-native';
 import { ChatProvider } from '@chatsdk/react-native';
 import * as SecureStore from 'expo-secure-store';
 import { usePushNotifications } from '@chatsdk/react-native';
+import type { ChatTokenSet } from '@chatsdk/core';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5500';
 
 export default function RootLayout() {
-  const [token, setToken] = useState<string | null>(null);
+  const [tokens, setTokens] = useState<ChatTokenSet | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Check for saved token
     const loadToken = async () => {
       try {
-        const savedToken = await SecureStore.getItemAsync('chat_token');
-        setToken(savedToken);
+        const savedTokens = await SecureStore.getItemAsync('chat_tokens');
+        setTokens(savedTokens ? JSON.parse(savedTokens) : null);
       } catch {
         // Token not found
       } finally {
@@ -40,7 +41,7 @@ export default function RootLayout() {
     );
   }
 
-  if (!token) {
+  if (!tokens) {
     return (
       <>
         <StatusBar style="light" />
@@ -54,11 +55,7 @@ export default function RootLayout() {
   return (
     <ChatProvider
       apiUrl={API_URL}
-      token={token}
-      onTokenExpired={async () => {
-        await SecureStore.deleteItemAsync('chat_token');
-        setToken(null);
-      }}
+      tokenProvider={async () => tokens}
     >
       <StatusBar style="light" />
       <Stack

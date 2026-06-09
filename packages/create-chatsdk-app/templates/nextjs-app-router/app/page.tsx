@@ -20,7 +20,23 @@ export default function Home() {
     // Connect to ChatSDK
     async function connect() {
       try {
-        const chatClient = await ChatSDK.connectDevelopment({
+        const chatClient = await ChatSDK.connect({
+          tokenProvider: async () => {
+            const response = await fetch(process.env.NEXT_PUBLIC_CHATSDK_TOKEN_URL || '/api/chatsdk-token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                userId: user,
+                displayName: user === 'alice' ? 'Alice Johnson' : 'Bob Smith',
+              }),
+            });
+
+            if (!response.ok) {
+              throw new Error('Failed to get ChatSDK token');
+            }
+
+            return response.json();
+          },
           userId: user,
           displayName: user === 'alice' ? 'Alice Johnson' : 'Bob Smith',
           apiUrl: process.env.NEXT_PUBLIC_CHATSDK_API_URL || 'http://localhost:5500',

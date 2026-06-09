@@ -10,41 +10,77 @@ import type { Channel, Message } from '@chatsdk/core';
 
 // Configuration
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5500';
-const API_KEY = import.meta.env.VITE_API_KEY || '';
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/connection/websocket';
-const DEMO_USER = { id: 'user-1', name: 'Alice Johnson' };
+const TOKEN_URL = import.meta.env.VITE_CHATSDK_TOKEN_URL || '/api/chatsdk-token';
+const DEMO_USERS = [
+  { id: 'user-1', name: 'Alice Johnson', aliases: ['alice', 'user-1'] },
+  { id: 'user-2', name: 'Bob Smith', aliases: ['bob', 'user-2'] },
+  { id: 'user-3', name: 'Carol Williams', aliases: ['carol', 'user-3'] },
+];
+
+function getDemoUser() {
+  const params = new URLSearchParams(window.location.search);
+  const requestedUser = params.get('user') || params.get('userId') || params.get('as');
+  const requestedName = params.get('name') || params.get('displayName');
+
+  if (requestedUser) {
+    const normalized = requestedUser.toLowerCase();
+    const knownUser = DEMO_USERS.find((user) => user.aliases.includes(normalized));
+
+    if (knownUser) {
+      return { id: knownUser.id, name: requestedName || knownUser.name };
+    }
+
+    return { id: requestedUser, name: requestedName || requestedUser };
+  }
+
+  return { id: DEMO_USERS[0].id, name: DEMO_USERS[0].name };
+}
+
+const DEMO_USER = getDemoUser();
 
 // Debug logging
 console.log('[App] Configuration:', {
   API_URL,
-  API_KEY: API_KEY ? API_KEY.substring(0, 20) + '...' : 'UNDEFINED',
+  TOKEN_URL,
   envViteApiUrl: import.meta.env.VITE_API_URL,
-  envViteApiKey: import.meta.env.VITE_API_KEY ? import.meta.env.VITE_API_KEY.substring(0, 20) + '...' : 'UNDEFINED',
 });
 
 // Helper to fetch token from API
-async function fetchToken(userId: string, name: string): Promise<{ token: string; wsToken: string }> {
-  const response = await fetch(`${API_URL}/tokens`, {
+async function fetchToken(userId: string, name: string): Promise<{
+  token: string;
+  wsToken: string;
+  refreshToken?: string;
+  expiresIn?: number;
+}> {
+  const response = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': API_KEY,
     },
-    body: JSON.stringify({ userId, name }),
+    body: JSON.stringify({ userId, displayName: name, name }),
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch token: ${response.statusText}`);
+    throw new Error(`Failed to fetch token: ${response.statusText}. Configure VITE_CHATSDK_TOKEN_URL to a backend endpoint that mints ChatSDK user tokens.`);
   }
 
-  return response.json();
+  const data = await response.json();
+  return {
+    token: data.token,
+    wsToken: data.wsToken ?? data._internal?.wsToken ?? data.token,
+    refreshToken: data.refreshToken,
+    expiresIn: data.expiresIn,
+  };
 }
+
+const tokenProvider = () => fetchToken(DEMO_USER.id, DEMO_USER.name);
 
 function AppContent() {
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [selectedThread, setSelectedThread] = useState<{ channelId: string; message: Message } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const connectionState = useConnectionState();
+  const { state: connectionState } = useConnectionState();
   const { setOnline, setOffline } = usePresence();
   const totalUnread = useTotalUnreadCount();
 
@@ -98,6 +134,13 @@ function AppContent() {
         <ChannelList selectedId={selectedChannel?.id} onSelect={setSelectedChannel} />
 
         <div className="sidebar-footer">
+          <div className="demo-user">
+            <div className="demo-user-avatar">{DEMO_USER.name.charAt(0).toUpperCase()}</div>
+            <div className="demo-user-meta">
+              <span className="demo-user-name">{DEMO_USER.name}</span>
+              <span className="demo-user-id">{DEMO_USER.id}</span>
+            </div>
+          </div>
           <ConnectionStatus state={connectionState} />
         </div>
       </aside>
@@ -173,11 +216,8 @@ function AuthWrapper({ children }: { children: React.ReactNode }) {
     const authenticate = async () => {
       try {
         console.log('[App] Fetching tokens...');
-        const { token, wsToken } = await fetchToken(DEMO_USER.id, DEMO_USER.name);
-        console.log('[App] Tokens received:', { token: token.substring(0, 20) + '...', wsToken: wsToken.substring(0, 20) + '...' });
-
         console.log('[App] Connecting user...');
-        await connectUser(DEMO_USER, { token, wsToken });
+        await connectUser(DEMO_USER);
         console.log('[App] User connected successfully');
 
         setReady(true);
@@ -224,7 +264,7 @@ function AuthWrapper({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <ErrorBoundary>
-      <ChatProvider apiKey={API_KEY} apiUrl={API_URL} wsUrl={WS_URL} debug={true}>
+      <ChatProvider apiUrl={API_URL} wsUrl={WS_URL} tokenProvider={tokenProvider} debug={true}>
         <AuthWrapper>
           <AppContent />
         </AuthWrapper>

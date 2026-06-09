@@ -5,23 +5,10 @@
  * Copy this to your Impact Idol project: app/layout.tsx
  */
 
-import { ChatProvider } from '@chatsdk/react';
 import { impactIdolTheme, themeToCSSVariables } from '@chatsdk/react';
-import { ChatClient } from '@chatsdk/core';
 import { WorkspaceSwitcher } from '@chatsdk/react';
+import { ChatSDKProvider } from './providers';
 import './globals.css';
-
-// Initialize ChatSDK client
-// This should be done once at the app level
-const chatClient = new ChatClient({
-  apiUrl: process.env.NEXT_PUBLIC_CHATSDK_API_URL!,
-  apiKey: process.env.NEXT_PUBLIC_CHATSDK_API_KEY!,
-  // Optional: Configure connection settings
-  options: {
-    reconnectInterval: 5000,
-    maxReconnectAttempts: 10,
-  },
-});
 
 export const metadata = {
   title: 'Impact Idol - Community Chat',
@@ -40,7 +27,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
         <style dangerouslySetInnerHTML={{ __html: themeToCSSVariables(impactIdolTheme) }} />
       </head>
       <body className="font-sans antialiased">
-        <ChatProvider client={chatClient} theme={impactIdolTheme}>
+        <ChatSDKProvider>
           <div className="flex h-screen overflow-hidden">
             {/* Sidebar with Workspace Switcher */}
             <aside className="w-64 bg-gradient-to-b from-purple-600 to-purple-800 text-white p-4">
@@ -112,7 +99,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
               {children}
             </main>
           </div>
-        </ChatProvider>
+        </ChatSDKProvider>
       </body>
     </html>
   );
