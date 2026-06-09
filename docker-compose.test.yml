@@ -153,6 +153,7 @@ services:
       # Database
       DATABASE_URL: postgresql://chatsdk:chatsdk_test_123@postgres:5432/chatsdk
       DATABASE_SSL: "false"
+      ALLOW_INSECURE_DATABASE_TRANSPORT: "true"
       REQUIRE_FLYWAY_HISTORY: "true"
 
       # MinIO S3

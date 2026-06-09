@@ -510,7 +510,7 @@ export async function assertLifecycleSchemaReady(): Promise<void> {
   const migration = await db.query<{ version: string }>(
     `SELECT version
      FROM flyway_schema_history
-     WHERE version = '13'
+     WHERE version IN ('13', '013')
        AND success = true
      LIMIT 1`
   );
