@@ -3,7 +3,7 @@
  * Generate secure random keys and tokens
  */
 
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 
 /**
  * Generate a secure API key
@@ -12,6 +12,10 @@ import { randomBytes } from 'crypto';
 export function generateApiKey(): string {
   const bytes = randomBytes(20); // 20 bytes = 40 hex characters
   return `chatsdk_${bytes.toString('hex')}`;
+}
+
+export function hashApiKey(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex');
 }
 
 /**

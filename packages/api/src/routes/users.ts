@@ -437,6 +437,192 @@ const syncUsersSchema = z.object({
   users: z.array(syncUserSchema).min(1).max(100),
 });
 
+const ensureUserSchema = z.object({
+  userId: z.string().min(1).max(255),
+  name: z.string().min(1).max(255).optional(),
+  email: z.string().email().optional().nullable(),
+  image: z.string().url().optional().nullable(),
+  custom: z.record(z.unknown()).optional(),
+});
+
+const bulkEnsureUsersSchema = z.object({
+  users: z.array(ensureUserSchema).min(1).max(1000),
+});
+
+type EnsureUserInput = z.infer<typeof ensureUserSchema>;
+
+function buildCustomPatch(input: Pick<EnsureUserInput, 'email' | 'custom'>): Record<string, unknown> {
+  const customPatch: Record<string, unknown> = { ...(input.custom ?? {}) };
+  if (input.email) {
+    customPatch.email = input.email;
+  }
+  return customPatch;
+}
+
+function serializeUser(row: {
+  id: string;
+  name: string | null;
+  image_url: string | null;
+  custom_data: Record<string, unknown> | null;
+  last_active_at?: Date | string | null;
+  created_at?: Date | string | null;
+  updated_at?: Date | string | null;
+}) {
+  const custom = row.custom_data ?? {};
+  return {
+    id: row.id,
+    name: row.name,
+    image: row.image_url,
+    email: typeof custom.email === 'string' ? custom.email : null,
+    custom,
+    lastActiveAt: row.last_active_at ?? null,
+    createdAt: row.created_at ?? null,
+    updatedAt: row.updated_at ?? null,
+  };
+}
+
+type EnsureUserRow = {
+  id: string;
+  name: string | null;
+  image_url: string | null;
+  custom_data: Record<string, unknown> | null;
+  last_active_at: Date | string | null;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+  inserted: boolean;
+  existed_before: boolean;
+  changed: boolean;
+};
+
+async function ensureAppUser(appId: string, input: EnsureUserInput) {
+  const customPatch = buildCustomPatch(input);
+  const hasProfilePatch = Boolean(
+    input.name !== undefined ||
+    input.image !== undefined ||
+    Object.keys(customPatch).length > 0
+  );
+  const customJson = JSON.stringify(customPatch);
+
+  const result = await db.query<EnsureUserRow>(
+    `WITH existing AS (
+       SELECT id, name, image_url, custom_data
+       FROM app_user
+       WHERE app_id = $1 AND id = $2
+     ),
+     upserted AS (
+       INSERT INTO app_user (app_id, id, name, image_url, custom_data, last_active_at)
+       VALUES ($1, $2, COALESCE($3, $2), $4, $5::jsonb, NOW())
+       ON CONFLICT (app_id, id) DO UPDATE SET
+         name = COALESCE($3, app_user.name),
+         image_url = COALESCE($4, app_user.image_url),
+         custom_data = app_user.custom_data || $5::jsonb,
+         updated_at = CASE WHEN $6 THEN NOW() ELSE app_user.updated_at END
+       RETURNING
+         id,
+         name,
+         image_url,
+         custom_data,
+         last_active_at,
+         created_at,
+         updated_at,
+         (xmax = 0) AS inserted
+     )
+     SELECT
+       upserted.*,
+       EXISTS (SELECT 1 FROM existing) AS existed_before,
+       EXISTS (
+         SELECT 1
+         FROM existing
+         WHERE
+           ($3::text IS NOT NULL AND existing.name IS DISTINCT FROM $3)
+           OR ($4::text IS NOT NULL AND existing.image_url IS DISTINCT FROM $4)
+           OR ($5::jsonb <> '{}'::jsonb AND NOT COALESCE(existing.custom_data, '{}'::jsonb) @> $5::jsonb)
+       ) AS changed
+     FROM upserted`,
+    [
+      appId,
+      input.userId,
+      input.name ?? null,
+      input.image ?? null,
+      customJson,
+      hasProfilePatch,
+    ]
+  );
+
+  const row = result.rows[0];
+  const action = row.inserted
+    ? 'created'
+    : row.changed
+    ? 'updated'
+    : 'existing';
+
+  return {
+    action,
+    created: action === 'created',
+    updated: action === 'updated',
+    user: serializeUser(row),
+  };
+}
+
+/**
+ * Ensure a single user exists with app/server credentials.
+ * POST /api/users/ensure
+ *
+ * This is intended for server-side app integrations such as Vouch signup,
+ * login, and DM creation. It is intentionally not available to browser bearer
+ * tokens.
+ */
+userRoutes.post(
+  '/ensure',
+  requireApp,
+  zValidator('json', ensureUserSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const body = c.req.valid('json');
+    const result = await ensureAppUser(auth.appId, body);
+
+    return c.json(result, result.created ? 201 : 200);
+  }
+);
+
+/**
+ * Ensure multiple users exist with app/server credentials.
+ * POST /api/users/bulk-ensure
+ *
+ * Useful for backfilling eligible active adult users before launch.
+ */
+userRoutes.post(
+  '/bulk-ensure',
+  requireApp,
+  zValidator('json', bulkEnsureUsersSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const { users } = c.req.valid('json');
+    const ensured: Array<Awaited<ReturnType<typeof ensureAppUser>>> = [];
+    const errors: { userId: string; error: string }[] = [];
+
+    for (const user of users) {
+      try {
+        ensured.push(await ensureAppUser(auth.appId, user));
+      } catch (error) {
+        errors.push({
+          userId: user.userId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    return c.json({
+      ensured,
+      count: ensured.length,
+      created: ensured.filter((result) => result.action === 'created').length,
+      updated: ensured.filter((result) => result.action === 'updated').length,
+      existing: ensured.filter((result) => result.action === 'existing').length,
+      errors,
+    }, errors.length > 0 ? 207 : 200);
+  }
+);
+
 /**
  * Sync users (bulk create/update)
  * POST /api/users/sync

@@ -1,0 +1,69 @@
+wing: chatsdk
+rooms:
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: product_memory
+  description: Durable product memory and decisions
+  keywords:
+  - product_memory
+  - product-memory
+  - decisions
+  - gotchas
+- name: graphify_out
+  description: Files from graphify-out/
+  keywords:
+  - graphify_out
+  - graphify-out
+- name: packages
+  description: Source packages for API, core, React, SDKs, and tools
+  keywords:
+  - packages
+  - package
+- name: api
+  description: ChatSDK API server source
+  keywords:
+  - api
+  - backend
+  - server
+- name: react
+  description: React SDK source and examples
+  keywords:
+  - react
+  - frontend
+  - hooks
+- name: ios
+  description: iOS SDK source
+  keywords:
+  - ios
+  - swift
+  - swiftui
+- name: examples
+  description: Example applications and integration samples
+  keywords:
+  - examples
+  - demo
+  - integration
+- name: docker
+  description: Docker, deployment, and migration files
+  keywords:
+  - docker
+  - deploy
+  - deployment
+  - migrations
+- name: scripts
+  description: Utility and deployment scripts
+  keywords:
+  - scripts
+  - tooling
+- name: testing
+  description: Tests and test support files
+  keywords:
+  - tests
+  - testing
+  - playwright
+- name: general
+  description: Files that do not fit other rooms
+  keywords: []

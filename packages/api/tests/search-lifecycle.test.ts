@@ -28,6 +28,7 @@ function testApp() {
       authType: 'user',
       appId: APP_ID,
       userId: USER_ID,
+      scopes: ['search:read'],
       user: { id: USER_ID, name: 'Alice' },
     });
     await next();

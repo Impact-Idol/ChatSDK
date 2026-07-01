@@ -417,14 +417,19 @@ export function assertBrokerScopeAllowsMembership(
   }
 ): void {
   if (
-    broker.allowedExternalTenantIds.length > 0
-    && !broker.allowedExternalTenantIds.includes(input.externalTenantId)
+    broker.allowedExternalTenantIds.length === 0
+    || broker.allowedUserIdPrefixes.length === 0
+    || broker.allowedChannelIdPrefixes.length === 0
+  ) {
+    throw new BrokerAuthError('BROKER_SCOPE_INVALID', 'Broker scope constraints must be non-empty', 403);
+  }
+  if (
+    !broker.allowedExternalTenantIds.includes(input.externalTenantId)
   ) {
     throw new BrokerAuthError('BROKER_TENANT_DENIED', 'Broker credential is not allowed for this external tenant', 403);
   }
   if (
-    broker.allowedUserIdPrefixes.length > 0
-    && !broker.allowedUserIdPrefixes.some(prefix => input.userId.startsWith(prefix))
+    !broker.allowedUserIdPrefixes.some(prefix => input.userId.startsWith(prefix))
   ) {
     throw new BrokerAuthError('BROKER_USER_DENIED', 'Broker credential is not allowed for this user', 403);
   }
@@ -432,8 +437,7 @@ export function assertBrokerScopeAllowsMembership(
     throw new BrokerAuthError('BROKER_MEMBERSHIP_FANOUT_EXCEEDED', 'Membership snapshot exceeds broker fanout limit', 400);
   }
   if (
-    broker.allowedChannelIdPrefixes.length > 0
-    && input.channelIds.some(channelId => !broker.allowedChannelIdPrefixes.some(prefix => channelId.startsWith(prefix)))
+    input.channelIds.some(channelId => !broker.allowedChannelIdPrefixes.some(prefix => channelId.startsWith(prefix)))
   ) {
     throw new BrokerAuthError('BROKER_CHANNEL_DENIED', 'Broker credential is not allowed for one or more channels', 403);
   }

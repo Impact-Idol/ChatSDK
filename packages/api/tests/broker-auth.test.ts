@@ -17,6 +17,7 @@ vi.mock('../src/services/rate-limit', () => ({
 }));
 
 import {
+  assertBrokerScopeAllowsMembership,
   authenticateBrokerRequest,
   BrokerAuthError,
 } from '../src/services/broker-auth';
@@ -259,5 +260,26 @@ describe('broker service JWT authentication', () => {
       expect.stringContaining('INSERT INTO broker_mint_audit'),
       expect.arrayContaining(['broker_origin_denied'])
     );
+  });
+
+  it('fails closed when broker membership scope constraints are empty', () => {
+    expect(() => assertBrokerScopeAllowsMembership({
+      appId: APP_ID,
+      clientId: CLIENT_ID,
+      credentialId: CREDENTIAL_ID,
+      clientSlug: CLIENT_SLUG,
+      allowedExternalTenantIds: [],
+      allowedUserIdPrefixes: ['client-a:'],
+      allowedChannelIdPrefixes: ['support-'],
+      allowedOrigins: ['https://client-a.example.com'],
+      defaultScopes: ['chat:read'],
+      allowedScopes: ['chat:read'],
+      maxTokenTtlSeconds: 900,
+      maxMembershipFanout: 10,
+    }, {
+      externalTenantId: 'tenant-a',
+      userId: 'client-a:user-1',
+      channelIds: ['support-1'],
+    })).toThrow(BrokerAuthError);
   });
 });

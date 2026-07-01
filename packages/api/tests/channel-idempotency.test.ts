@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHash } from 'crypto';
 
 // Mock the database before importing anything that uses it
 const mockQuery = vi.fn();
@@ -56,14 +57,26 @@ import * as jose from 'jose';
 const JWT_SECRET = process.env.JWT_SECRET || 'test-secret-key-for-testing';
 const TEST_APP_ID = '00000000-0000-0000-0000-000000000001';
 const TEST_USER_ID = 'user-111';
+const TEST_API_KEY = 'a'.repeat(64);
 
 async function generateToken(userId: string, appId: string): Promise<string> {
   const secret = new TextEncoder().encode(JWT_SECRET);
-  return new jose.SignJWT({ user_id: userId, app_id: appId })
+  return new jose.SignJWT({
+    user_id: userId,
+    app_id: appId,
+    scopes: ['chat:read', 'chat:write', 'channel:create'],
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('1h')
     .sign(secret);
+}
+
+function dmCid(userA: string, userB: string): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([userA, userB].sort()))
+    .digest('hex');
+  return `messaging:dm:${digest}`;
 }
 
 function makeChannelRow(overrides: Record<string, unknown> = {}) {
@@ -333,5 +346,410 @@ describe('POST /api/channels - idempotency key', () => {
     expect(insertCall![0]).toContain('ON CONFLICT');
     expect(insertCall![0]).toContain('idempotency_key');
     expect(insertCall![0]).toContain('DO NOTHING');
+  });
+});
+
+describe('POST /api/channels/dm/ensure', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockTransaction.mockReset();
+  });
+
+  it('creates a deterministic DM with app/server auth', async () => {
+    const channelRow = makeChannelRow({
+      id: '44444444-4444-4444-8444-444444444444',
+      cid: dmCid(TEST_USER_ID, 'peer-222'),
+      type: 'messaging',
+      created_by: TEST_USER_ID,
+      member_count: 2,
+    });
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id FROM app_user') && sql.includes('ANY')) {
+        return { rows: [{ id: TEST_USER_ID }, { id: 'peer-222' }] };
+      }
+      if (sql.includes('SELECT * FROM channel WHERE app_id') && sql.includes('cid')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    mockTransaction.mockImplementation(async (fn: any) => {
+      const txClient = {
+        query: vi.fn((sql: string) => {
+          if (sql.includes('INSERT INTO channel')) {
+            return { rows: [channelRow] };
+          }
+          return { rows: [] };
+        }),
+      };
+      return fn(txClient);
+    });
+
+    const res = await app.request('/api/channels/dm/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        requesterUserId: TEST_USER_ID,
+        peerUserId: 'peer-222',
+        custom: { source: 'vouch' },
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(data).toMatchObject({
+      action: 'created',
+      created: true,
+      channel: {
+        id: channelRow.id,
+        cid: channelRow.cid,
+        type: 'messaging',
+      },
+    });
+  });
+
+  it('returns an existing deterministic DM with app/server auth', async () => {
+    const channelRow = makeChannelRow({
+      cid: dmCid(TEST_USER_ID, 'peer-222'),
+      type: 'messaging',
+      created_by: TEST_USER_ID,
+      member_count: 2,
+    });
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id FROM app_user') && sql.includes('ANY')) {
+        return { rows: [{ id: TEST_USER_ID }, { id: 'peer-222' }] };
+      }
+      if (sql.includes('SELECT * FROM channel WHERE app_id') && sql.includes('cid')) {
+        return { rows: [channelRow] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await app.request('/api/channels/dm/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        requesterUserId: TEST_USER_ID,
+        peerUserId: 'peer-222',
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toMatchObject({
+      action: 'existing',
+      created: false,
+      channel: {
+        cid: channelRow.cid,
+        type: 'messaging',
+      },
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it('resolves concurrent DM ensure conflicts by deterministic CID only', async () => {
+    const channelRow = makeChannelRow({
+      id: '55555555-5555-4555-8555-555555555555',
+      cid: dmCid(TEST_USER_ID, 'peer-222'),
+      type: 'messaging',
+      created_by: TEST_USER_ID,
+      member_count: 2,
+      idempotency_key: 'unrelated-client-key',
+    });
+    let cidSelectParams: unknown[] | undefined;
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id FROM app_user') && sql.includes('ANY')) {
+        return { rows: [{ id: TEST_USER_ID }, { id: 'peer-222' }] };
+      }
+      if (sql.includes('SELECT * FROM channel WHERE app_id') && sql.includes('cid')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    mockTransaction.mockImplementation(async (fn: any) => {
+      const txClient = {
+        query: vi.fn((sql: string, params?: unknown[]) => {
+          if (sql.includes('INSERT INTO channel')) {
+            return { rows: [] };
+          }
+          if (sql.includes('SELECT * FROM channel WHERE app_id') && sql.includes('cid')) {
+            cidSelectParams = params;
+            return { rows: [channelRow] };
+          }
+          return { rows: [] };
+        }),
+      };
+      return fn(txClient);
+    });
+
+    const res = await app.request('/api/channels/dm/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        requesterUserId: TEST_USER_ID,
+        peerUserId: 'peer-222',
+        idempotencyKey: 'should-not-drive-dm-resolution',
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toMatchObject({
+      action: 'existing',
+      created: false,
+      channel: {
+        id: channelRow.id,
+        cid: channelRow.cid,
+      },
+    });
+    expect(cidSelectParams).toEqual([TEST_APP_ID, channelRow.cid]);
+  });
+
+  it('rejects browser bearer tokens on server-side DM ensure', async () => {
+    setupAuthMocks();
+    const token = await generateToken(TEST_USER_ID, TEST_APP_ID);
+
+    const res = await app.request('/api/channels/dm/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        requesterUserId: TEST_USER_ID,
+        peerUserId: 'peer-222',
+      }),
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects adding members to messaging DMs even for elevated existing roles', async () => {
+    const token = await generateToken(TEST_USER_ID, TEST_APP_ID);
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id, name, image_url FROM app_user')) {
+        return { rows: [{ id: TEST_USER_ID, name: 'Test User', image_url: null }] };
+      }
+      if (sql.includes('SELECT role FROM channel_member')) {
+        return { rows: [{ role: 'owner' }] };
+      }
+      if (sql.includes('SELECT type, workspace_id FROM channel')) {
+        return { rows: [{ type: 'messaging', workspace_id: null }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await app.request('/api/channels/33333333-3333-3333-3333-333333333333/members', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ userId: 'blocked-or-ineligible-user' }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toBe('Direct message membership is fixed');
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/channels/group/ensure and /squad/ensure', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockTransaction.mockReset();
+  });
+
+  it('creates a deterministic app-auth group channel with explicit members', async () => {
+    const channelRow = makeChannelRow({
+      id: '77777777-7777-4777-8777-777777777777',
+      cid: 'vouch:squad:squad-123',
+      type: 'group',
+      name: 'Squad 123',
+      created_by: TEST_USER_ID,
+      member_count: 2,
+      config: {
+        custom: { source: 'vouch', kind: 'squad', squadId: 'squad-123' },
+        kind: 'squad',
+        source: 'app-auth-ensure',
+      },
+    });
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id FROM app_user') && sql.includes('ANY')) {
+        return { rows: [{ id: TEST_USER_ID }, { id: 'peer-222' }] };
+      }
+      if (sql.includes('SELECT * FROM channel WHERE app_id') && sql.includes('cid')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    mockTransaction.mockImplementation(async (fn: any) => {
+      const txClient = {
+        query: vi.fn((sql: string) => {
+          if (sql.includes('INSERT INTO channel')) {
+            return { rows: [channelRow] };
+          }
+          return { rows: [] };
+        }),
+      };
+      return fn(txClient);
+    });
+
+    const res = await app.request('/api/channels/squad/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        externalId: 'vouch:squad:squad-123',
+        name: 'Squad 123',
+        memberIds: [TEST_USER_ID, 'peer-222'],
+        custom: { source: 'vouch', kind: 'squad', squadId: 'squad-123' },
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(data).toMatchObject({
+      action: 'created',
+      created: true,
+      channel: {
+        id: channelRow.id,
+        cid: 'vouch:squad:squad-123',
+        type: 'group',
+        name: 'Squad 123',
+      },
+    });
+  });
+
+  it('returns an existing deterministic group channel by external ID', async () => {
+    const channelRow = makeChannelRow({
+      cid: 'vouch:group:group-456',
+      type: 'group',
+      name: 'Group 456',
+      member_count: 3,
+      idempotency_key: 'vouch:group:group-456',
+    });
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id FROM app_user') && sql.includes('ANY')) {
+        return { rows: [{ id: TEST_USER_ID }, { id: 'peer-222' }] };
+      }
+      if (sql.includes('SELECT * FROM channel WHERE app_id') && sql.includes('cid')) {
+        return { rows: [channelRow] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await app.request('/api/channels/group/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        externalId: 'vouch:group:group-456',
+        memberIds: [TEST_USER_ID, 'peer-222'],
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data).toMatchObject({
+      action: 'existing',
+      created: false,
+      channel: {
+        cid: 'vouch:group:group-456',
+        type: 'group',
+      },
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects group ensure when any member user is missing', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('SELECT id FROM app_user') && sql.includes('ANY')) {
+        return { rows: [{ id: TEST_USER_ID }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await app.request('/api/channels/group/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        externalId: 'vouch:group:missing-user',
+        memberIds: [TEST_USER_ID, 'missing-user'],
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error).toMatchObject({
+      message: 'User not found',
+      missingUserIds: ['missing-user'],
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects browser bearer tokens on server-side group ensure', async () => {
+    setupAuthMocks();
+    const token = await generateToken(TEST_USER_ID, TEST_APP_ID);
+
+    const res = await app.request('/api/channels/group/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        externalId: 'vouch:group:browser-denied',
+        memberIds: [TEST_USER_ID, 'peer-222'],
+      }),
+    });
+
+    expect(res.status).toBe(401);
   });
 });

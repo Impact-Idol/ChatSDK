@@ -12,6 +12,7 @@ build/
 .idea/
 .vscode/
 .claude/
+.codex/
 *.swp
 *.swo
 
@@ -21,6 +22,9 @@ Thumbs.db
 
 # Environment - Comprehensive protection against credential leaks
 .env
+.secrets/
+.ssh/
+**/.ssh/
 .env.local
 .env.*.local
 .env.production
@@ -34,12 +38,44 @@ Thumbs.db
 **/.env.development
 **/.env.staging
 **/novu.env.local
+*.env.bak*
+*.env.backup*
 
 # Keep example files
 !.env.example
 !**/.env.example
 !.env.production.example
 !.env.production.minimal
+
+# Credentials, certificates, and local connection material
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.crt
+*.cer
+*.csr
+known_hosts
+authorized_keys
+kubeconfig
+*.kubeconfig
+*.mobileprovision
+*.provisionprofile
+
+# Local deploy scratch/backups
+*.bak
+*.backup
+*.orig
+*.tmp
+*.local
+deploy/*.env
+deploy/*.override.local.yml
+docker/*.override.local.yml
 
 # Logs
 *.log
@@ -48,6 +84,10 @@ npm-debug.log*
 # Test coverage
 coverage/
 test-results/
+
+# Graphify generated knowledge graph output
+graphify-out/
+graphify-out-village-reference/
 
 # Swift
 .build/

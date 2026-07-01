@@ -52,6 +52,7 @@ export async function issueTokenBundle(input: {
   appId: string;
   userId: string;
   sessionId?: string;
+  scopes?: string[];
 }): Promise<TokenBundle> {
   const sessionId = input.sessionId ?? randomUUID();
   const sessionExpiresAt = expiryDate(REFRESH_TOKEN_EXPIRY);
@@ -83,6 +84,7 @@ export async function issueTokenBundle(input: {
     app_id: input.appId,
     type: 'access',
     sid: sessionId,
+    ...(input.scopes ? { scopes: input.scopes } : {}),
   })
     .setProtectedHeader({ alg: 'HS256', kid: config.jwt.keyId })
     .setIssuer(config.jwt.issuer)
@@ -99,6 +101,7 @@ export async function issueTokenBundle(input: {
     app_id: input.appId,
     type: 'refresh',
     sid: sessionId,
+    ...(input.scopes ? { scopes: input.scopes } : {}),
   })
     .setProtectedHeader({ alg: 'HS256', kid: config.jwt.keyId })
     .setIssuer(config.jwt.issuer)
@@ -115,6 +118,7 @@ export async function issueTokenBundle(input: {
     user_id: input.userId,
     app_id: input.appId,
     sid: sessionId,
+    ...(input.scopes ? { scopes: input.scopes } : {}),
   })
     .setProtectedHeader({ alg: 'HS256', kid: config.jwt.keyId })
     .setIssuer(config.jwt.issuer)
@@ -282,6 +286,7 @@ export async function refreshTokenBundle(refreshToken: string): Promise<TokenBun
     appId: verified.appId,
     userId: verified.userId,
     sessionId: verified.sessionId,
+    scopes: getScopesFromPayload(payload),
   });
 }
 
@@ -338,6 +343,17 @@ async function verifyJwt(token: string, secret: Uint8Array): Promise<{ payload: 
     }
     throw new TokenValidationError('TOKEN_INVALID', 'Invalid token');
   }
+}
+
+function getScopesFromPayload(payload: JWTPayload): string[] | undefined {
+  const rawScopes = payload.scopes ?? payload.scp;
+  if (Array.isArray(rawScopes) && rawScopes.every((scope) => typeof scope === 'string')) {
+    return rawScopes;
+  }
+  if (typeof rawScopes === 'string') {
+    return rawScopes.split(' ').filter(Boolean);
+  }
+  return undefined;
 }
 
 async function validatePayload(

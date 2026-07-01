@@ -84,7 +84,11 @@ const MESSAGE_ID = '11111111-1111-4111-8111-111111111111';
 
 async function generateToken(scopes?: string[]): Promise<string> {
   const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'test-secret-key-for-testing');
-  return new jose.SignJWT({ user_id: TEST_USER_ID, app_id: TEST_APP_ID, scopes })
+  return new jose.SignJWT({
+    user_id: TEST_USER_ID,
+    app_id: TEST_APP_ID,
+    scopes: scopes ?? ['chat:read', 'chat:write', 'upload:write'],
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('1h')

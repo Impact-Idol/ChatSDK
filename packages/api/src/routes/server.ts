@@ -381,11 +381,11 @@ serverRoutes.put(
           `INSERT INTO app_user (app_id, id, name, image_url, custom_data, last_active_at)
            VALUES ($1, $2, $3, $4, $5::jsonb, NOW())
            ON CONFLICT (app_id, id) DO UPDATE SET
-             name = COALESCE($3, app_user.name),
+             name = COALESCE($3, app_user.name, $2),
              image_url = COALESCE($4, app_user.image_url),
              custom_data = app_user.custom_data || $5::jsonb,
              updated_at = NOW()`,
-          [appId, userId, body.displayName ?? userId, body.avatarUrl ?? null, customData]
+          [appId, userId, body.displayName ?? null, body.avatarUrl ?? null, customData]
         );
 
         const tombstonedAt = body.status === 'active' ? null : new Date();

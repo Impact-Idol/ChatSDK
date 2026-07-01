@@ -1,0 +1,36 @@
+run_id: 2026-06-20-multi-project-onboarding-hardening
+objective: Turn the Vouch integration lessons into a generic multi-project onboarding, provisioning, verification, and hardening workflow for ChatSDK.
+status: complete
+started_at: 2026-06-20
+source_workspace: /Users/pushkar/chatsdk
+governing_specs:
+  - docs/features/multi-project-onboarding-hardening/SPEC.md
+  - docs/features/multi-project-onboarding-hardening/TEST_PLAN.md
+  - docs/features/chatsdk-production-hardening/CLIENT_OWNED_TOKEN_BROKER_PLAN.md
+  - docs/features/chatsdk-production-hardening/MULTI_TENANT_ARCHITECTURE_SPEC.md
+  - docs/features/vouch-integration/INTEGRATION_PACKET.md
+review_policy:
+  after_each_implementation_slice:
+    - GPT-5.5 High adversarial review
+    - Antigravity adversarial review via agy
+    - fix all critical/high findings before proceeding
+test_policy:
+  required:
+    - focused tests for each provisioning, broker, membership, and smoke surface
+    - seeded two-project/two-app isolation tests
+    - negative tests for demo app misuse, cross-app access, origin mismatch, stale membership, disabled credentials, scope escalation, and removed-member access
+    - deployed smoke validation when live services are available
+artifacts:
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/00-run-manifest.yml
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/01-run-plan.md
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/02-slice-0-discovery-contract-log.md
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/03-slice-1-app-credential-provisioning-log.md
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/04-slice-2-broker-scope-provisioning-log.md
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/05-slice-3-membership-sync-log.md
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/06-slice-4-project-smoke-cli-log.md
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/07-slice-5-docs-runbooks-log.md
+  - docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/08-final-adversarial-review-resolution.md
+notes:
+  - Vouch is the seed/reference client, not a core special case.
+  - The default/demo app ID, including 001, must not be required for any production-like project onboarding.
+  - The first implementation should prefer narrow, testable slices over a broad admin-console build.

@@ -72,9 +72,16 @@ const CHANNEL_ID = '22222222-2222-4222-8222-222222222222';
 const WORKSPACE_ID = '33333333-3333-4333-8333-333333333333';
 const POLL_ID = '44444444-4444-4444-8444-444444444444';
 
-async function generateToken(userId = TEST_USER_ID): Promise<string> {
+async function generateToken(userId = TEST_USER_ID, scopes?: string[]): Promise<string> {
   const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'test-secret-key-for-testing');
-  return new jose.SignJWT({ user_id: userId, app_id: TEST_APP_ID })
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    app_id: TEST_APP_ID,
+  };
+  if (scopes) {
+    payload.scopes = scopes;
+  }
+  return new jose.SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('1h')
@@ -125,7 +132,7 @@ describe('durable realtime route outbox behavior', () => {
     };
     mockTransaction.mockImplementation(async (fn: any) => fn(txClient));
 
-    const token = await generateToken();
+    const token = await generateToken(TEST_USER_ID, ['chat:write']);
     const res = await app.request('/api/workspaces', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -186,7 +193,7 @@ describe('durable realtime route outbox behavior', () => {
     };
     mockTransaction.mockImplementation(async (fn: any) => fn(txClient));
 
-    const token = await generateToken();
+    const token = await generateToken(TEST_USER_ID, ['chat:read', 'chat:write', 'channel:create']);
     const res = await app.request('/api/channels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -214,8 +221,8 @@ describe('durable realtime route outbox behavior', () => {
       if (sql.includes('SELECT role FROM channel_member')) {
         return { rows: [{ role: 'admin' }] };
       }
-      if (sql.includes('SELECT workspace_id FROM channel')) {
-        return { rows: [{ workspace_id: null }] };
+      if (sql.includes('SELECT type, workspace_id FROM channel')) {
+        return { rows: [{ type: 'public', workspace_id: null }] };
       }
       return { rows: [] };
     });
@@ -229,7 +236,7 @@ describe('durable realtime route outbox behavior', () => {
     };
     mockTransaction.mockImplementation(async (fn: any) => fn(txClient));
 
-    const token = await generateToken();
+    const token = await generateToken(TEST_USER_ID, ['chat:write']);
     const res = await app.request(`/api/channels/${CHANNEL_ID}/members`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -284,7 +291,7 @@ describe('durable realtime route outbox behavior', () => {
     };
     mockTransaction.mockImplementation(async (fn: any) => fn(txClient));
 
-    const token = await generateToken();
+    const token = await generateToken(TEST_USER_ID, ['chat:write']);
     const res = await app.request(`/api/polls/${POLL_ID}/vote`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

@@ -73,7 +73,7 @@ const REPLY_ID = '33333333-3333-4333-8333-333333333333';
 
 async function generateToken(): Promise<string> {
   const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'test-secret-key-for-testing');
-  return new jose.SignJWT({ user_id: TEST_USER_ID, app_id: TEST_APP_ID })
+  return new jose.SignJWT({ user_id: TEST_USER_ID, app_id: TEST_APP_ID, scopes: ['chat:read', 'chat:write'] })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('1h')

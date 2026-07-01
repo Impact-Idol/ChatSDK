@@ -19,6 +19,9 @@ const allowedOrigins = parseList(
   process.env.TOKEN_BROKER_ALLOWED_ORIGINS || process.env.ALLOWED_ORIGINS || ''
 );
 const allowedUsers = new Set(parseList(process.env.TOKEN_BROKER_USER_ALLOWLIST || ''));
+const tokenScopes = parseList(
+  process.env.TOKEN_BROKER_SCOPES || 'chat:read,chat:write,typing:write,reaction:write,search:read'
+);
 
 const pool = new Pool({
   connectionString: databaseUrl,
@@ -115,7 +118,7 @@ const server = http.createServer(async (req, res) => {
       throw error;
     }
 
-    const tokens = await issueTokenBundle({ appId, userId, sessionId });
+    const tokens = await issueTokenBundle({ appId, userId, sessionId, scopes: tokenScopes });
     sendJson(res, 200, {
       user: { id: userId, displayName, avatar: body.avatar || null, metadata },
       token: tokens.token,
@@ -142,9 +145,9 @@ async function getDefaultAppId() {
   return result.rows[0].id;
 }
 
-async function issueTokenBundle({ appId, userId, sessionId }) {
+async function issueTokenBundle({ appId, userId, sessionId, scopes }) {
   const subject = `${appId}:${userId}`;
-  const sharedClaims = { user_id: userId, app_id: appId, sid: sessionId };
+  const sharedClaims = { user_id: userId, app_id: appId, sid: sessionId, scopes };
   const token = await sign(jwtSecret, { ...sharedClaims, type: 'access' }, subject, accessTokenExpiry);
   const refreshToken = await sign(jwtSecret, { ...sharedClaims, type: 'refresh' }, subject, refreshTokenExpiry);
   const wsToken = await sign(centrifugoSecret, { ...sharedClaims, sub: subject }, subject, accessTokenExpiry);

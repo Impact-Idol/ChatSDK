@@ -79,11 +79,20 @@ const TEST_APP_ID = '00000000-0000-0000-0000-000000000001';
 const TEST_USER_ID = 'user-123';
 const CHANNEL_ID = '22222222-2222-4222-8222-222222222222';
 const WORKSPACE_ID = '33333333-3333-4333-8333-333333333333';
+const MESSAGE_ID = '44444444-4444-4444-8444-444444444444';
+const POLL_ID = '55555555-5555-4555-8555-555555555555';
 const OTHER_USER_ID = 'user-456';
 
-async function generateToken(): Promise<string> {
+async function generateToken(scopes?: string[]): Promise<string> {
   const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'test-secret-key-for-testing');
-  return new jose.SignJWT({ user_id: TEST_USER_ID, app_id: TEST_APP_ID })
+  const payload: Record<string, unknown> = {
+    user_id: TEST_USER_ID,
+    app_id: TEST_APP_ID,
+  };
+  if (scopes) {
+    payload.scopes = scopes;
+  }
+  return new jose.SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('1h')
@@ -116,7 +125,21 @@ function privateNonmemberChannel(sql: string) {
 }
 
 async function authedRequest(path: string, init?: RequestInit) {
-  const token = await generateToken();
+  const method = init?.method?.toUpperCase() ?? 'GET';
+  const scopes = path === '/api/channels' && method === 'POST'
+    ? ['chat:read', 'chat:write', 'channel:create']
+    : /^\/api\/channels\/[^/]+\/members$/.test(path) && method === 'POST'
+      ? ['chat:write']
+      : method === 'POST' && path.startsWith('/api/uploads/')
+        ? ['upload:write', 'chat:read']
+        : method === 'DELETE' && path.startsWith('/api/uploads/')
+          ? ['upload:write', 'chat:read']
+          : method === 'DELETE' && /^\/api\/channels\/[^/]+\/members\/[^/]+$/.test(path)
+            ? ['chat:write']
+            : method === 'POST' && path.includes('/messages')
+              ? ['chat:write']
+              : ['chat:read'];
+  const token = await generateToken(scopes);
   return app.request(path, {
     ...init,
     headers: {
@@ -148,6 +171,206 @@ describe('private data authorization', () => {
     expect(data.error.message).toContain('Not a member');
     expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('FROM message m'))).toBe(false);
     expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('current_seq FROM channel_seq'))).toBe(false);
+  });
+
+  it('rejects private single-message reads for nonmembers before querying the message row', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      return authMocks(sql) ?? privateNonmemberChannel(sql) ?? { rows: [] };
+    });
+
+    const res = await authedRequest(`/api/channels/${CHANNEL_ID}/messages/${MESSAGE_ID}`);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toContain('Not a member');
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('WHERE m.id = $1'))).toBe(false);
+  });
+
+  it('rejects private read-receipt reads for nonmembers before querying receipts', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      const auth = authMocks(sql);
+      if (auth) return auth;
+      if (sql.includes('SELECT 1 FROM channel_member')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await authedRequest(`/api/channels/${CHANNEL_ID}/receipts/messages/${MESSAGE_ID}/receipts`);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toContain('Not a member');
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('FROM read_receipt'))).toBe(false);
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('COUNT(*) as count FROM channel_member'))).toBe(false);
+  });
+
+  it('rejects private read-status reads for nonmembers before listing member read state', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      const auth = authMocks(sql);
+      if (auth) return auth;
+      if (sql.includes('SELECT 1 FROM channel_member')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await authedRequest(`/api/channels/${CHANNEL_ID}/receipts/read-status`);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toContain('Not a member');
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('cm.last_read_message_id'))).toBe(false);
+  });
+
+  it('rejects private thread reads for nonmembers before querying parent or reply messages', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      const auth = authMocks(sql);
+      if (auth) return auth;
+      if (sql.includes('SELECT 1 FROM channel_member')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await authedRequest(`/api/channels/${CHANNEL_ID}/messages/${MESSAGE_ID}/thread`);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toContain('Not a member');
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('FROM message m'))).toBe(false);
+  });
+
+  it('rejects private thread participant reads for nonmembers before querying participants', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      const auth = authMocks(sql);
+      if (auth) return auth;
+      if (sql.includes('SELECT 1 FROM channel_member')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await authedRequest(`/api/channels/${CHANNEL_ID}/messages/${MESSAGE_ID}/thread/participants`);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toContain('Not a member');
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('SELECT DISTINCT u.id'))).toBe(false);
+  });
+
+  it('rejects private pinned-message reads for nonmembers before querying pinned messages', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      const auth = authMocks(sql);
+      if (auth) return auth;
+      if (sql.includes('SELECT 1 FROM channel_member')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await authedRequest(`/api/channels/${CHANNEL_ID}/messages/pins`);
+    const data = await res.json();
+
+    expect([403, 404]).toContain(res.status);
+    expect(data.error.message).toMatch(/Not a channel member|Channel not found|Message not found/);
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('FROM pinned_message'))).toBe(false);
+  });
+
+  it('rejects saving private messages for nonmembers and does not insert bookmarks', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      const auth = authMocks(sql);
+      if (auth) return auth;
+      if (sql.includes('FROM message m') && sql.includes('JOIN channel_member cm')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const token = await generateToken(['chat:write']);
+    const res = await app.request(`/api/channels/${CHANNEL_ID}/messages/${MESSAGE_ID}/save`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(data.error.message).toContain('no access');
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO saved_message'))).toBe(false);
+  });
+
+  it('rejects private poll result reads for nonmembers before querying votes', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      const auth = authMocks(sql);
+      if (auth) return auth;
+      if (sql.includes('SELECT p.*, m.channel_id')) {
+        return {
+          rows: [{
+            id: POLL_ID,
+            question: 'private?',
+            options: [{ id: 'yes', text: 'Yes' }],
+            is_anonymous: false,
+            is_multi_choice: false,
+            total_votes: 1,
+            channel_id: CHANNEL_ID,
+            ends_at: null,
+            created_at: new Date(),
+          }],
+        };
+      }
+      if (sql.includes('SELECT 1 FROM channel_member')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await authedRequest(`/api/polls/${POLL_ID}/results`);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toContain('Not a channel member');
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('FROM poll_vote'))).toBe(false);
+  });
+
+  it('rejects private poll voting for nonmembers and does not write votes', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      const auth = authMocks(sql);
+      if (auth) return auth;
+      if (sql.includes('SELECT p.*, m.channel_id')) {
+        return {
+          rows: [{
+            id: POLL_ID,
+            question: 'private?',
+            options: [{ id: 'yes', text: 'Yes' }],
+            is_anonymous: false,
+            is_multi_choice: false,
+            total_votes: 1,
+            channel_id: CHANNEL_ID,
+            ends_at: null,
+          }],
+        };
+      }
+      if (sql.includes('SELECT 1 FROM channel_member')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+
+    const token = await generateToken(['chat:write']);
+    const res = await app.request(`/api/polls/${POLL_ID}/vote`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ optionIds: ['yes'] }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toContain('Not a channel member');
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO poll_vote'))).toBe(false);
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('DELETE FROM poll_vote'))).toBe(false);
   });
 
   it('rejects workspace-scoped public channel message reads for users outside the workspace', async () => {
@@ -808,8 +1031,8 @@ describe('private data authorization', () => {
         roleCall++;
         return roleCall === 1 ? { rows: [{ role: 'admin' }] } : { rows: [] };
       }
-      if (sql.includes('SELECT workspace_id FROM channel')) {
-        return { rows: [{ workspace_id: WORKSPACE_ID }] };
+      if (sql.includes('SELECT type, workspace_id FROM channel')) {
+        return { rows: [{ type: 'public', workspace_id: WORKSPACE_ID }] };
       }
       if (sql.includes('SELECT user_id FROM workspace_member')) {
         return { rows: [] };
