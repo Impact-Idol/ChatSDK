@@ -37,6 +37,10 @@ Source request: `/Users/pushkar/vnet/docs/features/chatsdk-vouch-dm/CHATSDK_HAND
   - A third minted user was excluded from channel list and denied DM message list, single-message read, send, and read-status access.
 - Live shared-server project smoke passed:
   - `npm run smoke:project -- --origin https://vouch.vedalogy.com` passed 12/12, including WebSocket connect, deterministic DM ensure, browser `channel:create` denial, message send, and message query.
+- GitHub Actions runner update:
+  - Added local OrbStack/Docker runner `chatsdk-ci-linux` for repo `Impact-Idol/ChatSDK` with labels `self-hosted,Linux,ARM64,chatsdk`.
+  - Updated `Build and Push Docker Images` to target that runner and added QEMU setup for multi-platform Docker builds.
+  - Fixed `docker/Dockerfile.api` to copy `scripts/fix-esm-extensions.mjs` before package builds; local Docker build `docker build -f docker/Dockerfile.api -t chatsdk-api:local-runner-check .` passed.
 - `./scripts/graphify update . --wiki` completed with 8708 nodes, 11378 edges, 579 communities, and 589 wiki articles.
 
 ## Security Notes

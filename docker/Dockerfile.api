@@ -16,6 +16,7 @@ RUN npm ci --workspace=@chatsdk/core --workspace=@chatsdk/api
 # Copy source code
 COPY packages/core ./packages/core
 COPY packages/api ./packages/api
+COPY scripts/fix-esm-extensions.mjs ./scripts/fix-esm-extensions.mjs
 
 # Build TypeScript to JavaScript
 RUN npm run build --workspace=@chatsdk/core
