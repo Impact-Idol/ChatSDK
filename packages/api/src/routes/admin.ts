@@ -6,8 +6,9 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
+import { timingSafeEqual } from 'crypto';
 import { db } from '../services/database';
-import { generateApiKey, generateSecretKey } from '../utils/crypto';
+import { generateApiKey, hashApiKey } from '../utils/crypto';
 
 export const adminRoutes = new Hono();
 
@@ -26,7 +27,9 @@ const requireAdmin = async (c: any, next: any) => {
 
   const token = authHeader.substring(7);
 
-  if (token !== adminApiKey) {
+  const tokenBuffer = Buffer.from(token);
+  const adminKeyBuffer = Buffer.from(adminApiKey);
+  if (tokenBuffer.length !== adminKeyBuffer.length || !timingSafeEqual(tokenBuffer, adminKeyBuffer)) {
     return c.json({ error: { message: 'Invalid admin credentials' } }, 401);
   }
 
@@ -104,8 +107,6 @@ adminRoutes.get('/apps/:id', requireAdmin, async (c) => {
     `SELECT
       id,
       name,
-      api_key,
-      secret_key,
       settings,
       created_at,
       updated_at,
@@ -127,8 +128,6 @@ adminRoutes.get('/apps/:id', requireAdmin, async (c) => {
   return c.json({
     id: app.id,
     name: app.name,
-    apiKey: app.api_key,
-    secretKey: app.secret_key,
     settings: app.settings,
     createdAt: app.created_at,
     updatedAt: app.updated_at,
@@ -152,30 +151,38 @@ adminRoutes.post(
   async (c) => {
     const body = c.req.valid('json');
 
-    const apiKey = generateApiKey();
-    const secretKey = generateSecretKey();
+    const { app, appApiKey, plaintextApiKey } = await db.transaction(async (client) => {
+      const appResult = await client.query(
+        `INSERT INTO app (name, settings)
+         VALUES ($1, $2)
+         RETURNING *`,
+        [
+          body.name,
+          JSON.stringify(body.settings || { ai_enabled: false }),
+        ]
+      );
 
-    const result = await db.query(
-      `INSERT INTO app (name, api_key, secret_key, settings)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [
-        body.name,
-        apiKey,
-        secretKey,
-        JSON.stringify(body.settings || { ai_enabled: false }),
-      ]
-    );
+      const createdApp = appResult.rows[0];
+      const serverApiKey = generateApiKey();
+      const keyResult = await client.query(
+        `INSERT INTO app_api_key (app_id, name, api_key_hash)
+         VALUES ($1, $2, $3)
+         RETURNING id, name, created_at`,
+        [createdApp.id, 'admin-created-server', hashApiKey(serverApiKey)]
+      );
 
-    const app = result.rows[0];
+      return { app: createdApp, appApiKey: keyResult.rows[0], plaintextApiKey: serverApiKey };
+    });
 
     return c.json({
       id: app.id,
       name: app.name,
-      apiKey: app.api_key,
-      secretKey: app.secret_key,
+      apiKey: plaintextApiKey,
+      apiKeyId: appApiKey.id,
+      apiKeyName: appApiKey.name,
       settings: app.settings,
       createdAt: app.created_at,
+      warnings: ['apiKey is shown once. Prefer app-scoped keys over the primary app key.'],
     }, 201);
   }
 );
@@ -202,7 +209,7 @@ adminRoutes.patch(
     }
 
     if (body.settings) {
-      updates.push(`settings = $${paramCount++}`);
+      updates.push(`settings = COALESCE(settings, '{}'::jsonb) || $${paramCount++}::jsonb`);
       values.push(JSON.stringify(body.settings));
     }
 
@@ -276,26 +283,10 @@ adminRoutes.delete('/apps/:id', requireAdmin, async (c) => {
  * POST /admin/apps/:id/regenerate-key
  */
 adminRoutes.post('/apps/:id/regenerate-key', requireAdmin, async (c) => {
-  const appId = c.req.param('id');
-
-  const newApiKey = generateApiKey();
-
-  const result = await db.query(
-    `UPDATE app SET api_key = $1, updated_at = NOW()
-     WHERE id = $2
-     RETURNING id, name, api_key`,
-    [newApiKey, appId]
-  );
-
-  if (result.rows.length === 0) {
-    return c.json({ error: { message: 'App not found' } }, 404);
-  }
-
-  const app = result.rows[0];
-
   return c.json({
-    id: app.id,
-    name: app.name,
-    apiKey: app.api_key,
-  });
+    error: {
+      message: 'Primary app key regeneration is deprecated. Use app-scoped server keys via scripts/ops/provision-project.mjs rotate-key.',
+      code: 'DEPRECATED_PRIMARY_APP_KEY_ROTATION',
+    },
+  }, 410);
 });

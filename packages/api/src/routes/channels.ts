@@ -5,10 +5,12 @@
 
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
+import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
+import { createHash } from 'crypto';
 import { v7 as uuidv7 } from 'uuid';
 import { db } from '../services/database';
-import { requireScope, requireUser } from '../middleware/auth';
+import { requireApp, requireScope, requireUser } from '../middleware/auth';
 import { getChannelAccess, isChannelMember, isWorkspaceMember } from '../services/authorization';
 import { centrifugo } from '../services/centrifugo';
 import {
@@ -22,6 +24,9 @@ import { RATE_LIMIT_POLICIES, rateLimitUser } from '../services/rate-limit';
 import { createDataExport } from '../services/data-lifecycle';
 
 export const channelRoutes = new Hono();
+
+const MAX_CHANNEL_ENSURE_BODY_BYTES = 32 * 1024;
+const MAX_CHANNEL_CUSTOM_BYTES = 4096;
 
 const createChannelSchema = z.object({
   // Support standard types + common aliases (public/private)
@@ -53,6 +58,381 @@ const createChannelSchema = z.object({
   }
 );
 
+const ensureDmSchema = z.object({
+  requesterUserId: z.string().min(1).max(255),
+  peerUserId: z.string().min(1).max(255),
+  idempotencyKey: z.string().max(255).optional(),
+  custom: z.record(z.unknown()).optional().refine(
+    (custom) => !custom || JSON.stringify(custom).length <= MAX_CHANNEL_CUSTOM_BYTES,
+    `custom must be at most ${MAX_CHANNEL_CUSTOM_BYTES} bytes`
+  ),
+});
+
+type EnsureDmInput = z.infer<typeof ensureDmSchema>;
+
+const ensureGroupChannelSchema = z.object({
+  externalId: z.string().min(1).max(255).optional(),
+  idempotencyKey: z.string().min(1).max(255).optional(),
+  name: z.string().max(255).optional(),
+  image: z.string().url().optional(),
+  memberIds: z.array(z.string().min(1).max(255)).min(1).max(500),
+  custom: z.record(z.unknown()).optional().refine(
+    (custom) => !custom || JSON.stringify(custom).length <= MAX_CHANNEL_CUSTOM_BYTES,
+    `custom must be at most ${MAX_CHANNEL_CUSTOM_BYTES} bytes`
+  ),
+}).refine((data) => data.externalId || data.idempotencyKey, {
+  message: 'externalId or idempotencyKey is required',
+  path: ['externalId'],
+});
+
+type EnsureGroupChannelInput = z.infer<typeof ensureGroupChannelSchema>;
+
+async function ensureDirectMessageChannel(appId: string, input: EnsureDmInput) {
+  if (input.requesterUserId === input.peerUserId) {
+    return {
+      status: 400,
+      body: { error: { message: 'Direct messages require two distinct users' } },
+    } as const;
+  }
+
+  const memberIds = [input.requesterUserId, input.peerUserId];
+  const users = await db.query(
+    `SELECT id FROM app_user WHERE app_id = $1 AND id = ANY($2)`,
+    [appId, memberIds]
+  );
+  const existingUserIds = new Set(users.rows.map((row) => row.id));
+  const missingUserIds = memberIds.filter((userId) => !existingUserIds.has(userId));
+
+  if (missingUserIds.length > 0) {
+    return {
+      status: 404,
+      body: {
+        error: {
+          message: 'User not found',
+          missingUserIds,
+        },
+      },
+    } as const;
+  }
+
+  const channelId = uuidv7();
+  const cid = directMessageCid(memberIds);
+  const existingChannel = await db.query(
+    'SELECT * FROM channel WHERE app_id = $1 AND cid = $2',
+    [appId, cid]
+  );
+
+  if (existingChannel.rows.length > 0) {
+    return {
+      status: 200,
+      body: {
+        action: 'existing',
+        created: false,
+        channel: formatChannel(existingChannel.rows[0]),
+      },
+    } as const;
+  }
+
+  const result = await db.transaction(async (client) => {
+    const channelResult = await client.query(
+      `INSERT INTO channel (id, app_id, cid, type, name, image_url, config, created_by, member_count, workspace_id, idempotency_key)
+       VALUES ($1, $2, $3, 'messaging', NULL, NULL, '{}'::jsonb, $4, 2, NULL, NULL)
+       ON CONFLICT (app_id, cid)
+       DO NOTHING
+       RETURNING *`,
+      [
+        channelId,
+        appId,
+        cid,
+        input.requesterUserId,
+      ]
+    );
+
+    if (channelResult.rows.length === 0) {
+      const idempotent = await client.query(
+        'SELECT * FROM channel WHERE app_id = $1 AND cid = $2',
+        [appId, cid]
+      );
+      return { channel: idempotent.rows[0], created: false };
+    }
+
+    const channel = channelResult.rows[0];
+
+    await client.query(
+      `INSERT INTO channel_member (channel_id, app_id, user_id, role)
+       VALUES ($1, $2, $3, 'member'), ($1, $2, $4, 'member')
+       ON CONFLICT DO NOTHING`,
+      [channelId, appId, input.requesterUserId, input.peerUserId]
+    );
+
+    await client.query(
+      `INSERT INTO channel_seq (channel_id, app_id, current_seq)
+       VALUES ($1, $2, 0)
+       ON CONFLICT DO NOTHING`,
+      [channelId, appId]
+    );
+
+    await enqueueDomainRealtimeEvent(client, {
+      appId,
+      aggregateType: 'channel',
+      aggregateId: channelId,
+      eventType: 'channel.created',
+      channels: memberIds.map((userId) => userChannel(appId, userId)),
+      payload: { channel: formatChannel(channel) },
+      idempotencyKey: `channel.created:${appId}:${channelId}`,
+    });
+
+    return { channel, created: true };
+  });
+
+  if (!result.channel) {
+    return {
+      status: 409,
+      body: { error: { message: 'Unable to resolve idempotent DM creation' } },
+    } as const;
+  }
+
+  if (result.created) {
+    triggerRealtimeOutboxDrainSafely();
+  }
+
+  return {
+    status: result.created ? 201 : 200,
+    body: {
+      action: result.created ? 'created' : 'existing',
+      created: result.created,
+      channel: formatChannel(result.channel),
+    },
+  } as const;
+}
+
+async function ensureServerGroupChannel(
+  appId: string,
+  input: EnsureGroupChannelInput,
+  routeKind: 'group' | 'squad'
+) {
+  const cid = input.externalId ?? input.idempotencyKey!;
+  if (cid.startsWith('messaging:dm:')) {
+    return {
+      status: 400,
+      body: { error: { message: 'externalId is reserved for direct messages' } },
+    } as const;
+  }
+
+  const memberIds = [...new Set(input.memberIds)];
+  const users = await db.query(
+    `SELECT id FROM app_user WHERE app_id = $1 AND id = ANY($2)`,
+    [appId, memberIds]
+  );
+  const existingUserIds = new Set(users.rows.map((row) => row.id));
+  const missingUserIds = memberIds.filter((userId) => !existingUserIds.has(userId));
+
+  if (missingUserIds.length > 0) {
+    return {
+      status: 404,
+      body: {
+        error: {
+          message: 'User not found',
+          missingUserIds,
+        },
+      },
+    } as const;
+  }
+
+  const existingChannel = await db.query(
+    'SELECT * FROM channel WHERE app_id = $1 AND cid = $2',
+    [appId, cid]
+  );
+
+  if (existingChannel.rows.length > 0) {
+    const channel = existingChannel.rows[0];
+    if (channel.type !== 'group') {
+      return {
+        status: 409,
+        body: { error: { message: 'Existing channel has incompatible type' } },
+      } as const;
+    }
+
+    return {
+      status: 200,
+      body: {
+        action: 'existing',
+        created: false,
+        channel: formatChannel(channel),
+      },
+    } as const;
+  }
+
+  const channelId = uuidv7();
+  const createdBy = memberIds[0] ?? null;
+  const config = input.custom
+    ? { custom: input.custom, kind: routeKind, source: 'app-auth-ensure' }
+    : { kind: routeKind, source: 'app-auth-ensure' };
+
+  const result = await db.transaction(async (client) => {
+    const channelResult = await client.query(
+      `INSERT INTO channel (id, app_id, cid, type, name, image_url, config, created_by, member_count, workspace_id, idempotency_key)
+       VALUES ($1, $2, $3, 'group', $4, $5, $6::jsonb, $7, $8, NULL, $9)
+       ON CONFLICT (app_id, cid)
+       DO NOTHING
+       RETURNING *`,
+      [
+        channelId,
+        appId,
+        cid,
+        input.name ?? null,
+        input.image ?? null,
+        JSON.stringify(config),
+        createdBy,
+        memberIds.length,
+        input.idempotencyKey ?? cid,
+      ]
+    );
+
+    if (channelResult.rows.length === 0) {
+      const idempotent = await client.query(
+        'SELECT * FROM channel WHERE app_id = $1 AND cid = $2',
+        [appId, cid]
+      );
+      return { channel: idempotent.rows[0], created: false };
+    }
+
+    const channel = channelResult.rows[0];
+
+    for (const memberId of memberIds) {
+      await client.query(
+        `INSERT INTO channel_member (channel_id, app_id, user_id, role)
+         VALUES ($1, $2, $3, 'member')
+         ON CONFLICT DO NOTHING`,
+        [channelId, appId, memberId]
+      );
+    }
+
+    await client.query(
+      `INSERT INTO channel_seq (channel_id, app_id, current_seq)
+       VALUES ($1, $2, 0)
+       ON CONFLICT DO NOTHING`,
+      [channelId, appId]
+    );
+
+    await enqueueDomainRealtimeEvent(client, {
+      appId,
+      aggregateType: 'channel',
+      aggregateId: channelId,
+      eventType: 'channel.created',
+      channels: memberIds.map((userId) => userChannel(appId, userId)),
+      payload: { channel: formatChannel(channel) },
+      idempotencyKey: `channel.created:${appId}:${channelId}`,
+    });
+
+    return { channel, created: true };
+  });
+
+  if (!result.channel) {
+    return {
+      status: 409,
+      body: { error: { message: 'Unable to resolve idempotent group creation' } },
+    } as const;
+  }
+
+  if (result.channel.type !== 'group') {
+    return {
+      status: 409,
+      body: { error: { message: 'Existing channel has incompatible type' } },
+    } as const;
+  }
+
+  if (result.created) {
+    triggerRealtimeOutboxDrainSafely();
+  }
+
+  return {
+    status: result.created ? 201 : 200,
+    body: {
+      action: result.created ? 'created' : 'existing',
+      created: result.created,
+      channel: formatChannel(result.channel),
+    },
+  } as const;
+}
+
+/**
+ * Server-side create/open direct message.
+ * POST /api/channels/dm/ensure
+ *
+ * Vouch should enforce blocks, minor/account status, and eligibility before
+ * calling this app-authenticated endpoint.
+ */
+channelRoutes.post(
+  '/dm/ensure',
+  requireApp,
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation),
+  bodyLimit({
+    maxSize: MAX_CHANNEL_ENSURE_BODY_BYTES,
+    onError: (c) => c.json({ error: { message: 'DM ensure payload is too large' } }, 413),
+  }),
+  zValidator('json', ensureDmSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const body = c.req.valid('json');
+    const result = await ensureDirectMessageChannel(auth.appId, body);
+
+    return c.json(result.body, result.status);
+  }
+);
+
+/**
+ * Server-side create/open group channel.
+ * POST /api/channels/group/ensure
+ *
+ * Vouch should enforce membership, blocks, minor/account status, and
+ * nonprofit/squad eligibility before calling this app-authenticated endpoint.
+ */
+channelRoutes.post(
+  '/group/ensure',
+  requireApp,
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation),
+  bodyLimit({
+    maxSize: MAX_CHANNEL_ENSURE_BODY_BYTES,
+    onError: (c) => c.json({ error: { message: 'Group ensure payload is too large' } }, 413),
+  }),
+  zValidator('json', ensureGroupChannelSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const body = c.req.valid('json');
+    const result = await ensureServerGroupChannel(auth.appId, body, 'group');
+
+    return c.json(result.body, result.status);
+  }
+);
+
+/**
+ * Server-side create/open squad channel.
+ * POST /api/channels/squad/ensure
+ *
+ * This creates a ChatSDK group channel and records squad semantics in config.
+ */
+channelRoutes.post(
+  '/squad/ensure',
+  requireApp,
+  rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
+  rateLimitUser(RATE_LIMIT_POLICIES.channelMutation),
+  bodyLimit({
+    maxSize: MAX_CHANNEL_ENSURE_BODY_BYTES,
+    onError: (c) => c.json({ error: { message: 'Squad ensure payload is too large' } }, 413),
+  }),
+  zValidator('json', ensureGroupChannelSchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const body = c.req.valid('json');
+    const result = await ensureServerGroupChannel(auth.appId, body, 'squad');
+
+    return c.json(result.body, result.status);
+  }
+);
+
 /**
  * Create channel
  * POST /api/channels
@@ -60,7 +440,7 @@ const createChannelSchema = z.object({
 channelRoutes.post(
   '/',
   requireUser,
-  requireScope('chat:write'),
+  requireScope('channel:create'),
   rateLimitUser(RATE_LIMIT_POLICIES.appWrites, () => ({ global: true })),
   rateLimitUser(RATE_LIMIT_POLICIES.channelMutation),
   zValidator('json', createChannelSchema),
@@ -74,8 +454,7 @@ channelRoutes.post(
     // For DM channels, create deterministic CID
     let cid: string;
     if (body.type === 'messaging' && body.memberIds.length === 1) {
-      const members = [auth.userId!, body.memberIds[0]].sort();
-      cid = `messaging:${members.join('-')}`;
+      cid = directMessageCid([auth.userId!, body.memberIds[0]]);
     } else {
       cid = `${body.type}:${channelId}`;
     }
@@ -340,7 +719,7 @@ channelRoutes.get('/', requireUser, requireScope('chat:read'), rateLimitUser(RAT
   if (messagingChannelIds.length > 0) {
     // Batch fetch members for all messaging and group channels
     const membersResult = await db.query(
-      `SELECT cm.channel_id, cm.user_id, cm.role, u.name, u.image_url, u.custom_data->>'email' as email
+      `SELECT cm.channel_id, cm.user_id, cm.role, u.name, u.image_url, u.custom_data
        FROM channel_member cm
        LEFT JOIN app_user u ON cm.user_id = u.id AND cm.app_id = u.app_id
        WHERE cm.app_id = $1 AND cm.channel_id = ANY($2)
@@ -358,7 +737,8 @@ channelRoutes.get('/', requireUser, requireScope('chat:read'), rateLimitUser(RAT
         id: member.user_id,
         name: member.name,
         image: member.image_url,
-        email: member.email,
+        email: typeof member.custom_data?.email === 'string' ? member.custom_data.email : null,
+        custom: member.custom_data ?? {},
         role: member.role,
       });
     }
@@ -441,7 +821,7 @@ channelRoutes.get(
 
   // Get members
   const membersResult = await db.query(
-    `SELECT cm.user_id, cm.role, cm.joined_at, u.name, u.image_url
+    `SELECT cm.user_id, cm.role, cm.joined_at, u.name, u.image_url, u.custom_data
      FROM channel_member cm
      JOIN app_user u ON cm.app_id = u.app_id AND cm.user_id = u.id
      WHERE cm.channel_id = $1 AND cm.app_id = $2
@@ -459,6 +839,8 @@ channelRoutes.get(
           id: m.user_id,
           name: m.name,
           image: m.image_url,
+          email: typeof m.custom_data?.email === 'string' ? m.custom_data.email : null,
+          custom: m.custom_data ?? {},
         },
       })),
     });
@@ -618,7 +1000,7 @@ channelRoutes.get(
 
   // Get all members
   const membersResult = await db.query(
-    `SELECT cm.user_id, cm.role, cm.joined_at, u.name, u.image_url, u.custom_data->>'email' as email
+    `SELECT cm.user_id, cm.role, cm.joined_at, u.name, u.image_url, u.custom_data
      FROM channel_member cm
      LEFT JOIN app_user u ON cm.user_id = u.id AND cm.app_id = u.app_id
      WHERE cm.channel_id = $1 AND cm.app_id = $2
@@ -631,7 +1013,8 @@ channelRoutes.get(
         id: m.user_id,
         name: m.name,
         image: m.image_url,
-        email: m.email,
+        email: typeof m.custom_data?.email === 'string' ? m.custom_data.email : null,
+        custom: m.custom_data ?? {},
         role: m.role,
         joinedAt: m.joined_at,
       })),
@@ -688,11 +1071,15 @@ channelRoutes.post(
     }
 
     const channelResult = await db.query(
-      `SELECT workspace_id FROM channel WHERE id = $1 AND app_id = $2`,
+      `SELECT type, workspace_id FROM channel WHERE id = $1 AND app_id = $2`,
       [channelId, auth.appId]
     );
     if (channelResult.rows.length === 0) {
       return c.json({ error: { message: 'Channel not found' } }, 404);
+    }
+
+    if (channelResult.rows[0].type === 'messaging') {
+      return c.json({ error: { message: 'Direct message membership is fixed' } }, 403);
     }
 
     const workspaceId = channelResult.rows[0].workspace_id;
@@ -802,6 +1189,17 @@ channelRoutes.patch(
     const callerRole = memberResult.rows[0].role;
     if (!['owner', 'admin', 'moderator'].includes(callerRole)) {
       return c.json({ error: { message: 'Permission denied' } }, 403);
+    }
+
+    const channelResult = await db.query(
+      `SELECT type FROM channel WHERE id = $1 AND app_id = $2`,
+      [channelId, auth.appId]
+    );
+    if (channelResult.rows.length === 0) {
+      return c.json({ error: { message: 'Channel not found' } }, 404);
+    }
+    if (channelResult.rows[0].type === 'messaging') {
+      return c.json({ error: { message: 'Direct message roles are fixed' } }, 403);
     }
 
     // Role hierarchy enforcement: callers can only assign roles at or below their own level
@@ -1151,4 +1549,12 @@ function formatChannel(row: any) {
     role: row.role,
     idempotencyKey: row.idempotency_key ?? undefined,
   };
+}
+
+function directMessageCid(memberIds: [string, string] | string[]): string {
+  const members = [...memberIds].sort();
+  const digest = createHash('sha256')
+    .update(JSON.stringify(members))
+    .digest('hex');
+  return `messaging:dm:${digest}`;
 }

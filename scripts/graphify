@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+
+CENTRAL_GRAPHIFY_BIN="$HOME/.local/bin/graphify"
+if [[ -n "${GRAPHIFY_BIN:-}" ]]; then
+  GRAPHIFY_BIN="$GRAPHIFY_BIN"
+elif [[ -x "$CENTRAL_GRAPHIFY_BIN" ]]; then
+  GRAPHIFY_BIN="$CENTRAL_GRAPHIFY_BIN"
+else
+  GRAPHIFY_BIN="$(command -v graphify || true)"
+fi
+if [[ -n "$GRAPHIFY_BIN" ]]; then
+  GRAPHIFY_PYTHON="$(head -1 "$GRAPHIFY_BIN" | tr -d '#!')"
+else
+  GRAPHIFY_PYTHON="${PYTHON:-python3}"
+fi
+
+case "$GRAPHIFY_PYTHON" in
+  *[!a-zA-Z0-9/_.-]*)
+    GRAPHIFY_PYTHON="${PYTHON:-python3}"
+    ;;
+esac
+
+mkdir -p graphify-out
+printf '%s' "$GRAPHIFY_PYTHON" > graphify-out/.graphify_python
+export PYTHONUTF8=1
+export PYTHONUNBUFFERED=1
+
+cmd="${1:-build}"
+case "$cmd" in
+  build|full)
+    shift || true
+    target="${1:-.}"
+    shift || true
+    "$GRAPHIFY_PYTHON" - "$target" "$@" <<'PY'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from graphify.analyze import god_nodes, surprising_connections, suggest_questions
+from graphify.build import build_from_json
+from graphify.cache import check_semantic_cache, save_semantic_cache
+from graphify.cluster import cluster, score_all
+from graphify.detect import FileType, classify_file, count_words, save_manifest
+from graphify.export import to_html, to_json
+from graphify.extract import extract
+from graphify.llm import detect_backend, estimate_cost, extract_corpus_parallel
+from graphify.report import generate
+from graphify.watch import _relativize_source_files, _report_root_label
+from graphify.wiki import to_wiki
+
+
+def summary_line(name: str, count: int) -> str | None:
+    return f"  {name}: {count}" if count else None
+
+
+def ensure_sdk(backend: str | None) -> tuple[str | None, str | None]:
+    if backend in {"gemini", "kimi", "openai", "deepseek", "ollama"}:
+        try:
+            import openai  # noqa: F401
+            return backend, None
+        except ImportError:
+            return None, (
+                f"semantic backend '{backend}' detected, but the 'openai' "
+                "package is not installed"
+            )
+    if backend == "claude":
+        try:
+            import anthropic  # noqa: F401
+            return backend, None
+        except ImportError:
+            return None, "semantic backend key found, but the 'anthropic' package is not installed"
+    return backend, None
+
+
+def git_tracked_files(root: Path) -> list[Path]:
+    """Use Git's index as the rebuild corpus to avoid generated/vendor trees."""
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    paths: list[Path] = []
+    for raw in result.stdout.splitlines():
+        if not raw:
+            continue
+        path = root / raw
+        if path.is_file():
+            paths.append(path)
+    return paths
+
+
+target = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
+extra_args = sys.argv[2:]
+force = "--force" in extra_args
+no_viz = "--no-viz" in extra_args
+ast_only = "--ast-only" in extra_args
+
+if not target.exists():
+    print(f"error: path not found: {target}", file=sys.stderr)
+    sys.exit(1)
+
+out = target / "graphify-out"
+out.mkdir(parents=True, exist_ok=True)
+(out / ".graphify_root").write_text(str(target), encoding="utf-8")
+
+files = {
+    FileType.CODE.value: [],
+    FileType.DOCUMENT.value: [],
+    FileType.PAPER.value: [],
+    FileType.IMAGE.value: [],
+    FileType.VIDEO.value: [],
+}
+total_words = 0
+skipped_sensitive = []
+for path in git_tracked_files(target):
+    ftype = classify_file(path)
+    if not ftype:
+        continue
+    files[ftype.value].append(str(path))
+    if ftype != FileType.VIDEO:
+        total_words += count_words(path)
+
+detected = {
+    "files": files,
+    "total_files": sum(len(items) for items in files.values()),
+    "total_words": total_words,
+    "skipped_sensitive": skipped_sensitive,
+    "source": "git ls-files",
+}
+counts = {name: len(items) for name, items in files.items()}
+
+print(f"Corpus: {detected.get('total_files', 0)} files · ~{detected.get('total_words', 0):,} words")
+for line in (
+    summary_line("code", counts.get("code", 0)),
+    summary_line("docs", counts.get("document", 0)),
+    summary_line("papers", counts.get("paper", 0)),
+    summary_line("images", counts.get("image", 0)),
+    summary_line("video", counts.get("video", 0)),
+):
+    if line:
+        print(line)
+if detected.get("skipped_sensitive"):
+    print(f"  skipped sensitive: {len(detected['skipped_sensitive'])}")
+
+code_files = [Path(p) for p in files.get("code", [])]
+doc_like_files = [Path(p) for p in files.get("document", []) + files.get("paper", []) + files.get("image", [])]
+video_files = [Path(p) for p in files.get("video", [])]
+
+if not code_files and not doc_like_files and not video_files:
+    print("No supported files found.", file=sys.stderr)
+    sys.exit(1)
+
+print(f"AST extraction: {len(code_files)} code file(s)")
+ast_result = extract(code_files, cache_root=target, parallel=False) if code_files else {
+    "nodes": [],
+    "edges": [],
+    "hyperedges": [],
+    "input_tokens": 0,
+    "output_tokens": 0,
+}
+
+semantic_nodes = []
+semantic_edges = []
+semantic_hyperedges = []
+semantic_input_tokens = 0
+semantic_output_tokens = 0
+
+cached_nodes, cached_edges, cached_hyperedges, uncached = check_semantic_cache(
+    [str(p) for p in doc_like_files],
+    root=target,
+)
+semantic_nodes.extend(cached_nodes)
+semantic_edges.extend(cached_edges)
+semantic_hyperedges.extend(cached_hyperedges)
+
+backend, backend_note = ensure_sdk(detect_backend())
+
+if uncached and backend and not ast_only:
+    print(
+        f"Semantic extraction: {len(uncached)} uncached file(s) via {backend}"
+    )
+    semantic_result = extract_corpus_parallel(
+        [Path(p) for p in uncached],
+        backend=backend,
+        root=target,
+    )
+    semantic_nodes.extend(semantic_result.get("nodes", []))
+    semantic_edges.extend(semantic_result.get("edges", []))
+    semantic_hyperedges.extend(semantic_result.get("hyperedges", []))
+    semantic_input_tokens += semantic_result.get("input_tokens", 0)
+    semantic_output_tokens += semantic_result.get("output_tokens", 0)
+    save_semantic_cache(
+        semantic_result.get("nodes", []),
+        semantic_result.get("edges", []),
+        semantic_result.get("hyperedges", []),
+        root=target,
+    )
+elif uncached:
+    note = "AST-only update requested" if ast_only else (backend_note or "no semantic backend key detected")
+    print(f"Semantic extraction skipped: {note}")
+    if video_files:
+        print(f"Video transcription skipped: {len(video_files)} file(s) need faster-whisper and a semantic pass")
+    (out / "needs_update").write_text(
+        "Semantic extraction pending. Set MOONSHOT_API_KEY or ANTHROPIC_API_KEY and rerun ./scripts/graphify build .",
+        encoding="utf-8",
+    )
+
+merged = {
+    "nodes": ast_result.get("nodes", []) + semantic_nodes,
+    "edges": ast_result.get("edges", []) + semantic_edges,
+    "hyperedges": ast_result.get("hyperedges", []) + semantic_hyperedges,
+    "input_tokens": semantic_input_tokens,
+    "output_tokens": semantic_output_tokens,
+}
+_relativize_source_files(merged, target)
+
+G = build_from_json(merged)
+communities = cluster(G)
+cohesion = score_all(G, communities)
+gods = god_nodes(G)
+surprises = surprising_connections(G, communities)
+labels = {cid: f"Community {cid}" for cid in communities}
+questions = suggest_questions(G, communities, labels)
+token_cost = {
+    "input": semantic_input_tokens,
+    "output": semantic_output_tokens,
+    "usd_estimate": round(estimate_cost(backend, semantic_input_tokens, semantic_output_tokens), 4) if backend else 0.0,
+}
+
+save_manifest(files)
+
+if not to_json(G, communities, str(out / "graph.json"), force=force):
+    sys.exit(1)
+
+report = generate(
+    G,
+    communities,
+    cohesion,
+    labels,
+    gods,
+    surprises,
+    detected,
+    token_cost,
+    _report_root_label(target),
+    suggested_questions=questions,
+)
+(out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
+(out / "cost.json").write_text(json.dumps(token_cost, indent=2), encoding="utf-8")
+(out / ".graphify_labels.json").write_text(
+    json.dumps({str(k): v for k, v in labels.items()}, indent=2),
+    encoding="utf-8",
+)
+
+wiki_count = to_wiki(
+    G,
+    communities,
+    out / "wiki",
+    community_labels=labels,
+    cohesion=cohesion,
+    god_nodes_data=gods,
+)
+
+html_status = "skipped (--no-viz)"
+if not no_viz:
+    try:
+        to_html(G, communities, str(out / "graph.html"), community_labels=labels)
+        html_status = "written"
+    except ValueError as exc:
+        html_status = f"skipped ({exc})"
+        stale = out / "graph.html"
+        if stale.exists():
+            stale.unlink()
+
+print(
+    f"Graph complete: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, "
+    f"{len(communities)} communities"
+)
+print(f"Wiki: {wiki_count} article(s)")
+print(f"HTML: {html_status}")
+if token_cost['input'] or token_cost['output']:
+    print(
+        f"Semantic tokens: {token_cost['input']:,} in / {token_cost['output']:,} out "
+        f"(est. ${token_cost['usd_estimate']})"
+    )
+PY
+    ;;
+  update)
+    shift || true
+    target="${1:-.}"
+    shift || true
+    build_args=("$target" "--ast-only" "--no-viz")
+    for arg in "$@"; do
+      case "$arg" in
+        --wiki|--no-viz)
+          ;;
+        *)
+          build_args+=("$arg")
+          ;;
+      esac
+    done
+    exec "$0" build "${build_args[@]}"
+    ;;
+  *)
+    exec "$GRAPHIFY_BIN" "$cmd" "${@:2}"
+    ;;
+esac

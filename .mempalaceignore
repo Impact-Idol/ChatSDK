@@ -1,0 +1,46 @@
+# MemPalace should focus on live source and durable session memory.
+# Graphify owns repo-wide architecture graph, generated wiki, and broad corpus orientation.
+
+graphify-out/
+node_modules/
+coverage/
+test-results/
+playwright-report/
+logs/
+artifacts/
+backups/
+
+# Generated delivery/build output.
+assets/delivery-package/
+dist/
+build/
+.next/
+.turbo/
+.vite/
+storybook-static/
+
+# Colocated tests, fixtures, stories, screenshots, and run evidence.
+**/__tests__/
+**/test/
+**/tests/
+**/test-results/
+**/*.test.*
+**/*.spec.*
+**/*.stories.*
+**/*.storybook.*
+**/*.snap
+**/*.xcresult/
+**/*.trace
+**/*.har
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.webp
+**/*.gif
+**/*.mp4
+
+# Package-manager and generated lock/cache material.
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lockb

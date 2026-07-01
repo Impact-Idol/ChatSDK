@@ -12,6 +12,7 @@ import {
   verifyAccessToken,
 } from '../services/tokens';
 import { verifyMediaToken } from '../services/media-tokens';
+import { hashApiKey } from '../utils/crypto';
 
 interface AppAuthRow extends QueryResultRow {
   id: string;
@@ -29,6 +30,7 @@ export interface AuthContext {
   authType: 'user' | 'app';
   appId: string;
   mediaKey?: string;
+  isBrokerToken?: boolean;
   scopes?: string[];
   app?: {
     id: string;
@@ -129,6 +131,7 @@ function authenticateMediaToken(
     appId: verified.appId,
     userId: verified.userId,
     mediaKey: verified.key,
+    scopes: ['chat:read'],
   };
 }
 
@@ -162,7 +165,7 @@ export const requireApp = createMiddleware(async (c, next) => {
 export function requireScope(scope: string) {
   return createMiddleware(async (c, next) => {
     const auth = c.get('auth');
-    if (auth?.authType === 'user' && auth.scopes && !auth.scopes.includes(scope)) {
+    if (auth?.authType === 'user' && !auth.scopes?.includes(scope)) {
       throw new HTTPException(403, { message: `Token scope required: ${scope}` });
     }
     await next();
@@ -177,7 +180,7 @@ type BrokerScopedRoute = {
 
 const BROKER_SCOPED_ROUTES: BrokerScopedRoute[] = [
   { method: 'GET', pattern: /^\/api\/channels(?:\/[^/]+)?$/, scope: 'chat:read' },
-  { method: 'POST', pattern: /^\/api\/channels$/, scope: 'chat:write' },
+  { method: 'POST', pattern: /^\/api\/channels$/, scope: 'channel:create' },
   { method: 'PATCH', pattern: /^\/api\/channels\/[^/]+$/, scope: 'chat:write' },
   { method: 'DELETE', pattern: /^\/api\/channels\/[^/]+$/, scope: 'chat:write' },
   { method: 'GET', pattern: /^\/api\/channels\/[^/]+\/members$/, scope: 'chat:read' },
@@ -214,7 +217,12 @@ const BROKER_SCOPED_ROUTES: BrokerScopedRoute[] = [
 
 export const brokerScopedRouteGuard = createMiddleware(async (c, next) => {
   const auth = c.get('auth');
-  if (auth?.authType !== 'user' || !auth.scopes) {
+  if (auth?.authType !== 'user') {
+    await next();
+    return;
+  }
+
+  if (!auth.isBrokerToken) {
     await next();
     return;
   }
@@ -229,7 +237,7 @@ export const brokerScopedRouteGuard = createMiddleware(async (c, next) => {
     throw new HTTPException(403, { message: 'Broker-scoped token is not allowed for this route' });
   }
 
-  if (!auth.scopes.includes(route.scope)) {
+  if (!auth.scopes?.includes(route.scope)) {
     throw new HTTPException(403, { message: `Token scope required: ${route.scope}` });
   }
 
@@ -288,6 +296,7 @@ async function authenticateBearer(token: string): Promise<AuthContext> {
     appId,
     app,
     userId,
+    isBrokerToken: isBrokerTokenPayload(payload),
     scopes: getTokenScopes(payload),
     user: {
       id: user.id,
@@ -295,6 +304,15 @@ async function authenticateBearer(token: string): Promise<AuthContext> {
       image: user.image_url ?? undefined,
     },
   };
+}
+
+function isBrokerTokenPayload(payload: Record<string, unknown>): boolean {
+  return (
+    typeof payload.broker_client_id === 'string'
+    || typeof payload.broker_credential_id === 'string'
+    || typeof payload.external_tenant_id === 'string'
+    || typeof payload.membership_version === 'string'
+  );
 }
 
 function getTokenScopes(payload: Record<string, unknown>): string[] | undefined {
@@ -309,16 +327,37 @@ function getTokenScopes(payload: Record<string, unknown>): string[] | undefined 
 }
 
 async function authenticateApiKey(apiKey: string): Promise<AuthContext> {
-  const appResult = await db.query<AppAuthRow>(
-    'SELECT id, name, settings FROM app WHERE api_key = $1',
-    [apiKey]
+  const apiKeyHash = hashApiKey(apiKey);
+  let appResult = await db.query<AppAuthRow>(
+    `SELECT app.id, app.name, app.settings
+     FROM app_api_key
+     JOIN app ON app.id = app_api_key.app_id
+     WHERE app_api_key.api_key_hash = $1
+       AND app_api_key.revoked_at IS NULL
+     LIMIT 1`,
+    [apiKeyHash]
   );
+
+  if (appResult.rows.length === 0 && process.env.CHATSDK_ENABLE_PRIMARY_APP_KEY_AUTH === 'true') {
+    appResult = await db.query<AppAuthRow>(
+      `SELECT id, name, settings
+       FROM app
+       WHERE api_key = $1
+       LIMIT 1`,
+      [apiKey]
+    );
+  }
 
   if (appResult.rows.length === 0) {
     throw new HTTPException(401, { message: 'Invalid API key' });
   }
 
   const app = appResult.rows[0];
+
+  Promise.resolve(db.query(
+    'UPDATE app_api_key SET last_used_at = NOW() WHERE api_key_hash = $1 AND revoked_at IS NULL',
+    [apiKeyHash]
+  )).catch(() => undefined);
 
   return {
     authType: 'app',

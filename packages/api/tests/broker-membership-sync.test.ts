@@ -216,6 +216,35 @@ describe('broker membership sync route', () => {
     );
   });
 
+  it('preserves an existing display name when membership sync omits displayName', async () => {
+    const token = await signBrokerJwt();
+
+    const res = await app.request(`/api/server/apps/${APP_ID}/memberships/${USER_ID}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        ...membershipBody,
+        displayName: undefined,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const appUserCall = mockQuery.mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO app_user')
+    );
+    expect(appUserCall?.[1]).toEqual([
+      APP_ID,
+      USER_ID,
+      null,
+      membershipBody.avatarUrl,
+      expect.any(String),
+    ]);
+    expect(appUserCall?.[0]).toContain('name = COALESCE($3, app_user.name, $2)');
+  });
+
   it('rejects a race-lost membership upsert instead of reporting success', async () => {
     mockQuery.mockImplementation((sql: string) => {
       if (sql.includes('FROM broker_credential')) {
@@ -507,6 +536,186 @@ describe('broker membership sync route', () => {
         USER_ID,
         'realtime.disconnect_user',
       ])
+    );
+  });
+
+  it('removes channel memberships without deleting messages when status is removed', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM broker_credential')) {
+        return {
+          rows: [{
+            client_id: CLIENT_ID,
+            client_slug: CLIENT_SLUG,
+            credential_id: CREDENTIAL_ID,
+            kid: KID,
+            public_key_jwk: publicJwk,
+          }],
+        };
+      }
+      if (sql.includes('INSERT INTO broker_jwt_replay')) {
+        return { rows: [{ jti: 'accepted' }], rowCount: 1 };
+      }
+      if (sql.includes('FROM broker_app_scope')) {
+        return {
+          rows: [{
+            allowed_external_tenant_ids: ['tenant-a'],
+            allowed_user_id_prefixes: ['client-a:'],
+            allowed_channel_id_prefixes: ['support-'],
+            max_membership_fanout: 10,
+            allowed_origins: [],
+            max_token_ttl_seconds: 900,
+            default_scopes: ['chat:read'],
+            allowed_scopes: ['chat:read'],
+          }],
+        };
+      }
+      if (sql.includes('SELECT revision, status, version')) {
+        return {
+          rows: [{
+            revision: '42',
+            status: 'active',
+            version: 'tenant-a:user-1:42',
+            state_hash: 'sha256:previous-state',
+            external_tenant_id: 'tenant-a',
+            fresh_until: new Date(Date.now() + 10 * 60 * 1000),
+          }],
+        };
+      }
+      if (sql.includes('INSERT INTO app_user')) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO broker_membership_state')) {
+        return { rows: [{ revision: '43', status: 'removed' }], rowCount: 1 };
+      }
+      if (sql.includes('FROM channel_member cm')) {
+        return {
+          rows: [
+            { channel_id: SUPPORT_CHANNEL_ID, cid: 'support-123' },
+            { channel_id: OLD_CHANNEL_ID, cid: 'support-old' },
+          ],
+        };
+      }
+      if (sql.includes('DELETE FROM channel_member')) {
+        return { rows: [], rowCount: 2 };
+      }
+      if (sql.includes('UPDATE channel SET member_count')) {
+        return { rows: [], rowCount: 2 };
+      }
+      if (sql.includes('UPDATE app_user')) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE auth_session')) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO event_outbox')) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO broker_mint_audit')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const token = await signBrokerJwt();
+
+    const res = await app.request(`/api/server/apps/${APP_ID}/memberships/${USER_ID}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        ...membershipBody,
+        memberships: [],
+        status: 'removed',
+        revision: 43,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM channel_member WHERE app_id = $1 AND user_id = $2'),
+      [APP_ID, USER_ID]
+    );
+    const unsubscribeCall = mockQuery.mock.calls.find(
+      ([sql, params]) => typeof sql === 'string'
+        && sql.includes('INSERT INTO event_outbox')
+        && Array.isArray(params)
+        && Array.isArray(params[1])
+        && params[1].includes(`${SUPPORT_CHANNEL_ID}:${USER_ID}`)
+    );
+    expect(unsubscribeCall?.[1][1]).toEqual([
+      `${SUPPORT_CHANNEL_ID}:${USER_ID}`,
+      `${OLD_CHANNEL_ID}:${USER_ID}`,
+    ]);
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('DELETE FROM message'))).toBe(false);
+  });
+
+  it('rejects stale active snapshots that would resurrect removed membership', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM broker_credential')) {
+        return {
+          rows: [{
+            client_id: CLIENT_ID,
+            client_slug: CLIENT_SLUG,
+            credential_id: CREDENTIAL_ID,
+            kid: KID,
+            public_key_jwk: publicJwk,
+          }],
+        };
+      }
+      if (sql.includes('INSERT INTO broker_jwt_replay')) {
+        return { rows: [{ jti: 'accepted' }], rowCount: 1 };
+      }
+      if (sql.includes('FROM broker_app_scope')) {
+        return {
+          rows: [{
+            allowed_external_tenant_ids: ['tenant-a'],
+            allowed_user_id_prefixes: ['client-a:'],
+            allowed_channel_id_prefixes: ['support-'],
+            max_membership_fanout: 10,
+            allowed_origins: [],
+            max_token_ttl_seconds: 900,
+            default_scopes: ['chat:read'],
+            allowed_scopes: ['chat:read'],
+          }],
+        };
+      }
+      if (sql.includes('SELECT revision, status, version')) {
+        return {
+          rows: [{
+            revision: '43',
+            status: 'removed',
+            version: 'tenant-a:user-1:43',
+            state_hash: 'sha256:removed-state',
+            external_tenant_id: 'tenant-a',
+            fresh_until: new Date(Date.now() + 10 * 60 * 1000),
+          }],
+        };
+      }
+      if (sql.includes('INSERT INTO broker_mint_audit')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const token = await signBrokerJwt();
+
+    const res = await app.request(`/api/server/apps/${APP_ID}/memberships/${USER_ID}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(membershipBody),
+    });
+
+    expect(res.status).toBe(409);
+    expect(mockQuery).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO channel_member'),
+      expect.any(Array)
+    );
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO broker_mint_audit'),
+      expect.arrayContaining(['BROKER_MEMBERSHIP_ROLLBACK'])
     );
   });
 

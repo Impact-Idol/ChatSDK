@@ -2,24 +2,36 @@
   "name": "@chatsdk/react",
   "version": "2.0.8",
   "description": "React components for ChatSDK",
-  "main": "src/index.ts",
-  "module": "src/index.ts",
-  "types": "src/index.ts",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": [
+    "./dist/themes/*.css",
+    "./src/themes/*.css"
+  ],
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./server": {
-      "types": "./src/server/index.ts",
-      "import": "./src/server/index.ts",
-      "default": "./src/server/index.ts"
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js",
+      "default": "./dist/server/index.js"
     },
-    "./themes/*": "./src/themes/*"
+    "./themes/*": "./dist/themes/*"
   },
   "scripts": {
-    "build": "tsc",
+    "prebuild": "npm run build --workspace=@chatsdk/core",
+    "build": "rm -rf dist && tsc && node ../../scripts/fix-esm-extensions.mjs dist && mkdir -p dist/themes && cp -R src/themes/. dist/themes/",
+    "prepack": "npm run build",
     "lint": "eslint src",
     "test": "vitest",
     "storybook": "storybook dev -p 6007",
@@ -36,7 +48,7 @@
     }
   },
   "dependencies": {
-    "@chatsdk/core": "*",
+    "@chatsdk/core": "2.0.8",
     "clsx": "^2.1.0",
     "date-fns": "^3.3.0",
     "react-virtuoso": "^4.7.0"

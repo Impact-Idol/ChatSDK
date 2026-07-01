@@ -2,8 +2,8 @@
  * Auth mode boundary tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { randomUUID } from 'crypto';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash, randomUUID } from 'crypto';
 import { Hono } from 'hono';
 
 const mockQuery = vi.fn();
@@ -57,7 +57,8 @@ const TEST_SESSION_ID = '11111111-1111-4111-8111-111111111111';
 async function generateToken(
   type?: 'access' | 'refresh',
   expiresIn = '1h',
-  scopes?: string[]
+  scopes?: string[],
+  broker = false
 ): Promise<string> {
   const secret = new TextEncoder().encode(JWT_SECRET);
 	  const payload: Record<string, unknown> = {
@@ -71,6 +72,12 @@ async function generateToken(
 	  }
     if (scopes) {
       payload.scopes = scopes;
+    }
+    if (broker) {
+      payload.broker_client_id = 'broker-client-test';
+      payload.broker_credential_id = 'broker-credential-test';
+      payload.external_tenant_id = 'tenant-test';
+      payload.membership_version = 'membership-version-test';
     }
 
 		  return new jose.SignJWT(payload)
@@ -90,7 +97,7 @@ function setupBasicMocks() {
     if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
       return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
     }
-    if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+    if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
       return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
     }
     if (sql.includes('SELECT id, name FROM app WHERE api_key')) {
@@ -155,11 +162,16 @@ function setupBasicMocks() {
 describe('auth modes', () => {
   beforeEach(() => {
     mockQuery.mockReset();
+    delete process.env.CHATSDK_ENABLE_PRIMARY_APP_KEY_AUTH;
+  });
+
+  afterEach(() => {
+    delete process.env.CHATSDK_ENABLE_PRIMARY_APP_KEY_AUTH;
   });
 
   it('allows normal user API routes with Bearer token only', async () => {
     setupBasicMocks();
-    const token = await generateToken('access');
+    const token = await generateToken('access', '1h', ['chat:read']);
 
     const res = await app.request('/api/channels/unread-count', {
       headers: {
@@ -202,6 +214,76 @@ describe('auth modes', () => {
 
     expect(byId.status).toBe(401);
     expect(list.status).toBe(401);
+  });
+
+  it('authenticates app-scoped API keys without accepting primary app keys by default', async () => {
+    const probe = new Hono();
+    probe.use('/api/*', authMiddleware);
+    probe.get('/api/probe', (c) => c.json({ appId: c.get('auth').appId }));
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('UPDATE app_api_key SET last_used_at')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+
+    const accepted = await probe.request('/api/probe', {
+      headers: { 'X-API-Key': TEST_API_KEY },
+    });
+
+    expect(accepted.status).toBe(200);
+    await accepted.json().then((data) => expect(data.appId).toBe(TEST_APP_ID));
+    expect(mockQuery.mock.calls[0][1]).toEqual([
+      createHash('sha256').update(TEST_API_KEY).digest('hex'),
+    ]);
+    expect(mockQuery.mock.calls[0][1][0]).not.toBe(TEST_API_KEY);
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key')) {
+        return { rows: [] };
+      }
+      if (sql.includes('FROM app') && sql.includes('WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Primary App', settings: {} }] };
+      }
+      return { rows: [] };
+    });
+
+    const rejected = await probe.request('/api/probe', {
+      headers: { 'X-API-Key': 'primary-app-key' },
+    });
+    const text = await rejected.text();
+
+    expect(rejected.status).toBe(401);
+    expect(text).toBe('Invalid API key');
+  });
+
+  it('allows legacy primary app key auth only when explicitly enabled', async () => {
+    process.env.CHATSDK_ENABLE_PRIMARY_APP_KEY_AUTH = 'true';
+    const probe = new Hono();
+    probe.use('/api/*', authMiddleware);
+    probe.get('/api/probe', (c) => c.json({ appId: c.get('auth').appId }));
+
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key')) {
+        return { rows: [] };
+      }
+      if (sql.includes('FROM app') && sql.includes('WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Primary App', settings: {} }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await probe.request('/api/probe', {
+      headers: { 'X-API-Key': 'primary-app-key' },
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.appId).toBe(TEST_APP_ID);
   });
 
   it('allows user lookup and list routes with Bearer token only', async () => {
@@ -257,7 +339,7 @@ describe('auth modes', () => {
 
   it('denies broker-scoped tokens on app-management routes by default', async () => {
     setupBasicMocks();
-    const token = await generateToken('access', '1h', ['chat:read', 'chat:write']);
+    const token = await generateToken('access', '1h', ['chat:read', 'chat:write'], true);
 
     const res = await app.request('/api/webhooks', {
       headers: {
@@ -272,7 +354,7 @@ describe('auth modes', () => {
 
   it('denies broker-scoped read tokens on chat write routes before handlers run', async () => {
     setupBasicMocks();
-    const token = await generateToken('access', '1h', ['chat:read']);
+    const token = await generateToken('access', '1h', ['chat:read'], true);
 
     const res = await app.request(
       '/api/channels/22222222-2222-4222-8222-222222222222/messages/11111111-1111-4111-8111-111111111111/thread',
@@ -289,6 +371,66 @@ describe('auth modes', () => {
 
     expect(res.status).toBe(403);
     expect(data.error.message).toBe('Token scope required: chat:write');
+  });
+
+  it('requires channel:create for broker-scoped browser channel creation', async () => {
+    const probe = new Hono();
+    probe.use('/api/*', async (c, next) => {
+      c.set('auth', {
+        authType: 'user',
+        appId: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        isBrokerToken: true,
+        scopes: ['chat:read', 'chat:write'],
+      });
+      await next();
+    });
+    probe.use('/api/*', brokerScopedRouteGuard);
+    probe.post('/api/channels', (c) => c.json({ ok: true }));
+
+    const denied = await probe.request('/api/channels', { method: 'POST' });
+    const deniedText = await denied.text();
+
+    expect(denied.status).toBe(403);
+    expect(deniedText).toBe('Token scope required: channel:create');
+
+    const allowedProbe = new Hono();
+    allowedProbe.use('/api/*', async (c, next) => {
+      c.set('auth', {
+        authType: 'user',
+        appId: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        isBrokerToken: true,
+        scopes: ['chat:read', 'chat:write', 'channel:create'],
+      });
+      await next();
+    });
+    allowedProbe.use('/api/*', brokerScopedRouteGuard);
+    allowedProbe.post('/api/channels', (c) => c.json({ ok: true }));
+
+    const allowed = await allowedProbe.request('/api/channels', { method: 'POST' });
+    expect(allowed.status).toBe(200);
+  });
+
+  it('requires explicit channel:create even for otherwise unscoped user channel creation', async () => {
+    setupBasicMocks();
+    const token = await generateToken('access');
+
+    const res = await app.request('/api/channels', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        type: 'messaging',
+        memberIds: ['peer-user'],
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.error.message).toBe('Token scope required: channel:create');
   });
 
   it('allows broker-scoped read tokens on allowlisted chat read routes', async () => {
@@ -310,6 +452,27 @@ describe('auth modes', () => {
 
     expect(res.status).toBe(200);
     expect(data).toEqual({ ok: true });
+  });
+
+  it('requires explicit broker scopes on broker-scoped read routes', async () => {
+    const probe = new Hono();
+    probe.use('/api/*', async (c, next) => {
+      c.set('auth', {
+        authType: 'user',
+        appId: TEST_APP_ID,
+        userId: TEST_USER_ID,
+        isBrokerToken: true,
+      });
+      await next();
+    });
+    probe.use('/api/*', brokerScopedRouteGuard);
+    probe.get('/api/channels/:channelId/messages', (c) => c.json({ ok: true }));
+
+    const res = await probe.request('/api/channels/channel-1/messages');
+    const text = await res.text();
+
+    expect(res.status).toBe(403);
+    expect(text).toBe('Token scope required: chat:read');
   });
 
   it('keeps app-wide user management routes server API-key only', async () => {
@@ -378,6 +541,200 @@ describe('auth modes', () => {
     expect(appDelete.status).toBe(200);
     expect(appSync.status).toBe(200);
     expect(appUpsert.status).toBe(200);
+  });
+
+  it('keeps ensure user routes server API-key only', async () => {
+    setupBasicMocks();
+    const token = await generateToken('access');
+
+    const bearerEnsure = await app.request('/api/users/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ userId: TEST_USER_ID, name: 'Test User' }),
+    });
+    const bearerBulkEnsure = await app.request('/api/users/bulk-ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ users: [{ userId: TEST_USER_ID, name: 'Test User' }] }),
+    });
+
+    expect(bearerEnsure.status).toBe(401);
+    expect(bearerBulkEnsure.status).toBe(401);
+
+    const appEnsure = await app.request('/api/users/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        userId: TEST_USER_ID,
+        name: 'Test User',
+        email: 'test@example.com',
+        custom: { source: 'vouch' },
+      }),
+    });
+    const appBulkEnsure = await app.request('/api/users/bulk-ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({ users: [{ userId: TEST_USER_ID, name: 'Test User' }] }),
+    });
+
+    expect(appEnsure.status).toBe(200);
+    expect(appBulkEnsure.status).toBe(200);
+  });
+
+  it('returns created, updated, and existing actions from ensure user', async () => {
+    setupBasicMocks();
+    const rows = [
+      {
+        id: 'new-user',
+        name: 'New User',
+        image_url: null,
+        custom_data: { email: 'new@example.com', source: 'vouch' },
+        inserted: true,
+        changed: false,
+        last_active_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: 'updated-user',
+        name: 'Updated User',
+        image_url: null,
+        custom_data: { source: 'vouch' },
+        inserted: false,
+        changed: true,
+        last_active_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: 'existing-user',
+        name: 'Existing User',
+        image_url: null,
+        custom_data: {},
+        inserted: false,
+        changed: false,
+        last_active_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ];
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('WITH existing AS')) {
+        return { rows: [rows.shift()] };
+      }
+      return { rows: [] };
+    });
+
+    const created = await app.request('/api/users/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        userId: 'new-user',
+        name: 'New User',
+        email: 'new@example.com',
+        custom: { source: 'vouch' },
+      }),
+    });
+    const updated = await app.request('/api/users/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({ userId: 'updated-user', name: 'Updated User' }),
+    });
+    const existing = await app.request('/api/users/ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({ userId: 'existing-user' }),
+    });
+
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      action: 'created',
+      created: true,
+      updated: false,
+      user: { id: 'new-user', email: 'new@example.com', custom: { source: 'vouch' } },
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({ action: 'updated', created: false, updated: true });
+    expect(existing.status).toBe(200);
+    expect(await existing.json()).toMatchObject({ action: 'existing', created: false, updated: false });
+  });
+
+  it('bulk ensures users and reports per-user errors', async () => {
+    setupBasicMocks();
+    mockQuery.mockImplementation((sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
+        return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
+      }
+      if (sql.includes('WITH existing AS')) {
+        const userId = params?.[1];
+        if (userId === 'bad-user') {
+          throw new Error('insert failed');
+        }
+        return {
+          rows: [{
+            id: userId,
+            name: userId,
+            image_url: null,
+            custom_data: {},
+            inserted: userId === 'new-user',
+            changed: userId === 'updated-user',
+            last_active_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const res = await app.request('/api/users/bulk-ensure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': TEST_API_KEY,
+      },
+      body: JSON.stringify({
+        users: [
+          { userId: 'new-user' },
+          { userId: 'updated-user' },
+          { userId: 'bad-user' },
+        ],
+      }),
+    });
+    const data = await res.json();
+
+    expect(res.status).toBe(207);
+    expect(data).toMatchObject({
+      count: 2,
+      created: 1,
+      updated: 1,
+      existing: 0,
+      errors: [{ userId: 'bad-user', error: 'insert failed' }],
+    });
   });
 
   it('keeps token broker routes API-key protected', async () => {

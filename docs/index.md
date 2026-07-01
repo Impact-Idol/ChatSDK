@@ -74,6 +74,9 @@ await client.sendMessage('channel-id', { text: 'Hello!' });
 ## Guides
 
 - [Getting Started](./guides/getting-started.md)
+- [Using the Shared ChatSDK Server](./SHARED_SERVER_INTEGRATION.md)
+- [Deploying Code to the LAN Proxmox Host](./runbooks/proxmox-lan-code-deploy.md)
+- [Multi-Project Onboarding Runbook](./features/multi-project-onboarding-hardening/PROJECT_ONBOARDING_RUNBOOK.md)
 - [Authentication](./guides/authentication.md)
 - [Channels](./guides/channels.md)
 - [Messages](./guides/messages.md)

@@ -69,7 +69,7 @@ function setupUserRouteMocks(userId: string, workspaceRole: 'owner' | 'admin' | 
     if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
       return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
     }
-    if (sql.includes('SELECT id, name, settings FROM app WHERE api_key')) {
+    if (sql.includes('FROM app_api_key') || sql.includes('FROM app WHERE api_key')) {
       return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
     }
     if (sql.includes('SELECT id, name, image_url FROM app_user')) {

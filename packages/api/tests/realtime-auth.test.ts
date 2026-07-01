@@ -58,6 +58,7 @@ async function generateToken(): Promise<string> {
 	    app_id: TEST_APP_ID,
 	    type: 'access',
 	    sid: TEST_SESSION_ID,
+	    scopes: ['chat:read'],
 	  })
 	    .setProtectedHeader({ alg: 'HS256', kid: 'local-dev-key' })
 	    .setIssuer('chatsdk-api')

@@ -1,0 +1,27 @@
+# ChatSDK Resume
+
+- Branch/state: unknown; read `git status --short` before edits.
+- Active focus: shared ChatSDK server integration docs, Vouch bootstrap APIs, and repo knowledge tooling.
+- Graphify: local wrapper expected at `./scripts/graphify`; run `./scripts/graphify update . --wiki` after meaningful source edits.
+- Mempalace: use wing `chatsdk_sessions` for session recall; product memory lives under `docs/product-memory/`.
+- Current shared server: API `http://192.168.68.244:5500`, WS `ws://192.168.68.244:8001/connection/websocket`, token broker `http://192.168.68.244:5511/api/chatsdk-token`, demo UI `http://192.168.68.244:5173`.
+- Latest docs artifact: `docs/SHARED_SERVER_INTEGRATION.md`.
+- LAN code deployment runbook: `docs/runbooks/proxmox-lan-code-deploy.md`.
+- Vouch handoff artifact: `docs/features/vouch-integration/INTEGRATION_PACKET.md`.
+- Vouch starter/smoke: `docs/features/vouch-integration/starter/` and `npm run smoke:shared-server`; latest live smoke passed 9/9 including WebSocket connect.
+- Vouch user bootstrap: `POST /api/users/ensure` and `POST /api/users/bulk-ensure` require `X-API-Key`, create/update/return existing users, and are deployed on `192.168.68.244`.
+- Vouch DM creation: `POST /api/channels/dm/ensure` requires `X-API-Key`; scoped browser `POST /api/channels` now requires `channel:create`. The LAN token broker now mints browser scopes without `channel:create`.
+- Vouch group/squad creation: `POST /api/channels/group/ensure` and `POST /api/channels/squad/ensure` require `X-API-Key`, deterministic `externalId`/`idempotencyKey`, and existing `memberIds`; deployed on `192.168.68.244`. Squad ensure returns a ChatSDK `group` channel with squad metadata.
+- Dedicated Vouch app: app ID `546aff6b-d3be-4dec-819b-576b42362ea9`; server key is local-only in `.secrets/vouch-chatsdk-app-api-key.env`. LAN token broker is pinned to this app ID.
+- Security hardening: `channel:create` fails closed for unscoped tokens; DM CIDs are bounded hashes; `dm/ensure` is atomic on `(app_id, cid)`; server-created DMs assign both users `member`; member-add/role-change reject `messaging`; DM config is empty even if `custom` is supplied.
+- Latest checklist: env URLs, token shape, stable user IDs, deterministic DM reuse, nonmember membership enforcement, and removed-member denial confirmed live.
+- Latest group/squad checklist: squad ensure create/reuse, group ensure create, missing-member rejection, bearer-token rejection, browser channel-create denial, and shared-server smoke 10/10 confirmed live.
+- Multi-project hardening: completed run `docs/agent-runs/2026-06-20-multi-project-onboarding-hardening/`; final-review blockers verified. App-scoped API keys hash at rest, scoped tokens fail closed, broker guard restricts only broker tokens, display names are preserved, and project `show` outputs non-secret key fingerprints. Full API suite passed (289/296 with 7 skips).
+- Live deployment: completed multi-project hardening deploy on Proxmox host `192.168.68.244` in `/opt/chatsdk/deploy`; API and token broker recreated from rebuilt `chatsdk-hardening-api:local`. `/health`, `/ready`, token broker health, and Vouch project smoke passed 12/12 for `https://vouch.vedalogy.com`.
+- Vouch 2026-06-30 handoff response: browser SDK packages now build/pack from `dist`; React prebuilds core and depends on `@chatsdk/core@2.0.8`; channel member payloads include `custom`; stable contracts and verification are in `docs/features/vouch-integration/HANDOFF_RESPONSE_2026-06-30.md`.
+- Vouch pre-handoff verification: fixed packed ESM specifiers, added direct `zod` dependency, fresh tarball consumer TypeScript/runtime imports pass, private-data nonmember checks pass 37/37, full API pass 298/305 with 7 skips, core pass 351/351, React build/test pass 43/43.
+- Live Vouch shared-server verification: `npm run smoke:project -- --origin https://vouch.vedalogy.com` passed 12/12; new `npm run smoke:private-isolation` passed 16/16 and denied a third user list/read/send/read-status access to another pair's DM.
+- Next steps: Vouch can use the LAN shared server with the deployed hardening; keep production HTTPS/WSS/public operations as a separate release gate.
+- Package artifact: fresh `2.0.8` tarballs generated at `assets/delivery-package/vouch-chatsdk-2026-07-01/`; blank consumer install, runtime import, and `npx tsc --noEmit` passed against those files.
+- Next package gate: publish `@chatsdk/core@2.0.8` and `@chatsdk/react@2.0.8` to npm/GitHub Packages if Vouch wants registry install; final production acceptance should include a live Vouch authenticated browser flow.
+- Blockers: none; Claude and Antigravity post-blocker reviews completed with GO recommendations.

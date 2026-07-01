@@ -57,9 +57,16 @@ const MEMBER_USER_ID = 'member-user-333';
 const TARGET_USER_ID = 'target-user-444';
 const TEST_API_KEY = 'a'.repeat(64);
 
-async function generateToken(userId: string, appId: string): Promise<string> {
+function mockNonDmChannelType(sql: string) {
+  if (sql.includes('SELECT type FROM channel')) {
+    return { rows: [{ type: 'public' }] };
+  }
+  return null;
+}
+
+async function generateToken(userId: string, appId: string, scopes = ['chat:read', 'chat:write']): Promise<string> {
   const secret = new TextEncoder().encode(JWT_SECRET);
-  return new jose.SignJWT({ user_id: userId, app_id: appId })
+  return new jose.SignJWT({ user_id: userId, app_id: appId, scopes })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('1h')
@@ -319,6 +326,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
@@ -387,6 +396,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
@@ -418,6 +429,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
@@ -449,6 +462,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
@@ -483,6 +498,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
@@ -517,6 +534,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
@@ -548,6 +567,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
@@ -586,6 +607,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }
@@ -620,6 +643,8 @@ describe('PATCH /api/channels/:channelId/members/:userId', () => {
 
     let channelMemberQueryCount = 0;
     mockQuery.mockImplementation((sql: string) => {
+      const channelType = mockNonDmChannelType(sql);
+      if (channelType) return channelType;
       if (sql.includes('SELECT id, name, settings FROM app WHERE id')) {
         return { rows: [{ id: TEST_APP_ID, name: 'Test App', settings: {} }] };
       }

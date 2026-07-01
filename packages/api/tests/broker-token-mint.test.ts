@@ -207,7 +207,7 @@ describe('broker token mint route', () => {
           rows: [{
             allowed_external_tenant_ids: ['tenant-a'],
             allowed_user_id_prefixes: ['client-a:'],
-            allowed_channel_id_prefixes: [],
+            allowed_channel_id_prefixes: ['client-a:'],
             max_membership_fanout: 10,
             allowed_origins: [],
             max_token_ttl_seconds: 300,
@@ -218,6 +218,71 @@ describe('broker token mint route', () => {
       }
       if (sql.includes('FROM broker_membership_state')) {
         return { rows: [] };
+      }
+      if (sql.includes('SELECT id FROM app WHERE id = $1')) return { rows: [{ id: APP_ID }] };
+      if (sql.includes('INSERT INTO broker_mint_audit')) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const token = await signBrokerJwt();
+
+    const res = await app.request(`/api/server/apps/${APP_ID}/tokens/mint`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(mintBody),
+    });
+
+    expect(res.status).toBe(403);
+    expect(mockQuery).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO auth_session'),
+      expect.any(Array)
+    );
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO broker_mint_audit'),
+      expect.arrayContaining(['BROKER_MEMBERSHIP_STALE'])
+    );
+  });
+
+  it('denies token mint when broker membership is removed', async () => {
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('FROM broker_credential')) {
+        return {
+          rows: [{
+            client_id: CLIENT_ID,
+            client_slug: CLIENT_SLUG,
+            credential_id: CREDENTIAL_ID,
+            kid: KID,
+            public_key_jwk: publicJwk,
+          }],
+        };
+      }
+      if (sql.includes('DELETE FROM broker_jwt_replay')) return { rows: [], rowCount: 0 };
+      if (sql.includes('INSERT INTO broker_jwt_replay')) return { rows: [{ jti: 'accepted' }], rowCount: 1 };
+      if (sql.includes('FROM broker_app_scope')) {
+        return {
+          rows: [{
+            allowed_external_tenant_ids: ['tenant-a'],
+            allowed_user_id_prefixes: ['client-a:'],
+            allowed_channel_id_prefixes: ['support-'],
+            max_membership_fanout: 10,
+            allowed_origins: [],
+            max_token_ttl_seconds: 300,
+            default_scopes: ['chat:read'],
+            allowed_scopes: ['chat:read', 'chat:write'],
+          }],
+        };
+      }
+      if (sql.includes('FROM broker_membership_state')) {
+        return {
+          rows: [{
+            version: 'tenant-a:user-1:43',
+            revision: '43',
+            fresh_until: new Date(Date.now() + 5 * 60 * 1000),
+            status: 'removed',
+          }],
+        };
       }
       if (sql.includes('SELECT id FROM app WHERE id = $1')) return { rows: [{ id: APP_ID }] };
       if (sql.includes('INSERT INTO broker_mint_audit')) return { rows: [], rowCount: 1 };
